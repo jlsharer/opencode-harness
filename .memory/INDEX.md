@@ -19,9 +19,10 @@ Use `.memory/orchestrations/<orchestration-id>/` for generated orchestration mem
 - `validation/` - validator or artifact-verifier command evidence.
 - `decisions/` - synthesis outputs and accepted final decisions.
 
-Current orchestration:
+Current orchestrations:
 
 - `orchestrations/2026-07-05-opencode-memory-contracts/INDEX.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/INDEX.md`
 
 Current orchestration trace artifacts:
 
@@ -36,3 +37,12 @@ Current orchestration trace artifacts:
 - `orchestrations/2026-07-05-opencode-memory-contracts/validation/integrator-checks.md`
 - `orchestrations/2026-07-05-opencode-memory-contracts/validation/plugin-autoload-adjustment-checks.md`
 - `orchestrations/2026-07-05-opencode-memory-contracts/validation/delegate-orchestration-command-checks.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/researcher/root-researcher-001-standards.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/planner/root-planner-002-meta-skills.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/implementer/root-implementer-003-meta-skills.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/implementer/root-implementer-005-remediate-workflow-skill.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/integrator/root-integrator-004-meta-skills.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/integrator/root-integrator-006-index-remediation.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/validator/root-validator-007-final.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/validation/root-validator-007-final.md`
+- `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/reviewer/root-reviewer-008-meta-skills.md`
