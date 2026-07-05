@@ -1,0 +1,40 @@
+# OpenCode Delegated Design-to-Implementation Workflow
+
+Use this workflow with `.opencode/skills/delegation-orchestrator/SKILL.md` when work spans design interpretation, implementation, integration, validation, review, synthesis, or artifact proof.
+
+Use `/delegate-orchestration` for parent orchestration across complete workflows. It is orchestrator-owned, omits command `agent` frontmatter, and coordinates repeatable role instances rather than routing to a single subagent.
+
+## Boundaries
+
+- Parent orchestration delegates role work and consolidates evidence.
+- Parent orchestration decomposes work into a DAG of scoped work units and sub-workflows. Independent role instances should run in parallel whenever dependencies allow.
+- Research is mandatory before planning for every workflow or sub-workflow so plans are grounded in accurate and sourced information.
+- Planning is mandatory for non-trivial workflows and for any sub-workflow that changes scope, files, dependencies, or acceptance gates.
+- Validation is mandatory before accepting any workflow or sub-workflow.
+- Role names are fixed, but role instances are repeatable. Use as many `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, and `artifact-verifier` instances as the DAG requires.
+- Every role instance needs a unique scoped artifact ID, such as `root-researcher-001-docs` or `api-validator-003-regression`.
+- File creation or modification goes to `implementer`.
+- Cross-artifact consistency goes to `integrator`.
+- Acceptance checks go to `validator`.
+- Generated artifact proof goes to `artifact-verifier`.
+- Each delegated packet includes an `orchestration-id`, memory root `.memory/orchestrations/<orchestration-id>/`, role contracts from `.opencode/contracts/role-io-contracts.json`, trace schema `.opencode/schemas/memory-trace-artifact.schema.json`, and expected trace path `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
+- Caller-supplied routing labels are preserved exactly when present: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`.
+- Missing routing metadata is not invented.
+
+## Phase Gates
+
+1. Design intake: extract constraints, target paths, non-goals, and acceptance gates.
+2. Memory setup: choose or preserve the `orchestration-id`, create or update `.memory/orchestrations/<orchestration-id>/INDEX.md`, and record routing metadata status.
+3. DAG planning: define scoped work units, dependencies, parallelizable branches, required role instances, and remediation limits.
+4. Research: run one or more scoped `researcher` instances before planning decisions that depend on facts, docs, APIs, compatibility, or current behavior.
+5. Planning: produce file contracts, sequencing, dependencies, verification commands, and one planner trace artifact per scoped plan.
+6. Implementation: apply assigned edits only, report self-checks, and write or reference implementer trace artifacts.
+7. Integration: confirm role names, command names, paths, manifests, workflows, contracts, schemas, and routing labels agree across each affected scope.
+8. Validation: run file, parse, schema, routing, and command checks, then store or reference validation evidence for each accepted workflow or sub-workflow.
+9. Remediation: use at most 3 remediation loops per scoped work unit. After that, delegate synthesis of blockers and ask the user for direction.
+10. Artifact proof: capture temp-directory proof when generated artifacts require independent inspection.
+11. Final consolidation: summarize validated changes, evidence, risks, trace artifacts, and handoff notes.
+
+## Completion Standard
+
+The workflow is complete only after concrete validation evidence is present. Lifecycle plugin output can be cited as a warning source but cannot replace validation.

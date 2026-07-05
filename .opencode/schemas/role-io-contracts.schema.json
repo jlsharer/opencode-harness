@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencode-harness.local/schemas/role-io-contracts.schema.json",
+  "title": "OpenCode Harness Role I/O Contracts",
+  "type": "object",
+  "required": ["schemaVersion", "memoryProtocol", "traceArtifactSchema", "tracePathTemplate", "roles"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "schemaVersion": { "type": "string" },
+    "memoryProtocol": { "type": "string" },
+    "traceArtifactSchema": { "type": "string" },
+    "tracePathTemplate": { "type": "string" },
+    "roles": {
+      "type": "object",
+      "required": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"],
+      "additionalProperties": false,
+      "properties": {
+        "researcher": { "$ref": "#/$defs/roleContract" },
+        "planner": { "$ref": "#/$defs/roleContract" },
+        "implementer": { "$ref": "#/$defs/roleContract" },
+        "integrator": { "$ref": "#/$defs/roleContract" },
+        "validator": { "$ref": "#/$defs/roleContract" },
+        "reviewer": { "$ref": "#/$defs/roleContract" },
+        "synthesizer": { "$ref": "#/$defs/roleContract" },
+        "artifact-verifier": { "$ref": "#/$defs/roleContract" }
+      }
+    }
+  },
+  "$defs": {
+    "fieldList": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "ioContract": {
+      "type": "object",
+      "required": ["required"],
+      "additionalProperties": false,
+      "properties": {
+        "required": { "$ref": "#/$defs/fieldList" },
+        "optional": { "$ref": "#/$defs/fieldList" }
+      }
+    },
+    "traceArtifact": {
+      "type": "object",
+      "required": ["requiredFields", "pathTemplate"],
+      "additionalProperties": false,
+      "properties": {
+        "requiredFields": { "$ref": "#/$defs/fieldList" },
+        "pathTemplate": { "type": "string", "pattern": "^\\.memory/orchestrations/<orchestration-id>/roles/" }
+      }
+    },
+    "roleContract": {
+      "type": "object",
+      "required": ["inputContract", "outputContract", "traceArtifact", "verificationExpectations"],
+      "additionalProperties": false,
+      "properties": {
+        "inputContract": { "$ref": "#/$defs/ioContract" },
+        "outputContract": { "$ref": "#/$defs/ioContract" },
+        "traceArtifact": { "$ref": "#/$defs/traceArtifact" },
+        "verificationExpectations": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 },
+          "minItems": 1
+        }
+      }
+    }
+  }
+}

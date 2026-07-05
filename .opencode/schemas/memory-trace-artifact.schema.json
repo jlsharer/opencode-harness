@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencode-harness.local/schemas/memory-trace-artifact.schema.json",
+  "title": "OpenCode Harness Memory Trace Artifact",
+  "type": "object",
+  "required": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
+  "additionalProperties": false,
+  "properties": {
+    "orchestrationId": { "type": "string", "minLength": 1 },
+    "role": {
+      "type": "string",
+      "enum": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"]
+    },
+    "artifactId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "minLength": 1 },
+    "contract": { "type": "string" },
+    "traceSchema": { "type": "string" },
+    "inputContract": {
+      "type": "object",
+      "required": ["inputsReceived", "requiredContextPresent", "routingMetadataStatus"],
+      "additionalProperties": false,
+      "properties": {
+        "inputsReceived": { "type": "string" },
+        "requiredContextPresent": { "type": "string" },
+        "routingMetadataStatus": { "type": "string", "enum": ["present", "absent"] }
+      }
+    },
+    "workPerformed": {
+      "type": "object",
+      "required": ["summary"],
+      "additionalProperties": true,
+      "properties": {
+        "summary": { "type": "string" },
+        "filesRead": { "type": "array", "items": { "type": "string" } },
+        "filesChanged": { "type": "array", "items": { "type": "string" } },
+        "commands": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "outputContract": {
+      "type": "object",
+      "required": ["outputs", "evidence"],
+      "additionalProperties": true,
+      "properties": {
+        "outputs": { "type": "string" },
+        "evidence": { "type": "string" },
+        "artifactLinks": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "handoff": {
+      "type": "object",
+      "required": ["limitations"],
+      "additionalProperties": true,
+      "properties": {
+        "nextRole": { "type": "string" },
+        "limitations": { "type": "string" },
+        "risks": { "type": "string" }
+      }
+    }
+  }
+}
