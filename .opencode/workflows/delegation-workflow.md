@@ -35,6 +35,13 @@ Use `/delegate-orchestration` for parent orchestration across complete workflows
 10. Artifact proof: capture temp-directory proof when generated artifacts require independent inspection.
 11. Final consolidation: summarize validated changes, evidence, risks, trace artifacts, and handoff notes.
 
+## Routing and Activation
+
+- Resolve each role decision before delegation. With committed force-local activation false, local catalog resolution is advisory and does not write native agent models.
+- Native provider transport is supplied through approved external merged OpenCode config, never harness keys in `opencode.json`. `OPENCODE_CONFIG` merges before project config and therefore is not a final override; later `OPENCODE_CONFIG_CONTENT` must not become a secret store.
+- Deliberate force activation statically assigns exactly the eight fixed harness agents at startup only after atomic agent/provider/model/baseURL preflight. Incoherence fails startup without partial mutation or fallback. Quit and restart after configuration or plugin changes.
+- Treat endpoint budgets as cooperative metadata grouped by canonical URL. Health is not proof of exact model identity, tool use, or measured capacity.
+
 ## Completion Standard
 
 The workflow is complete only after concrete validation evidence is present. Lifecycle plugin output can be cited as a warning source but cannot replace validation.

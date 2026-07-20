@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencode-harness.local/schemas/harness-model-routing.schema.json",
+  "title": "OpenCode Harness Model Routing v2",
+  "oneOf": [
+    { "$ref": "#/$defs/routing" },
+    {
+      "type": "object",
+      "required": ["harnessModelRouting"],
+      "additionalProperties": false,
+      "properties": { "harnessModelRouting": { "$ref": "#/$defs/routing" } }
+    }
+  ],
+  "$defs": {
+    "nullableString": { "type": ["string", "null"], "minLength": 1 },
+    "nullableModel": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[^/\\s]+/[^\\s]+$" }
+      ]
+    },
+    "model": { "type": "string", "pattern": "^[^/\\s]+/[^\\s]+$" },
+    "role": {
+      "type": "string",
+      "enum": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"]
+    },
+    "roleOverride": {
+      "type": "object",
+      "required": ["model", "localModel", "variant"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "$ref": "#/$defs/nullableModel" },
+        "localModel": { "$ref": "#/$defs/nullableString" },
+        "variant": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "commandOverride": {
+      "type": "object",
+      "required": ["agent", "model", "variant"],
+      "additionalProperties": false,
+      "properties": {
+        "agent": { "$ref": "#/$defs/role" },
+        "model": { "$ref": "#/$defs/nullableModel" },
+        "variant": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "modelVariant": {
+      "type": "object",
+      "required": ["model", "variant"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "$ref": "#/$defs/nullableModel" },
+        "variant": { "$ref": "#/$defs/nullableString" }
+      }
+    },
+    "catalogEntry": {
+      "type": "object",
+      "required": ["model", "routingServiceUrl", "maxInFlight"],
+      "additionalProperties": false,
+      "properties": {
+        "model": { "$ref": "#/$defs/model" },
+        "routingServiceUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
+        "maxInFlight": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "routing": {
+      "type": "object",
+      "required": ["schemaVersion", "defaultMode", "defaultModel", "singleModel", "localRouting", "roleOverrides", "commandOverrides", "orchestratorCommands", "complexityTiers"],
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": { "const": "2.0.0" },
+        "defaultMode": { "type": "string", "minLength": 1 },
+        "defaultModel": { "$ref": "#/$defs/nullableModel" },
+        "singleModel": {
+          "type": "object",
+          "required": ["enabled", "model"],
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "model": { "$ref": "#/$defs/nullableModel" }
+          }
+        },
+        "localRouting": {
+          "type": "object",
+          "required": ["enabled", "forceLocalForHarnessSubagents", "defaultLocalModel", "models"],
+          "additionalProperties": false,
+          "allOf": [
+            {
+              "if": {
+                "required": ["forceLocalForHarnessSubagents"],
+                "properties": { "forceLocalForHarnessSubagents": { "const": true } }
+              },
+              "then": {
+                "required": ["enabled"],
+                "properties": { "enabled": { "const": true } }
+              }
+            }
+          ],
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "forceLocalForHarnessSubagents": { "type": "boolean" },
+            "defaultLocalModel": { "$ref": "#/$defs/nullableString" },
+            "models": {
+              "type": "object",
+              "minProperties": 1,
+              "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
+              "additionalProperties": { "$ref": "#/$defs/catalogEntry" }
+            }
+          }
+        },
+        "roleOverrides": {
+          "type": "object",
+          "required": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"],
+          "additionalProperties": false,
+          "properties": {
+            "researcher": { "$ref": "#/$defs/roleOverride" },
+            "planner": { "$ref": "#/$defs/roleOverride" },
+            "implementer": { "$ref": "#/$defs/roleOverride" },
+            "integrator": { "$ref": "#/$defs/roleOverride" },
+            "validator": { "$ref": "#/$defs/roleOverride" },
+            "reviewer": { "$ref": "#/$defs/roleOverride" },
+            "synthesizer": { "$ref": "#/$defs/roleOverride" },
+            "artifact-verifier": { "$ref": "#/$defs/roleOverride" }
+          }
+        },
+        "commandOverrides": {
+          "type": "object",
+          "propertyNames": { "pattern": "^/" },
+          "additionalProperties": { "$ref": "#/$defs/commandOverride" }
+        },
+        "orchestratorCommands": {
+          "type": "object",
+          "propertyNames": { "pattern": "^/" },
+          "additionalProperties": {
+            "type": "object",
+            "required": ["owner", "agent", "model", "variant"],
+            "additionalProperties": false,
+            "properties": {
+              "owner": { "const": "orchestrator" },
+              "agent": { "type": "null" },
+              "model": { "$ref": "#/$defs/nullableModel" },
+              "variant": { "$ref": "#/$defs/nullableString" }
+            }
+          }
+        },
+        "complexityTiers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/modelVariant" }
+        }
+      }
+    }
+  }
+}

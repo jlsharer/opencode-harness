@@ -48,3 +48,13 @@ When present in caller input, delegated prompts must preserve:
 - `localModelFallback`
 
 Do not rename the labels, change casing, or supply placeholder values when the caller did not provide them.
+
+## Model Routing Semantics
+
+- The tracked source is `.opencode/routing/harness-model-routing.example.json`; `.opencode/routing/harness-model-routing.json` is an optional ignored operator override. Implicit loading is custom-first with example fallback and no merge. A present unreadable, malformed, or invalid custom file fails closed; explicit paths are exact. If both are absent, copy the example to the custom path. Validation explicitly uses the example.
+- The routing resolver is a deterministic advisory policy surface outside force mode. The committed catalog is enabled but force-local activation is false, so illustrative local selections do not become native agent configuration.
+- Native provider transport is external merged OpenCode config. A native provider id, model suffix, and `baseURL` must cohere with the selected catalog entry; harness policy does not create transport or credentials.
+- `OPENCODE_CONFIG` merges before project config and is not a final project override. `OPENCODE_CONFIG_CONTENT` is later, but inline or committed secrets are prohibited.
+- Deliberate force-local activation statically configures exactly the eight fixed roles at startup. The async config hook preflights all selected agents/providers/models/baseURLs before mutation and rejects startup without partial assignment or fallback on any mismatch.
+- Endpoint `maxInFlight` is cooperative metadata grouped by canonical URL, not an enforced semaphore. Shared-URL entries use one equal budget and require joint capacity validation.
+- Lifecycle hooks are telemetry/guardrails only. The force-false example neither configures provider transport nor mutates agents. Fully quit and restart OpenCode after config or plugin changes; health alone does not establish exact model identity, delegated tool use, or measured capacity.

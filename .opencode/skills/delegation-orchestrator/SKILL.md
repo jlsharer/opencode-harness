@@ -26,11 +26,21 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 
 1. Classify the request into scoped work units and sub-workflows.
 2. Build a DAG of dependencies, parallelizable branches, required role instances, and acceptance gates.
-3. Delegate research before planning, then delegate each remaining category to the matching OpenCode subagent instance.
-4. Pass full context, constraints, allowed paths, artifact expectations, verification commands, orchestration memory paths, role I/O contracts, trace schema, and caller-supplied routing metadata.
-5. Inspect returned evidence for completeness.
-6. Request remediation from the responsible role instance when evidence is incomplete, up to the loop limit.
-7. Consolidate only after required validation evidence is present.
+3. Resolve model routing for each role instance before delegation. Run `node .opencode/routing/resolve-model-routing.mjs --metadata-json '{"command":"/delegate-<role>"}'` to get the deterministic decision. Include the resolved role/model/variant/source in delegation context. Outside force mode, local catalog choices are advisory rather than native agent assignments.
+4. Delegate research before planning, then delegate each remaining category to the matching OpenCode subagent instance.
+5. Pass full context, constraints, allowed paths, artifact expectations, verification commands, orchestration memory paths, role I/O contracts, trace schema, resolved model metadata, and caller-supplied routing metadata.
+6. Inspect returned evidence for completeness.
+7. Request remediation from the responsible role instance when evidence is incomplete, up to the loop limit.
+8. Consolidate only after required validation evidence is present.
+
+## Local Model Routing Boundary
+
+- The committed local catalog is enabled for discovery and advice while `forceLocalForHarnessSubagents` remains false. Its provider ids, model aliases, endpoints, and capacities are illustrative, not installed-model claims.
+- Native OpenCode provider transport remains in approved external merged config. Harness policy never creates providers, baseURLs, credentials, or model maps and must not be copied into `opencode.json`.
+- When deliberately enabled, force mode statically configures exactly the eight fixed harness subagents during startup. Complete native coherence is checked atomically; any missing or mismatched agent/provider/model/baseURL rejects startup without partial mutation or cloud fallback.
+- Endpoint `maxInFlight` values are cooperative dispatch budgets grouped by canonical URL, not enforced runtime semaphores. Measure backend slots before raising them.
+- Lifecycle hooks are telemetry/guardrails only. The pure resolver performs no network calls, and resolver output does not prove endpoint health, model identity, tool use, or capacity.
+- `OPENCODE_CONFIG` is merged before project config and is not a final override. `OPENCODE_CONFIG_CONTENT` is later, but secrets must remain outside committed or inline configuration. Quit and restart OpenCode after config or plugin changes.
 
 ## Role Routing Quick Map
 
@@ -48,3 +58,4 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 - `references/role-routing-matrix.md`
 - `references/validation-checklist.md`
 - `references/trust-and-restart-guide.md`
+- `references/llama-cpp-integration-guide.md`

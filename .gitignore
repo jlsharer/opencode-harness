@@ -1,2 +1,4 @@
 .agents/*
 .codex/*
+.opencode/deployments/llama-server/instances/*.env
+/.opencode/routing/harness-model-routing.json

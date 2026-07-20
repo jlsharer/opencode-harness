@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { pathToFileURL } from 'node:url';
@@ -43,18 +44,29 @@ const STATIC_MANIFEST_PATHS = [
   '.memory/templates/orchestration-index.md',
   '.memory/templates/role-trace-artifact.md',
   '.opencode/skills/delegation-orchestrator/SKILL.md',
+  '.opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md',
   '.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md',
   '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
   '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
   '.opencode/workflows/delegation-workflow.md',
   '.opencode/workflows/validation-workflow.md',
+  '.opencode/deployments/llama-server/compose.yaml',
+  '.opencode/deployments/llama-server/instances/research.env.example',
+  '.opencode/deployments/llama-server/instances/coder.env.example',
+  '.opencode/deployments/llama-server/README.md',
   '.opencode/contracts/role-io-contracts.json',
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
-  '.opencode/routing/harness-model-routing.json',
+  '.opencode/schemas/harness-model-routing.schema.json',
+  '.opencode/routing/harness-model-routing.example.json',
+  '.opencode/routing/routing-config-loader.mjs',
+  '.opencode/routing/routing-policy.mjs',
+  '.opencode/routing/routing-policy.test.mjs',
   '.opencode/routing/resolve-model-routing.mjs',
+  '.opencode/routing/model-routing-helper.mjs',
   '.opencode/plugins/index.js',
   '.opencode/plugin-modules/harness-lifecycle.js',
+  '.opencode/plugin-modules/role-model-routing-enforcement.js',
   '.opencode/scripts/validate-harness.mjs',
   '.opencode/harness.manifest.json',
 ];
@@ -68,8 +80,20 @@ const STATIC_MEMORY_PATHS = [
 const SCHEMA_PATHS = [
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/harness-model-routing.schema.json',
 ];
 const ROLE_CONTRACT_PATH = '.opencode/contracts/role-io-contracts.json';
+const HARNESS_ROUTING_KEYS = [
+  'harnessModelRouting',
+  'roleOverrides',
+  'commandOverrides',
+  'complexityTiers',
+  'localRouting',
+  'routingServiceUrl',
+  'localModelEnabled',
+  'preferLocal',
+  'localModelFallback',
+];
 
 function fail(message) {
   throw new Error(message);
@@ -128,7 +152,7 @@ function frontmatter(markdown, pathname) {
 
 function assertNoHarnessRoutingInOpenCodeConfig(config) {
   const serialized = JSON.stringify(config);
-  if (/harnessModelRouting|roleOverrides|commandOverrides|complexityTiers/.test(serialized)) {
+  if (HARNESS_ROUTING_KEYS.some((key) => serialized.includes(key))) {
     fail('opencode.json contains harness-owned routing policy');
   }
 }
@@ -214,10 +238,70 @@ function assertManifest(manifest) {
     }
     file(artifact.path);
   }
+  if (seen.has('.opencode/routing/harness-model-routing.json')) {
+    fail('Manifest must not own the operator routing override');
+  }
+  const example = manifest.artifacts.find((artifact) => artifact.path === '.opencode/routing/harness-model-routing.example.json');
+  if (example?.kind !== 'harness-routing-config') fail('Manifest must classify the routing example as harness-routing-config');
+  if (!seen.has('.opencode/routing/routing-config-loader.mjs')) fail('Manifest must own the shared routing config loader');
 }
 
-function assertRouting(routingConfig) {
-  const routing = routingConfig.harnessModelRouting ?? routingConfig;
+function assertRoutingConfigSplit() {
+  const ignoreLines = read('.gitignore').split(/\r?\n/).filter(Boolean);
+  const exactRule = '/.opencode/routing/harness-model-routing.json';
+  if (ignoreLines.filter((line) => line === exactRule).length !== 1) {
+    fail(`.gitignore must contain exactly one rooted operator routing rule: ${exactRule}`);
+  }
+  for (const pathname of [
+    '.opencode/routing/resolve-model-routing.mjs',
+    '.opencode/routing/model-routing-helper.mjs',
+    '.opencode/plugin-modules/role-model-routing-enforcement.js',
+  ]) {
+    const source = read(pathname);
+    if (source.includes('harness-model-routing.json') || source.includes('harness-model-routing.example.json')) {
+      fail(`${pathname} must delegate routing filename precedence to routing-config-loader.mjs`);
+    }
+  }
+}
+
+function assertRoutingSchema(schema) {
+  if (schema.$schema !== 'https://json-schema.org/draft/2020-12/schema') {
+    fail('Harness routing schema must declare JSON Schema draft 2020-12');
+  }
+  if (!Array.isArray(schema.oneOf) || schema.$defs?.routing?.additionalProperties !== false) {
+    fail('Harness routing schema must cover wrapped/unwrapped documents with a closed routing object');
+  }
+  for (const boundary of ['roleOverride', 'commandOverride', 'modelVariant', 'catalogEntry']) {
+    if (schema.$defs?.[boundary]?.additionalProperties !== false) {
+      fail(`Harness routing schema boundary must reject unknown keys: ${boundary}`);
+    }
+  }
+  const localRouting = schema.$defs?.routing?.properties?.localRouting;
+  const forceDependency = localRouting?.allOf?.some((constraint) =>
+    constraint?.if?.properties?.forceLocalForHarnessSubagents?.const === true &&
+    constraint?.then?.properties?.enabled?.const === true
+  );
+  if (!forceDependency) {
+    fail('Harness routing schema must require enabled:true when forceLocalForHarnessSubagents is true');
+  }
+  for (const collection of ['commandOverrides', 'orchestratorCommands']) {
+    if (schema.$defs?.routing?.properties?.[collection]?.propertyNames?.pattern !== '^/') {
+      fail(`Harness routing schema must require slash-prefixed ${collection} keys`);
+    }
+  }
+  const policySource = read('.opencode/routing/routing-policy.mjs');
+  if (/\bajv\b|from\s+['"][^'"]+['"]/.test(policySource)) {
+    fail('Routing policy must remain dependency-free and must not import Ajv or other modules');
+  }
+}
+
+async function assertRouting(routingConfig) {
+  const policy = await import(pathToFileURL(path.join(ROOT, '.opencode/routing/routing-policy.mjs')).href);
+  const routing = policy.normalizeAndValidateRoutingConfig(routingConfig);
+  if (routing.schemaVersion !== '2.0.0') fail('Routing must use exact schemaVersion 2.0.0');
+  if (!routing.localRouting.enabled || routing.localRouting.forceLocalForHarnessSubagents) {
+    fail('Committed routing must have localRouting enabled and forceLocalForHarnessSubagents false');
+  }
   sameSet(Object.keys(routing.roleOverrides ?? {}), ROLES, 'routing roleOverrides');
   sameSet(
     Object.values(routing.commandOverrides ?? {}).map((entry) => entry.agent),
@@ -239,6 +323,33 @@ function assertRouting(routingConfig) {
   }
   if (orchestrationEntry.agent !== null) {
     fail('/delegate-orchestration must not assign a subagent');
+  }
+  if (Object.values(routing.roleOverrides).some((entry) => entry.model !== null)) {
+    fail('Committed native roleOverrides models must remain null');
+  }
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const invalidForce = clone(routingConfig);
+  invalidForce.harnessModelRouting.localRouting.enabled = false;
+  invalidForce.harnessModelRouting.localRouting.forceLocalForHarnessSubagents = true;
+  expectThrows('force dependency parity', () => policy.normalizeAndValidateRoutingConfig(invalidForce), /requires enabled:true/);
+  const invalidOrchestrator = clone(routingConfig);
+  invalidOrchestrator.harnessModelRouting.orchestratorCommands.bad =
+    invalidOrchestrator.harnessModelRouting.orchestratorCommands['/delegate-orchestration'];
+  delete invalidOrchestrator.harnessModelRouting.orchestratorCommands['/delegate-orchestration'];
+  expectThrows('orchestrator command key parity', () => policy.normalizeAndValidateRoutingConfig(invalidOrchestrator), /command keys must start with \/$/);
+}
+
+async function assertRoutingResolver(routingConfig) {
+  const { resolveRoutingDecision } = await import(pathToFileURL(path.join(ROOT, '.opencode/routing/routing-policy.mjs')).href);
+  const decision = resolveRoutingDecision({ config: routingConfig, request: { command: '/delegate-implement' } });
+  if (decision.agent !== 'implementer' || decision.sources.agent !== 'commandOverride') {
+    fail('Routing resolver must lock /delegate-implement to implementer');
+  }
+  if (decision.local.enforced || decision.local.networkCalls || decision.local.catalogName !== 'qwen-coder') {
+    fail('Committed resolver decision must be advisory, network-free, and identify qwen-coder');
+  }
+  if (Object.hasOwn(decision, 'localModel') || Object.hasOwn(decision.local, 'effectiveFallbackModel')) {
+    fail('Routing resolver must not emit legacy localModel output');
   }
 }
 
@@ -310,6 +421,108 @@ function assertOpenCodeReferences() {
   }
 }
 
+function writeTempRouting(dir, config) {
+  const pathname = path.join(dir, `${Math.random().toString(16).slice(2)}.json`);
+  fs.writeFileSync(pathname, JSON.stringify(config), 'utf8');
+  return pathname;
+}
+
+function expectThrows(label, fn, pattern) {
+  try {
+    fn();
+  } catch (error) {
+    if (!pattern.test(error.message)) {
+      fail(`${label} threw unexpected error: ${error.message}`);
+    }
+    return;
+  }
+  fail(`${label} must throw`);
+}
+
+async function assertRoleModelRoutingEnforcement(routingConfig) {
+  const modulePath = path.join(ROOT, '.opencode/plugin-modules/role-model-routing-enforcement.js');
+  const { applyHarnessRoleModelOverrides, resolveHarnessRoutingPath } = await import(pathToFileURL(modulePath).href);
+  if (typeof applyHarnessRoleModelOverrides !== 'function') {
+    fail('Role model routing enforcement module must export applyHarnessRoleModelOverrides');
+  }
+  if (typeof resolveHarnessRoutingPath !== 'function') {
+    fail('Role model routing enforcement module must export resolveHarnessRoutingPath');
+  }
+
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-harness-routing-'));
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const cfgWithAgents = () => ({
+    agent: Object.fromEntries(ROLES.map((role) => [role, { mode: 'subagent' }])),
+    provider: {
+      'llamacpp-research': {
+        options: { baseURL: 'http://127.0.0.1:8080/v1' },
+        models: { 'qwen2.5-7b-instruct': {} },
+      },
+      'llamacpp-coder': {
+        options: { baseURL: 'http://127.0.0.1:8081/v1' },
+        models: { 'qwen2.5-coder-7b': {} },
+      },
+    },
+  });
+
+  const previousCwd = process.cwd();
+  const cwdSubdir = path.join(tempDir, 'subdir');
+  fs.mkdirSync(cwdSubdir);
+  try {
+    process.chdir(cwdSubdir);
+    const defaultCfg = cfgWithAgents();
+    applyHarnessRoleModelOverrides(defaultCfg, { routingDocument: routingConfig });
+    if (ROLES.some((role) => Object.hasOwn(defaultCfg.agent[role], 'model'))) {
+      fail('Committed non-force config must preserve null roleOverrides without own model mutation');
+    }
+    const projectSubdirPath = path.join(ROOT, '.opencode/plugin-modules');
+    if (!path.isAbsolute(resolveHarnessRoutingPath({ routingPath: '.opencode/routing/harness-model-routing.example.json' }))) {
+      fail('Plugin explicit routing path must resolve exactly to an absolute path');
+    }
+  } finally {
+    process.chdir(previousCwd);
+  }
+
+  const forceRouting = clone(routingConfig);
+  forceRouting.harnessModelRouting.localRouting.forceLocalForHarnessSubagents = true;
+  const forceCfg = cfgWithAgents();
+  const providerBefore = clone(forceCfg.provider);
+  applyHarnessRoleModelOverrides(forceCfg, { routingPath: writeTempRouting(tempDir, forceRouting) });
+  if (ROLES.some((role) => !Object.hasOwn(forceCfg.agent[role], 'model'))) {
+    fail('Force-local enforcement must assign all eight agents');
+  }
+  if (JSON.stringify(forceCfg.provider) !== JSON.stringify(providerBefore)) {
+    fail('Force-local enforcement must not mutate providers');
+  }
+
+  const failureCfg = cfgWithAgents();
+  delete failureCfg.agent['artifact-verifier'];
+  const failureBefore = clone(failureCfg);
+  expectThrows(
+    'eighth-role atomic preflight',
+    () => applyHarnessRoleModelOverrides(failureCfg, { routingPath: writeTempRouting(tempDir, forceRouting) }),
+    /artifact-verifier/,
+  );
+  if (JSON.stringify(failureCfg) !== JSON.stringify(failureBefore)) {
+    fail('Failed eighth-role preflight must not partially mutate agents or providers');
+  }
+
+  expectThrows(
+    'unreadable routing JSON',
+    () => applyHarnessRoleModelOverrides({ agent: {} }, { routingPath: path.join(tempDir, 'missing.json') }),
+    /Unable to read routing config/,
+  );
+
+  const malformedRoutingPath = path.join(tempDir, 'malformed-routing.json');
+  fs.writeFileSync(malformedRoutingPath, '{"harnessModelRouting":', 'utf8');
+  expectThrows(
+    'malformed routing JSON',
+    () => applyHarnessRoleModelOverrides({ agent: {} }, { routingPath: malformedRoutingPath }),
+    /Malformed routing config JSON/,
+  );
+  fs.rmSync(tempDir, { recursive: true, force: true });
+}
+
 function assertRecursiveOrchestrationDocs() {
   const command = read('.opencode/commands/delegate-orchestration.md');
   for (const snippet of [
@@ -366,6 +579,9 @@ async function assertPluginAdapter() {
   if (!adapter.includes("from '../plugin-modules/harness-lifecycle.js'")) {
     fail('Plugin adapter must import segmented harness lifecycle plugin');
   }
+  if (!adapter.includes("from '../plugin-modules/role-model-routing-enforcement.js'")) {
+    fail('Plugin adapter must import role model routing enforcement plugin');
+  }
   if (!/export\s+default\s+async\s+function|export\s+default\s+function|export\s+default\s+\w+/.test(adapter)) {
     fail('Plugin adapter must have a default export');
   }
@@ -378,9 +594,27 @@ async function assertPluginAdapter() {
   if (!lifecycle.includes('HarnessLifecyclePlugin')) {
     fail('Segmented lifecycle plugin export must remain separate');
   }
+  for (const staleRoutingSnippet of ['resolvedRouting', 'injectModelFlag', 'resolveModelForRole', 'input.args.command =']) {
+    if (lifecycle.includes(staleRoutingSnippet)) {
+      fail(`Lifecycle plugin must not perform model injection or cached routing: ${staleRoutingSnippet}`);
+    }
+  }
+  const roleRouting = read('.opencode/plugin-modules/role-model-routing-enforcement.js');
+  if (!roleRouting.includes('HarnessRoleModelRoutingEnforcementPlugin')) {
+    fail('Segmented role model routing enforcement plugin export must remain separate');
+  }
+  for (const snippet of ['roleOverrides', 'resolver-only advisory routing policy', 'never mutate agents']) {
+    if (!roleRouting.includes(snippet)) {
+      fail(`Role model routing enforcement module must document roleOverrides-only scope: ${snippet}`);
+    }
+  }
   const pluginModule = await import(pathToFileURL(path.join(ROOT, '.opencode/plugins/index.js')).href);
   if (typeof pluginModule.default !== 'function') {
     fail('Plugin adapter dynamic import must expose a default function');
+  }
+  const hooks = await pluginModule.default({});
+  if (typeof hooks.config !== 'function') {
+    fail('Plugin adapter must expose reachable config hook');
   }
 }
 
@@ -423,13 +657,16 @@ async function main() {
   if (!Array.isArray(instructions) || !instructions.includes('AGENTS.md') || !instructions.includes('.memory/protocols/memory-management.md')) {
     fail('opencode.json instructions must include AGENTS.md and .memory/protocols/memory-management.md');
   }
-  const routing = json('.opencode/routing/harness-model-routing.json');
-  assertRouting(routing);
+  const routing = json('.opencode/routing/harness-model-routing.example.json');
+  await assertRouting(routing);
+  await assertRoutingResolver(routing);
+  await assertRoleModelRoutingEnforcement(routing);
   const roleContracts = json(ROLE_CONTRACT_PATH);
   assertRoleContracts(roleContracts);
   for (const schemaPath of SCHEMA_PATHS) {
     json(schemaPath);
   }
+  assertRoutingSchema(json('.opencode/schemas/harness-model-routing.schema.json'));
   for (const memoryPath of STATIC_MEMORY_PATHS) {
     file(memoryPath);
   }
@@ -440,12 +677,14 @@ async function main() {
     fail('.opencode/harness.manifest.json must contain artifacts array');
   }
   assertManifest(manifest);
+  assertRoutingConfigSplit();
 
   for (const role of ROLES) {
     const pathname = `.opencode/agents/${role}.md`;
     const fm = frontmatter(read(pathname), pathname);
     if (!fm.description) fail(`Missing role description: ${pathname}`);
     if (fm.mode !== 'subagent') fail(`Role must use mode: subagent: ${pathname}`);
+    if (Object.hasOwn(fm, 'model')) fail(`Role must omit model: ${pathname}`);
     if (!Object.hasOwn(fm, 'permission')) fail(`Missing role permission: ${pathname}`);
     assertAgentContractReferences(role, read(pathname));
   }

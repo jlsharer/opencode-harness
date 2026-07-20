@@ -33,9 +33,10 @@ Ask questions before delegation only when required context is missing or ambiguo
 1. Create or update `.memory/orchestrations/<orchestration-id>/INDEX.md`.
 2. Decompose the workflow into a dependency graph of scoped work units and sub-workflows.
 3. Use a DAG for dependencies. Run independent role instances in parallel whenever their inputs do not conflict.
-4. Require research before planning so plans are grounded in accurate and sourced information.
-5. Require planning for non-trivial workflows and validation before acceptance.
-6. Spawn as many role instances as the DAG requires. Role names stay fixed, but instances are repeatable:
+4. Resolve model routing for each role before delegation. Run `node .opencode/routing/resolve-model-routing.mjs --metadata-json '{"command":"/delegate-<role>"}'` and include the resolved decision in delegation context. With the committed force-local setting false, local catalog selections are advisory and are not native agent configuration. Lifecycle hooks provide telemetry only.
+5. Require research before planning so plans are grounded in accurate and sourced information.
+6. Require planning for non-trivial workflows and validation before acceptance.
+7. Spawn as many role instances as the DAG requires. Role names stay fixed, but instances are repeatable:
    - `researcher`
    - `planner`
    - `implementer`
@@ -44,10 +45,18 @@ Ask questions before delegation only when required context is missing or ambiguo
    - `reviewer`
    - `synthesizer`
    - `artifact-verifier`
-7. Give each role instance a unique scoped artifact ID, such as `root-researcher-001-docs`, `api-planner-002-contracts`, or `ui-validator-003-regression`.
-8. Store or reference every role instance trace at `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
-9. For each scoped work unit, use at most 3 remediation loops. After the third failed loop, delegate synthesis of the blocker and ask the user for direction.
-10. Treat lifecycle hooks and plugins as guardrails and telemetry only. They cannot replace validator or artifact-verifier evidence.
+8. Give each role instance a unique scoped artifact ID, such as `root-researcher-001-docs`, `api-planner-002-contracts`, or `ui-validator-003-regression`.
+9. Store or reference every role instance trace at `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
+10. For each scoped work unit, use at most 3 remediation loops. After the third failed loop, delegate synthesis of the blocker and ask the user for direction.
+11. Treat lifecycle hooks and plugins as guardrails and telemetry only. They cannot replace validator or artifact-verifier evidence.
+
+## Local Routing Boundary
+
+- Native provider transport is external merged OpenCode configuration. Do not add provider transport or harness policy to repository `opencode.json`.
+- The committed routing catalog is illustrative and force-local activation is false. Provider ids, aliases, URLs, model identities, and capacities do not claim installed infrastructure.
+- Force-local activation is a startup-time static assignment for exactly the eight harness subagents. It atomically checks every selected agent, provider, model, and baseURL before mutation and may deliberately fail startup on incoherence rather than fall back.
+- Routing `maxInFlight` values are cooperative budgets grouped by canonical endpoint URL, not runtime semaphores.
+- OpenCode loads config and plugin changes at startup; quit and restart after changes. `OPENCODE_CONFIG` merges before project config and is not a final override. `OPENCODE_CONFIG_CONTENT` is later, but must not be used to commit or expose secrets.
 
 ## Mandatory Role Gates
 

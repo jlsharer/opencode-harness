@@ -26,12 +26,13 @@ The OpenCode harness owns these files:
 - Commands: `.opencode/commands/delegate-*.md`, including the central orchestrator-owned `.opencode/commands/delegate-orchestration.md`.
 - Skills and references: `.opencode/skills/delegation-orchestrator/SKILL.md` and `.opencode/skills/delegation-orchestrator/references/*.md`.
 - Workflows: `.opencode/workflows/delegation-workflow.md` and `.opencode/workflows/validation-workflow.md`.
-- Role contracts and schemas: `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/role-io-contracts.schema.json`, and `.opencode/schemas/memory-trace-artifact.schema.json`.
-- Harness routing: `.opencode/routing/harness-model-routing.json` and `.opencode/routing/resolve-model-routing.mjs`.
+- Role contracts and schemas: `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/role-io-contracts.schema.json`, `.opencode/schemas/memory-trace-artifact.schema.json`, and `.opencode/schemas/harness-model-routing.schema.json`.
+- Harness routing: committed `.opencode/routing/harness-model-routing.example.json`, optional ignored operator override `.opencode/routing/harness-model-routing.json`, shared loader `.opencode/routing/routing-config-loader.mjs`, the pure `.opencode/routing/routing-policy.mjs`, its dependency-free tests, and thin CLI/helper entry points.
+- Local deployment examples: `.opencode/deployments/llama-server/`, containing a reusable Compose service, tracked sanitized env templates, and operator guidance. Private `instances/*.env` copies are not harness artifacts.
 - Lifecycle plugin adapter and guardrails: `.opencode/plugins/index.js` as the only auto-loaded plugin entry point, with segmented guardrail modules under `.opencode/plugin-modules/`.
 - Validation and manifest files: `.opencode/scripts/validate-harness.mjs` and `.opencode/harness.manifest.json`.
 
-`opencode.json` must contain only native OpenCode configuration keys. Harness-owned routing settings must not be embedded in `opencode.json`; they live in `.opencode/routing/harness-model-routing.json` and are consumed by the harness resolver.
+`opencode.json` must contain only native OpenCode configuration keys. Harness-owned routing settings must not be embedded in `opencode.json`; committed defaults live in `.opencode/routing/harness-model-routing.example.json` and are consumed by the harness resolver.
 
 Project-owned memory lives under `.memory/`:
 
@@ -118,29 +119,33 @@ The reusable delegation rules live in `.opencode/skills/delegation-orchestrator/
 
 Native OpenCode can select models through its own configuration and invocation controls. Harness model routing is a separate policy layer that chooses a model, variant, and role target before native dispatch.
 
-The harness-owned routing resolver supports this precedence:
+The routing document is a strict v2 contract. It contains named local catalog entries, a catalog default, per-role native or local selectors, fixed command targets, complexity tiers, and explicit `enabled` and `forceLocalForHarnessSubagents` switches. Legacy singular local keys are rejected with migration guidance rather than inferred. A dependency-free pure policy module performs executable normalization and semantic validation; the draft 2020-12 schema is the structural interoperability document.
 
-1. Explicit caller model or provider model.
-2. Command override.
-3. Role override.
-4. Complexity tier.
-5. Single-model default.
-6. Default model.
+The committed example is the deterministic validation input. Operators may optionally copy it to `.opencode/routing/harness-model-routing.json` and customize that ignored file. Implicit loads select the custom file when present and otherwise the example; the documents are never merged. A selected custom file that is unreadable, malformed, or semantically invalid fails closed without example fallback. Explicit paths read exactly that path. If neither implicit candidate exists, the loader reports both paths and the `cp .opencode/routing/harness-model-routing.example.json .opencode/routing/harness-model-routing.json` setup command. Plugin project discovery walks ancestors to the first routing pair, then falls back to the module pair.
 
-Local model metadata is opt-in and never causes network calls in the resolver. Effective local routing metadata is resolved from caller metadata first and config defaults second:
+The committed catalog is enabled for discovery and advisory resolution while force-local activation remains false. Outside force mode, model precedence is explicit request, orchestrator command, command, role local selector, role native override, complexity, enabled single model, then default model. Catalog metadata can describe an advisory local choice, but only a non-null native role override is eligible for startup agent configuration. The resolver makes no network calls and does not prove native enforcement.
 
-- `routingServiceUrl`
-- `localModelEnabled`
-- `preferLocal`
-- `localModelFallback`
+Force mode applies only to the exact eight fixed harness roles. A role local selector precedes the catalog default, and an explicit request model becomes an exact-match constraint rather than an escape route. At startup, the async config hook computes all eight assignments and preflights every existing subagent, native provider prefix, provider model declaration when present, and catalog-backed canonical `baseURL`. Only after the complete plan passes does it set agent models. Any mismatch deliberately rejects startup with no partial agent or provider mutation and no cloud/default fallback.
 
-The routing config is stored in `.opencode/routing/harness-model-routing.json`. The resolver at `.opencode/routing/resolve-model-routing.mjs` reads that config, accepts CLI metadata, and prints a deterministic JSON decision.
+Actual provider transport remains native OpenCode configuration outside committed project defaults. Approved user/global config or a non-conflicting `OPENCODE_CONFIG` can define native provider options, credentials or environment references, model maps, and `provider/model` identities. `OPENCODE_CONFIG` merges before project config and is not a final override; `OPENCODE_CONFIG_CONTENT` is merged later but must not be used to commit or expose secrets. Harness routing never creates or mutates providers, baseURLs, credentials, or model maps.
+
+Catalog provider ids, model aliases, endpoint URLs, ports, GPU settings, and capacities are illustrative examples, not installed-resource claims. Endpoint `maxInFlight` values are cooperative orchestration budgets grouped by canonical URL, not runtime semaphores or capacity proof. Shared-URL catalog entries require equal budgets.
+
+Config and plugin changes require fully quitting and restarting OpenCode. The force-false example does not configure provider transport or mutate native agents. Local integration validation is offline and explicitly example-based: parse policy/schema/native config, exercise policy/CLI/helper parity, prove force-false advisory behavior and atomic synthetic force behavior, and reject secrets or non-native routing keys in `opencode.json`. Live health, exact model identity, delegated tool use, quality, concurrency, and VRAM benchmarks are separate operator-dependent gates; health alone is insufficient.
+
+## Local llama-server Deployment
+
+`.opencode/deployments/llama-server/compose.yaml` is one static service template run as separately named `llama-research` and `llama-coder` projects with private ignored env files. It requires an approved digest-pinned image, a unique loopback host port, an existing absolute model directory, a model file, and an alias. The model directory is mounted read-only without automatic host-path creation. The service intentionally has no fixed `container_name`, overriding `command`, or secret.
+
+The checked-in env templates align with the illustrative routing identities but require operator replacement of image digest, private paths, aliases where needed, topology, and unmeasured capacities. NVIDIA capability reservation does not prove GPU isolation. Static instance settings change on recreation, and a request model must match the resident alias. Request-time selection requires a separately designed router with cold-load, eviction, timeout, provider-propagation, shared-failure-domain, and endpoint-budget validation.
 
 ## Lifecycle Guardrails
 
-`.opencode/plugins/index.js` is the local project plugin entry point. It is the only JavaScript module in the auto-loaded `.opencode/plugins/` directory. It is a pure adapter that imports segmented logic from `.opencode/plugin-modules/harness-lifecycle.js` and exports the default plugin function expected by OpenCode local plugin loading.
+`.opencode/plugins/index.js` is the local project plugin entry point. It is the only JavaScript module in the auto-loaded `.opencode/plugins/` directory. It is a pure adapter that imports segmented logic from `.opencode/plugin-modules/` and exports the default plugin function expected by OpenCode local plugin loading.
 
 `.opencode/plugin-modules/harness-lifecycle.js` provides guardrail and telemetry hooks for OpenCode sessions. It can warn about dangerous commands, remind users that delegation evidence is required, and surface validation guidance. Keeping it outside `.opencode/plugins/` prevents OpenCode from auto-loading segmented modules separately from the adapter.
+
+`.opencode/plugin-modules/role-model-routing-enforcement.js` is the startup configuration boundary for the assignment plan described above. It is separate from lifecycle telemetry and is not acceptance evidence. Although its config callback is asynchronous, all selected native relationships are checked before any agent mutation.
 
 Do not list `.opencode/plugins/index.js` or `.opencode/plugin-modules/harness-lifecycle.js` as local paths in `opencode.json`; the documented `plugin` array is for npm packages, while local project plugins live under `.opencode/plugins/`.
 
@@ -165,11 +170,15 @@ Required validation includes:
 - `.opencode/commands/delegate-orchestration.md` has frontmatter with `description`, omits `agent`, sets `subtask: false`, and documents recursive DAG orchestration.
 - `opencode.json` parses and does not contain harness-owned routing keys.
 - `opencode.json` instructions include `AGENTS.md` and `.memory/protocols/memory-management.md`, and it does not list local plugin paths.
-- `.opencode/routing/harness-model-routing.json` parses.
+- `.opencode/routing/harness-model-routing.example.json` and `.opencode/schemas/harness-model-routing.schema.json` parse; the pure dependency-free normalizer provides executable semantic validation. Validation does not consume the optional ignored custom override.
 - `.opencode/contracts/role-io-contracts.json` parses and contains all eight roles.
 - `.opencode/schemas/role-io-contracts.schema.json` and `.opencode/schemas/memory-trace-artifact.schema.json` parse.
-- `.opencode/routing/resolve-model-routing.mjs` resolves explicit, command, role, complexity, single/default, and local fallback metadata without network calls.
-- `.opencode/plugins/index.js` imports `.opencode/plugin-modules/harness-lifecycle.js` and exports a default plugin function; segmented plugin logic remains separate and is not auto-loaded independently.
+- Routing policy tests cover strict v2 structure and semantics, deterministic non-mutating decisions, fixed-command conflict rejection, force-false advisory behavior, all-eight force assignment, native provider/model/baseURL coherence, and failure without partial or provider mutation.
+- CLI and helper outputs match the pure policy without network calls.
+- Native local transport remains outside committed project defaults and uses native OpenCode provider/model settings instead of harness metadata in `opencode.json`.
+- `.opencode/plugins/index.js` imports segmented modules and exports a default plugin function; segmented plugin logic remains separate and is not auto-loaded independently. Lifecycle behavior is telemetry only.
+- Both illustrative Compose instances render from temporary env files with a digest-pinned image, unique loopback ports, exact aliases, read-only non-auto-created binds, and no fixed container name, command, secret, or private committed path.
+- Documentation consistently describes restart activation, `OPENCODE_CONFIG` precedence, cooperative endpoint budgets, illustrative identities, static-versus-router behavior, and operator-dependent live/model/tool-use/benchmark proof.
 - `.opencode/scripts/validate-harness.mjs` passes.
 - References to `.agents` or `.codex` appear only in this design document or `AGENTS.md` as reference-material notes, never as `.opencode` runtime dependencies.
 - Routing label preservation text is present in the command, skill, or workflow surfaces.

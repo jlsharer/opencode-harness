@@ -1,0 +1,35 @@
+services:
+  llama-server:
+    image: "${LLAMA_IMAGE:?set an approved digest-pinned LLAMA_IMAGE}"
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${HOST_PORT:?set a unique HOST_PORT}:8080"
+    volumes:
+      - type: bind
+        source: "${MODEL_DIR:?set an existing absolute MODEL_DIR}"
+        target: /models
+        read_only: true
+        bind:
+          create_host_path: false
+    environment:
+      LLAMA_ARG_MODEL: "/models/${MODEL_FILE:?set MODEL_FILE}"
+      LLAMA_ARG_ALIAS: "${MODEL_ALIAS:?set MODEL_ALIAS to the provider model suffix}"
+      LLAMA_ARG_HOST: "0.0.0.0"
+      LLAMA_ARG_PORT: "8080"
+      LLAMA_ARG_CTX_SIZE: "${CTX_SIZE:-8192}"
+      LLAMA_ARG_N_PARALLEL: "${PARALLEL:-1}"
+      LLAMA_ARG_CACHE_TYPE_K: "${CACHE_TYPE_K:-f16}"
+      LLAMA_ARG_CACHE_TYPE_V: "${CACHE_TYPE_V:-f16}"
+      LLAMA_ARG_FLASH_ATTN: "${FLASH_ATTN:-auto}"
+      LLAMA_ARG_N_GPU_LAYERS: "${GPU_LAYERS:-all}"
+      LLAMA_ARG_SPLIT_MODE: "${SPLIT_MODE:-layer}"
+      LLAMA_ARG_TENSOR_SPLIT: "${TENSOR_SPLIT:-1}"
+      LLAMA_ARG_MAIN_GPU: "${MAIN_GPU:-0}"
+      LLAMA_ARG_ENDPOINT_METRICS: "${METRICS:-true}"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
