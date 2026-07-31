@@ -1,10 +1,6 @@
 ---
 description: Artifact proof role for generated files, temp-directory checks, and parse or render evidence.
 mode: subagent
-permission:
-  edit: deny
-  bash: ask
-  webfetch: ask
 ---
 
 # Artifact Verifier

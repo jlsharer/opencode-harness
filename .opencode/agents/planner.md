@@ -1,10 +1,6 @@
 ---
 description: Planning role for task sequencing, file contracts, dependencies, and acceptance gates.
 mode: subagent
-permission:
-  edit: deny
-  bash: ask
-  webfetch: ask
 ---
 
 # Planner

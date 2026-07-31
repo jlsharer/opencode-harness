@@ -1,10 +1,6 @@
 ---
 description: Integration role for cross-artifact path, schema, manifest, and workflow consistency.
 mode: subagent
-permission:
-  edit: ask
-  bash: ask
-  webfetch: ask
 ---
 
 # Integrator

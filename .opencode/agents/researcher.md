@@ -1,10 +1,6 @@
 ---
 description: Source-backed research role for facts, compatibility evidence, and citations.
 mode: subagent
-permission:
-  edit: deny
-  bash: ask
-  webfetch: ask
 ---
 
 # Researcher
