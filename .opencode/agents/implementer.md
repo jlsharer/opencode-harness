@@ -1,6 +1,8 @@
 ---
 description: Implementation role for tightly scoped, plan-approved file creation and edits.
 mode: subagent
+permission:
+  task: deny
 ---
 
 # Implementer

@@ -1,6 +1,11 @@
 ---
 description: Planning role for task sequencing, file contracts, dependencies, and acceptance gates.
 mode: subagent
+permission:
+  edit:
+    "*": deny
+    ".memory/orchestrations/*/roles/planner/*.md": allow
+  task: deny
 ---
 
 # Planner

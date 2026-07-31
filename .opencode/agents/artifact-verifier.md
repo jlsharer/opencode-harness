@@ -1,6 +1,11 @@
 ---
 description: Artifact proof role for generated files, temp-directory checks, and parse or render evidence.
 mode: subagent
+permission:
+  edit:
+    "*": deny
+    ".memory/orchestrations/*/roles/artifact-verifier/*.md": allow
+  task: deny
 ---
 
 # Artifact Verifier
