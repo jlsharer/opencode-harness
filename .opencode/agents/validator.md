@@ -2,9 +2,10 @@
 description: Validation role for file existence, schema parsing, command output, and acceptance evidence.
 mode: subagent
 permission:
-  edit: deny
-  bash: ask
-  webfetch: ask
+  edit:
+    "*": deny
+    ".memory/orchestrations/*/roles/validator/*.md": allow
+  task: deny
 ---
 
 # Validator

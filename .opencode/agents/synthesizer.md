@@ -2,9 +2,10 @@
 description: Synthesis role for resolving role-output conflicts and preparing final recommendations.
 mode: subagent
 permission:
-  edit: deny
-  bash: ask
-  webfetch: ask
+  edit:
+    "*": deny
+    ".memory/orchestrations/*/roles/synthesizer/*.md": allow
+  task: deny
 ---
 
 # Synthesizer

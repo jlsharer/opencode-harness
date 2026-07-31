@@ -2,9 +2,7 @@
 description: Implementation role for tightly scoped, plan-approved file creation and edits.
 mode: subagent
 permission:
-  edit: ask
-  bash: ask
-  webfetch: ask
+  task: deny
 ---
 
 # Implementer

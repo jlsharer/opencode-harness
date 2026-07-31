@@ -2,9 +2,10 @@
 description: Review role for defects, regressions, risks, and missing tests.
 mode: subagent
 permission:
-  edit: deny
-  bash: ask
-  webfetch: ask
+  edit:
+    "*": deny
+    ".memory/orchestrations/*/roles/reviewer/*.md": allow
+  task: deny
 ---
 
 # Reviewer
