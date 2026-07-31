@@ -151,6 +151,74 @@ Do not list `.opencode/plugins/index.js` or `.opencode/plugin-modules/harness-li
 
 Lifecycle hooks are not acceptance proof. Acceptance requires concrete validator or artifact-verifier evidence from `.opencode/workflows/validation-workflow.md` and `node .opencode/scripts/validate-harness.mjs`.
 
+## Agentic Protocol Hooks
+
+The accepted agentic protocol hook design is a future harness extension for low-noise, deterministic reminders around high-value agent actions. It does not add runtime hook files in this document change. The design keeps hooks as guardrails and telemetry only; validator or artifact-verifier evidence remains the acceptance boundary.
+
+### Architecture and Boundaries
+
+The design uses a host-neutral core for event normalization, file/action classification, registry selection, noise policy, reminder rendering, ledger-entry shaping, and summaries. Future OpenCode delivery belongs in segmented modules under `.opencode/plugin-modules/`, with `.opencode/plugins/index.js` remaining the only auto-loaded local plugin and a thin import/merge adapter.
+
+The core and OpenCode adapter must not store provider tokens, secrets, full prompts, raw file contents, full shell commands, user auth paths, or private absolute paths. Reminder text is static registry text plus sanitized identifiers only, so protocol hooks do not become a prompt-injection or data-exfiltration channel.
+
+### Event Timing and Classification
+
+Pre-tool edit/write hooks are the v1 primary delivery point for actionable reminders before mutation. Optional post-tool behavior is non-blocking and limited to verification notes or summaries; it is never acceptance proof. Read-only tools do not inject reminders by default. Bash or command tools may classify tests, code generation, destructive operations, delegation commands, and validation commands for notices or metrics, but they must not interfere with validation commands.
+
+Chat or system transforms are not a v1 dependency and require later API confirmation before use. Event classification should normalize host, phase, tool/action kind, safe relative path or path bucket, language, file kind, risk tags, session/call ids, and raw shape version without logging full prompts or raw command payloads.
+
+### Hierarchical Protocol Registry
+
+The future registry is closed, deterministic, and secret-free. If implemented as a file, an example location is `.opencode/protocols/agentic-micro-protocols.json`, but that runtime file is not created by this design update. The conceptual hierarchy is:
+
+```text
+packs[] -> layers[] -> groups[] -> protocols[]
+```
+
+Registry records use explicit configured packs rather than unsorted filesystem discovery:
+
+- `schemaVersion`: registry contract version.
+- `packs[]`: ordered protocol packs such as `harness-core` or `playwright`; each pack has `id`, numeric `order`, `enabledByDefault`, and `layers[]`.
+- `layers[]`: broad applicability bands such as `global`, `role-or-workflow`, `domain`, `file-kind`, or `phase-or-action`; each layer has `id`, numeric `order`, `scope`, and `groups[]`.
+- `groups[]`: related protocol families such as `naming`, `playwright-page-objects`, `playwright-specs`, `playwright-fixtures`, or `validation-commands`; each group has `id`, numeric `order`, `match`, and `protocols[]`.
+- `protocols[]`: the smallest rendered reminder candidates; each protocol has `id`, numeric `order`, `title`, `severity`, `timing`, `match`, `message`, `dedupeKeyTemplate`, `maxPerSession`, and `enabledByDefault`.
+
+### Deterministic Selection and Injection Order
+
+Registry loading validates schema before use, fails closed for malformed committed registries, and ignores explicitly disabled packs. Load and evaluation order is deterministic: sort packs by numeric `pack.order` then stable `pack.id`; within each pack sort layers by `layer.order` then `layer.id`; within each layer sort groups by `group.order` then `group.id`; within each group sort protocols by `protocol.order` then stable `protocol.id`.
+
+Each hook normalizes the event, classifies action/file/risk attributes, evaluates `packs[] -> layers[] -> groups[] -> protocols[]` in the loaded stable hierarchy order, filters disabled or nonmatching candidates, applies dedupe and caps in the same order, then renders visible reminders and ledgers evaluated/injected/suppressed decisions in stable order. Candidate precedence is pack order, layer order, group order, protocol order, then stable protocol id tie-breaker. Specificity may be used only as a documented suppression or preference rule inside the same applicable set; it must not create unstable reordering.
+
+Default noise caps are intentionally conservative: `maxVisiblePerToolCall: 1`, `maxVisiblePerSession: 8`, and `maxPerProtocolPerSession: 3`. A future implementation may raise `maxVisiblePerToolCall` to `2` only after fixture-backed precision is proven. Suppressed candidates are ledgered with deterministic reasons such as `tool-limit`, `session-limit`, `protocol-disabled`, `dedupe-window`, `dry-run`, `path-ignore`, `host-unsupported`, or `collapsed-by-more-specific`. Collapse summaries may say, for example, `[harness protocol] 2 additional applicable reminders collapsed; see ledger summary`.
+
+### Playwright Protocol Examples
+
+More than one protocol can apply to the same hook event. General protocols are evaluated first, followed by increasingly specific protocols according to the stable hierarchy: global or file-naming standards before domain or file-kind protocols, and then phase/action-specific protocols.
+
+For a Playwright page object creation event, a general file naming protocol can apply together with page-object locator and method protocols. The naming reminder is evaluated and rendered first because it belongs to a broader earlier layer/group; the page-object locator/method reminder follows if visible caps allow. If only one visible reminder is allowed for that tool call, the deterministic collapse policy may render the more specific page-object reminder while ledgering the generic naming reminder as collapsed with the reason `collapsed-by-more-specific` and a summary notice.
+
+Page object classification includes `**/pages/**/*.ts`, `**/*.page.ts`, `**/*.po.ts`, class names ending in `Page`, or locator/action helper exports. Page-object reminders should prefer stable intent-level methods, private selectors, role/test-id locators, minimal assertions except invariant waits, and updates to affected specs when method contracts change.
+
+Spec classification includes `**/*.spec.ts`, `**/*.test.ts`, `tests/e2e/**`, or imports from `@playwright/test`. Spec reminders should assert user-visible behavior, avoid duplicating page-object selectors, keep setup in fixtures, prefer resilient locators, and run focused Playwright checks for changed flows. Fixture classification includes `**/fixtures/**/*.ts`, `**/*.fixture.ts`, or Playwright `test` extension, with reminders for deterministic isolation, no hidden cross-test state, explicit worker/test scope, and teardown preservation.
+
+### Telemetry, Privacy, and Noise Controls
+
+If implemented, telemetry uses redacted append-only JSONL under project-owned `.memory/` only after a separate validation decision selects the exact path and retention policy. Ledger and metric fields are limited to sanitized identifiers: timestamp, host, session/call ids, phase, tool/action kind, relative path or path hash, file kind, protocol id, severity, decision, suppression reason, dry-run flag, and message id.
+
+Operator controls may include future `OPENCODE_HARNESS_PROTOCOL_DRY_RUN=1` and `OPENCODE_HARNESS_PROTOCOL_HOOKS=0` switches. Dry-run, summary-only, and opt-out modes are guardrails and telemetry controls, not validation evidence.
+
+### OpenCode and Claude Boundary
+
+OpenCode is the implementation target for this harness surface. Claude compatibility, if pursued later, is adapter/spec/export documentation only and must not add committed `.claude` settings or a runtime dependency on `.claude`, `.agents`, or `.codex`. Prior projection directories remain reference material only, never runtime dependencies.
+
+### Future Implementation and Validation Gates
+
+Future runtime implementation must confirm OpenCode hook names and safe mutation/notice semantics; test the pure core before hook wiring; schema-validate any registry; test Playwright classification, deterministic hierarchy ordering, noise caps, collapse behavior, and ledger redaction; confirm `.opencode/plugins/index.js` remains the sole auto-loaded local plugin; and run `node .opencode/scripts/validate-harness.mjs`.
+
+### Residual Risks
+
+OpenCode hook API shape and model-visible reminder delivery semantics remain unconfirmed. Classifier false positives or false negatives may create reminder fatigue. Ledger privacy, ignored/committed status, and retention policy remain future decisions. Claude/OpenCode semantic drift remains possible if compatibility exports are later pursued.
+
 ## Manifest
 
 `.opencode/harness.manifest.json` lists only OpenCode-owned artifacts and root OpenCode project files included by the harness. It must not list prior projection files from reference directories.

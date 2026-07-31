@@ -22,6 +22,7 @@ Use `.memory/orchestrations/<orchestration-id>/` for generated orchestration mem
 Current orchestrations:
 
 - `orchestrations/2026-07-05-opencode-memory-contracts/INDEX.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/INDEX.md`
 - `orchestrations/2026-07-05-opencode-meta-skills-workflows/INDEX.md`
 - `orchestrations/2026-07-16-harness-design-inspection/INDEX.md`
 - `orchestrations/2026-07-17-llama-cpp-integration-guide/INDEX.md`
@@ -33,6 +34,8 @@ Current orchestrations:
 - `orchestrations/2026-07-19-config-validation-compose-routing/INDEX.md`
 - `orchestrations/2026-07-19-implement-multi-local-routing/INDEX.md`
 - `orchestrations/2026-07-19-routing-config-template/INDEX.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/INDEX.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/INDEX.md`
 
 Current orchestration trace artifacts:
 
@@ -47,6 +50,16 @@ Current orchestration trace artifacts:
 - `orchestrations/2026-07-05-opencode-memory-contracts/validation/integrator-checks.md`
 - `orchestrations/2026-07-05-opencode-memory-contracts/validation/plugin-autoload-adjustment-checks.md`
 - `orchestrations/2026-07-05-opencode-memory-contracts/validation/delegate-orchestration-command-checks.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/researcher/root-researcher-001-workflow-context.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/planner/root-planner-002-implementation-plan.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/implementer/root-implementer-003-command.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/implementer/root-implementer-004-workflow-doc.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/implementer/root-implementer-005-routing-manifest.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/implementer/root-implementer-006-validation-assets.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/integrator/root-integrator-007-consistency.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/reviewer/root-reviewer-008-defect-review.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/validator/root-validator-009-final.md`
+- `orchestrations/2026-07-05-implement-feature-workflow/roles/synthesizer/root-synthesizer-010-final.md`
 - `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/researcher/root-researcher-001-standards.md`
 - `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/planner/root-planner-002-meta-skills.md`
 - `orchestrations/2026-07-05-opencode-meta-skills-workflows/roles/implementer/root-implementer-003-meta-skills.md`
@@ -144,3 +157,13 @@ Current orchestration trace artifacts:
 - `orchestrations/2026-07-19-routing-config-template/roles/integrator/root-integrator-004-config-template.md`
 - `orchestrations/2026-07-19-routing-config-template/roles/reviewer/root-reviewer-005-config-template.md`
 - `orchestrations/2026-07-19-routing-config-template/roles/validator/root-validator-006-final.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/roles/researcher/root-researcher-001-hooks.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/roles/planner/root-planner-002-design.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/roles/reviewer/root-reviewer-003-risk.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/roles/synthesizer/root-synthesizer-004-final.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/roles/validator/root-validator-005-evidence.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks/roles/implementer/root-implementer-006-memory-index.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/researcher/root-researcher-001-doc-target.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/planner/root-planner-002-doc-plan.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/implementer/root-implementer-003-design-doc.md`
+- `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/validator/root-validator-004-final.md`
