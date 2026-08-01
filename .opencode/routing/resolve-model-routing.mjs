@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
@@ -6,6 +7,18 @@ import { resolveRoutingDecision } from './routing-policy.mjs';
 import { loadRoutingConfigSelection } from './routing-config-loader.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
+
+function isDirectEntry() {
+  if (typeof import.meta.main === 'boolean') return import.meta.main;
+  const entry = process.argv[1];
+  if (typeof entry !== 'string') return false;
+  try {
+    return fs.realpathSync.native(entry) === fs.realpathSync.native(__filename);
+  } catch {
+    return false;
+  }
+}
+
 export function loadRoutingConfig(configPath) {
   return loadRoutingConfigSelection({ configPath }).document;
 }
@@ -36,6 +49,6 @@ async function main() {
   process.stdout.write(`${JSON.stringify(resolveRoutingDecision({ config: loadRoutingConfig(configPath), request }), null, 2)}\n`);
 }
 
-if (process.argv[1] === __filename) {
+if (isDirectEntry()) {
   try { await main(); } catch (error) { process.stderr.write(`${error.message}\n`); process.exitCode = 1; }
 }

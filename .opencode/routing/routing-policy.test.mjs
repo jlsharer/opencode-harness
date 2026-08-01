@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawnSync } from 'node:child_process';
 import { promisify } from 'node:util';
 import test from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -61,6 +61,17 @@ function writePair(root, { custom, example } = {}) {
   if (custom !== undefined) fs.writeFileSync(path.join(routingDir, 'harness-model-routing.json'), custom);
   if (example !== undefined) fs.writeFileSync(path.join(routingDir, 'harness-model-routing.example.json'), example);
   return routingDir;
+}
+
+function copyRoutingBundle(routingDir) {
+  fs.mkdirSync(routingDir, { recursive: true });
+  for (const name of ['routing-policy.mjs', 'routing-config-loader.mjs', 'model-routing-helper.mjs', 'resolve-model-routing.mjs', 'harness-model-routing.example.json']) {
+    fs.copyFileSync(path.join(DIR, name), path.join(routingDir, name));
+  }
+}
+
+function createDirectoryAlias(target, alias) {
+  fs.symlinkSync(target, alias, process.platform === 'win32' ? 'junction' : 'dir');
 }
 
 test('committed example config is strict v2, normalized freshly, and deterministic', () => {
@@ -407,6 +418,98 @@ test('helper and CLI preserve omitted versus explicit config intent', async () =
     assert.deepEqual(await isolatedHelper.resolveModelForRole({ command: '/delegate-implement' }), resolveRoutingDecision({ config: committed, request: { command: '/delegate-implement' } }));
     const { stdout } = await execFileAsync(process.execPath, [path.join(routingDir, 'resolve-model-routing.mjs'), '--metadata-json', '{"command":"/delegate-implement"}']);
     assert.deepEqual(JSON.parse(stdout), resolveRoutingDecision({ config: committed, request: { command: '/delegate-implement' } }));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('routing CLI executes through aliased copied entry and preserves decision parity', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-cli-alias-'));
+  try {
+    const routingDir = path.join(temp, 'routing-bundle');
+    const aliasDir = path.join(temp, 'routing-alias');
+    copyRoutingBundle(routingDir);
+    createDirectoryAlias(routingDir, aliasDir);
+
+    const request = { command: '/delegate-implement' };
+    const expected = resolveRoutingDecision({ config: committed, request });
+    const args = ['--metadata-json', JSON.stringify(request)];
+    const aliasResult = spawnSync(process.execPath, [path.join(aliasDir, 'resolve-model-routing.mjs'), ...args], { encoding: 'utf8' });
+    const canonicalResult = spawnSync(process.execPath, [path.join(routingDir, 'resolve-model-routing.mjs'), ...args], { encoding: 'utf8' });
+
+    for (const result of [aliasResult, canonicalResult]) {
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0);
+      assert.equal(result.signal, null);
+      assert.notEqual(result.stdout, '');
+      assert.equal(result.stderr, '');
+      assert.deepEqual(JSON.parse(result.stdout), expected);
+    }
+    assert.deepEqual(JSON.parse(aliasResult.stdout), JSON.parse(canonicalResult.stdout));
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('routing CLI import is inert', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-cli-import-'));
+  try {
+    const routingDir = path.join(temp, 'routing-bundle');
+    copyRoutingBundle(routingDir);
+    const cliUrl = pathToFileURL(path.join(routingDir, 'resolve-model-routing.mjs')).href;
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', `await import(${JSON.stringify(cliUrl)})`], { encoding: 'utf8' });
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0);
+    assert.equal(result.signal, null);
+    assert.equal(result.stdout, '');
+    assert.equal(result.stderr, '');
+  } finally {
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+});
+
+test('routing CLI native-realpath fallback is alias-safe and fail-closed', () => {
+  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'routing-cli-fallback-'));
+  try {
+    const routingDir = path.join(temp, 'routing-bundle');
+    const aliasDir = path.join(temp, 'routing-alias');
+    copyRoutingBundle(routingDir);
+    createDirectoryAlias(routingDir, aliasDir);
+
+    const cli = path.join(routingDir, 'resolve-model-routing.mjs');
+    const featureTest = "typeof import.meta.main === 'boolean'";
+    const source = fs.readFileSync(cli, 'utf8');
+    assert.equal(source.split(featureTest).length - 1, 1);
+    fs.writeFileSync(cli, source.replace(featureTest, 'false'));
+
+    const request = { command: '/delegate-implement' };
+    const expected = resolveRoutingDecision({ config: committed, request });
+    const aliasResult = spawnSync(
+      process.execPath,
+      [path.join(aliasDir, 'resolve-model-routing.mjs'), '--metadata-json', JSON.stringify(request)],
+      { encoding: 'utf8' },
+    );
+    assert.equal(aliasResult.error, undefined);
+    assert.equal(aliasResult.status, 0);
+    assert.equal(aliasResult.signal, null);
+    assert.notEqual(aliasResult.stdout, '');
+    assert.equal(aliasResult.stderr, '');
+    assert.deepEqual(JSON.parse(aliasResult.stdout), expected);
+
+    const cliUrl = pathToFileURL(cli).href;
+    const missingEntry = path.join(temp, 'missing-entry.mjs');
+    const importScripts = [
+      `delete process.argv[1]; await import(${JSON.stringify(`${cliUrl}?absent-entry`)});`,
+      `process.argv[1] = ${JSON.stringify(missingEntry)}; await import(${JSON.stringify(`${cliUrl}?missing-entry`)});`,
+    ];
+    for (const script of importScripts) {
+      const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { encoding: 'utf8' });
+      assert.equal(result.error, undefined);
+      assert.equal(result.status, 0);
+      assert.equal(result.signal, null);
+      assert.equal(result.stdout, '');
+      assert.equal(result.stderr, '');
+    }
   } finally {
     fs.rmSync(temp, { recursive: true, force: true });
   }
