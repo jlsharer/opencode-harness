@@ -2,7 +2,7 @@
 
 ## Purpose and Scope
 
-This document defines a standalone OpenCode projection of the Universal Agentic Harness. The deliverable is a set of OpenCode-owned project files under `.opencode/` plus root project guidance files. Reference projections from other hosts may inform the implementation, but they are not runtime dependencies and are not part of the OpenCode solution surface.
+This source-only document defines a standalone OpenCode projection of the Universal Agentic Harness and its release process. `.opencode/harness.manifest.json` inventories the complete source/release surface, including source roots and optional assets. The narrower installable surface is the `portable-core` profile in `.opencode/portable.manifest.json`; portable files do not depend on this document or other source-only roots.
 
 The harness preserves these eight role names exactly:
 
@@ -30,7 +30,12 @@ The OpenCode harness owns these files:
 - Harness routing: committed `.opencode/routing/harness-model-routing.example.json`, optional ignored operator override `.opencode/routing/harness-model-routing.json`, shared loader `.opencode/routing/routing-config-loader.mjs`, the pure `.opencode/routing/routing-policy.mjs`, its dependency-free tests, and thin CLI/helper entry points.
 - Local deployment examples: `.opencode/deployments/llama-server/`, containing a reusable Compose service, tracked sanitized env templates, and operator guidance. Private `instances/*.env` copies are not harness artifacts.
 - Lifecycle plugin adapter and guardrails: `.opencode/plugins/index.js` as the only auto-loaded plugin entry point, with segmented guardrail modules under `.opencode/plugin-modules/`.
-- Validation and manifest files: `.opencode/scripts/validate-harness.mjs` and `.opencode/harness.manifest.json`.
+- Source validation and inventory: `.opencode/scripts/validate-harness.mjs` and `.opencode/harness.manifest.json`.
+- Portable distribution: `.opencode/portable.manifest.json`, dependency-free bootstrap and portable validation/E2E scripts under `.opencode/scripts/`, and canonical fresh-memory seeds under `.opencode/bootstrap/memory/`.
+
+The source manifest and validator are release-QA mechanisms, not portable dependencies. The source inventory also includes optional/source-only deployment guidance, the `implement-feature` command/workflow, maintainer meta-skills, root guidance/configuration, static reference memory, and history. None is promoted merely because it is source-owned.
+
+The portable manifest is the closed installation contract. Bootstrap copies only its managed `.opencode` files, seeds only missing minimal `.memory` files, never copies orchestration history, and does not create or merge destination `AGENTS.md`, this design document, `opencode.json`, or root `.gitignore`. Managed-file collisions fail unless overwrite is explicit; destination memory is never overwritten.
 
 `opencode.json` must contain only native OpenCode configuration keys. Harness-owned routing settings must not be embedded in `opencode.json`; committed defaults live in `.opencode/routing/harness-model-routing.example.json` and are consumed by the harness resolver.
 
@@ -121,9 +126,9 @@ Native OpenCode can select models through its own configuration and invocation c
 
 The routing document is a strict v2 contract. It contains named local catalog entries, a catalog default, per-role native or local selectors, fixed command targets, complexity tiers, and explicit `enabled` and `forceLocalForHarnessSubagents` switches. Legacy singular local keys are rejected with migration guidance rather than inferred. A dependency-free pure policy module performs executable normalization and semantic validation; the draft 2020-12 schema is the structural interoperability document.
 
-The committed example is the deterministic validation input. Operators may optionally copy it to `.opencode/routing/harness-model-routing.json` and customize that ignored file. Implicit loads select the custom file when present and otherwise the example; the documents are never merged. A selected custom file that is unreadable, malformed, or semantically invalid fails closed without example fallback. Explicit paths read exactly that path. If neither implicit candidate exists, the loader reports both paths and the `cp .opencode/routing/harness-model-routing.example.json .opencode/routing/harness-model-routing.json` setup command. Plugin project discovery walks ancestors to the first routing pair, then falls back to the module pair.
+The committed neutral example is the deterministic default and validation input: local routing is disabled, the catalog is empty, and local selectors/defaults are null. The committed local example is an explicit enabled-local fixture and migration aid; implicit loading never selects it. Operators may optionally create `.opencode/routing/harness-model-routing.json`. Implicit loads select a present custom file and otherwise the neutral example; documents are never merged. A selected custom file that is unreadable, malformed, or semantically invalid fails closed without fallback. Explicit paths read exactly that path. If neither implicit candidate exists, the loader reports both implicit paths and a copy remedy. Plugin project discovery walks ancestors to the first routing pair, then falls back to the module pair.
 
-The committed catalog is enabled for discovery and advisory resolution while force-local activation remains false. Outside force mode, model precedence is explicit request, orchestrator command, command, role local selector, role native override, complexity, enabled single model, then default model. Catalog metadata can describe an advisory local choice, but only a non-null native role override is eligible for startup agent configuration. The resolver makes no network calls and does not prove native enforcement.
+When local routing is disabled, catalog and selector data is inert and resolution emits no local identity, URL, or budget. A coherent dormant catalog remains valid, while an enabled configuration requires a nonempty coherent catalog. In an enabled advisory configuration, model precedence is explicit request, orchestrator command, command, role local selector, role native override, complexity, enabled single model, then default model. Catalog metadata and local selectors remain resolver-only advisory choices outside force mode and do not mutate native agents. Non-null native role overrides are different: outside force mode the startup config hook applies those selected overrides only after their agent/provider/model relationships pass coherence preflight. The resolver itself makes no network calls and does not prove native enforcement.
 
 Force mode applies only to the exact eight fixed harness roles. A role local selector precedes the catalog default, and an explicit request model becomes an exact-match constraint rather than an escape route. At startup, the async config hook computes all eight assignments and preflights every existing subagent, native provider prefix, provider model declaration when present, and catalog-backed canonical `baseURL`. Only after the complete plan passes does it set agent models. Any mismatch deliberately rejects startup with no partial agent or provider mutation and no cloud/default fallback.
 
@@ -149,7 +154,7 @@ The checked-in env templates align with the illustrative routing identities but 
 
 Do not list `.opencode/plugins/index.js` or `.opencode/plugin-modules/harness-lifecycle.js` as local paths in `opencode.json`; the documented `plugin` array is for npm packages, while local project plugins live under `.opencode/plugins/`.
 
-Lifecycle hooks are not acceptance proof. Acceptance requires concrete validator or artifact-verifier evidence from `.opencode/workflows/validation-workflow.md` and `node .opencode/scripts/validate-harness.mjs`.
+Lifecycle hooks are not acceptance proof. Source acceptance uses `node .opencode/scripts/validate-harness.mjs`; installed-profile acceptance uses `node .opencode/scripts/validate-portable-harness.mjs --root .`. Validator or artifact-verifier evidence remains required.
 
 ## Agentic Protocol Hooks
 
@@ -221,7 +226,7 @@ OpenCode hook API shape and model-visible reminder delivery semantics remain unc
 
 ## Manifest
 
-`.opencode/harness.manifest.json` lists only OpenCode-owned artifacts and root OpenCode project files included by the harness. It must not list prior projection files from reference directories.
+`.opencode/harness.manifest.json` is the complete source/release inventory. It includes portable deliverables and source-only roots/optional assets, but excludes private custom routing, generated package state, dependencies, and orchestration history. `.opencode/portable.manifest.json` independently defines the closed installable profile and must not list source-only assets.
 
 The manifest is descriptive baseline evidence. It does not replace file existence checks, schema parsing, or command validation.
 
@@ -248,6 +253,8 @@ Required validation includes:
 - Both illustrative Compose instances render from temporary env files with a digest-pinned image, unique loopback ports, exact aliases, read-only non-auto-created binds, and no fixed container name, command, secret, or private committed path.
 - Documentation consistently describes restart activation, `OPENCODE_CONFIG` precedence, cooperative endpoint budgets, illustrative identities, static-versus-router behavior, and operator-dependent live/model/tool-use/benchmark proof.
 - `.opencode/scripts/validate-harness.mjs` passes.
+- Source validation proves canonical seed equality, trace contract/schema/template alignment, complete source inventory, explicit neutral/local routing fixture behavior, and an explicit portable-validator pass without reading private custom routing.
+- `node .opencode/scripts/validate-portable-harness.mjs --root .` passes using only portable managed files and minimal memory; foreign-repository E2E proves source roots/history are unnecessary.
 - References to `.agents` or `.codex` appear only in this design document or `AGENTS.md` as reference-material notes, never as `.opencode` runtime dependencies.
 - Routing label preservation text is present in the command, skill, or workflow surfaces.
 

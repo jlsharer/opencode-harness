@@ -1,0 +1,85 @@
+{
+  "schemaVersion": "1.0.0",
+  "profile": "portable-core",
+  "writeCapabilities": {
+    "publication": "descriptor-relative-same-directory-hard-link",
+    "descriptorDirectoryAliases": [
+      "/proc/self/fd",
+      "/dev/fd"
+    ],
+    "destinationPreflight": "all-parent-directories-before-publication",
+    "unavailableBehavior": "fail-before-file-publication"
+  },
+  "managedFiles": [
+    ".opencode/agents/artifact-verifier.md",
+    ".opencode/agents/implementer.md",
+    ".opencode/agents/integrator.md",
+    ".opencode/agents/planner.md",
+    ".opencode/agents/researcher.md",
+    ".opencode/agents/reviewer.md",
+    ".opencode/agents/synthesizer.md",
+    ".opencode/agents/validator.md",
+    ".opencode/commands/delegate-artifact-verify.md",
+    ".opencode/commands/delegate-implement.md",
+    ".opencode/commands/delegate-integrate.md",
+    ".opencode/commands/delegate-orchestration.md",
+    ".opencode/commands/delegate-plan.md",
+    ".opencode/commands/delegate-research.md",
+    ".opencode/commands/delegate-validate.md",
+    ".opencode/skills/delegation-orchestrator/SKILL.md",
+    ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
+    ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
+    ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
+    ".opencode/workflows/delegation-workflow.md",
+    ".opencode/workflows/validation-workflow.md",
+    ".opencode/contracts/role-io-contracts.json",
+    ".opencode/schemas/harness-model-routing.schema.json",
+    ".opencode/schemas/memory-trace-artifact.schema.json",
+    ".opencode/schemas/role-io-contracts.schema.json",
+    ".opencode/routing/harness-model-routing.example.json",
+    ".opencode/routing/harness-model-routing.local.example.json",
+    ".opencode/routing/model-routing-helper.mjs",
+    ".opencode/routing/resolve-model-routing.mjs",
+    ".opencode/routing/routing-config-loader.mjs",
+    ".opencode/routing/routing-policy.mjs",
+    ".opencode/routing/routing-policy.test.mjs",
+    ".opencode/plugins/index.js",
+    ".opencode/plugin-modules/harness-lifecycle.js",
+    ".opencode/plugin-modules/role-model-routing-enforcement.js",
+    ".opencode/portable.manifest.json",
+    ".opencode/scripts/bootstrap-portable-harness.mjs",
+    ".opencode/scripts/portable-harness.test.mjs",
+    ".opencode/scripts/validate-portable-harness.mjs",
+    ".opencode/bootstrap/memory/INDEX.md",
+    ".opencode/bootstrap/memory/protocols/memory-management.md",
+    ".opencode/bootstrap/memory/templates/orchestration-index.md",
+    ".opencode/bootstrap/memory/templates/role-trace-artifact.md"
+  ],
+  "memorySeeds": [
+    {
+      "source": ".opencode/bootstrap/memory/INDEX.md",
+      "target": ".memory/INDEX.md"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/protocols/memory-management.md",
+      "target": ".memory/protocols/memory-management.md"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/orchestration-index.md",
+      "target": ".memory/templates/orchestration-index.md"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+      "target": ".memory/templates/role-trace-artifact.md"
+    }
+  ],
+  "forbiddenReferences": [
+    "AGENTS.md",
+    "opencode-harness.design.md",
+    ".opencode/scripts/validate-harness.mjs",
+    ".opencode/harness.manifest.json",
+    ".agents/",
+    ".codex/",
+    ".memory/orchestrations/20"
+  ]
+}

@@ -12,8 +12,8 @@ export const HarnessLifecyclePlugin = async ({ client, $ }) => {
     },
     'tool.execute.before': async (input) => {
       const command = input?.tool === 'bash' ? String(input?.args?.command ?? '') : '';
-      if (/rm\s+-rf\s+(\.opencode|opencode\.json|AGENTS\.md)(\s|$)/.test(command)) {
-        throw new Error('Harness guardrail: destructive deletion of OpenCode harness files requires explicit cleanup approval.');
+      if (/rm\s+-rf\s+(\.opencode|\.memory)(\/?)(\s|$)/.test(command)) {
+        throw new Error('Harness guardrail: destructive deletion of harness-managed directories requires explicit cleanup approval.');
       }
       if (isDelegateCommand(command)) {
         console.error('[harness] Delegation command observed. Model routing is enforced by the native config hook.');

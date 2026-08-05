@@ -35,7 +35,9 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 
 ## Local Model Routing Boundary
 
-- The committed local catalog is enabled for discovery and advice while `forceLocalForHarnessSubagents` remains false. Its provider ids, model aliases, endpoints, and capacities are illustrative, not installed-model claims.
+- The committed routing example is neutral: local routing and force mode are disabled, so it makes no local-model selection or native agent mutation.
+- The explicit enabled-local example is an operator starting point only. Implicit loading still selects a present custom file first, otherwise the neutral example, never merges files, and fails closed when a present custom file is unreadable, malformed, or invalid.
+- Outside force mode, enabled local catalog choices are advisory. Provider ids, model aliases, endpoints, and capacities are illustrative, not installed-model claims.
 - Native OpenCode provider transport remains in approved external merged config. Harness policy never creates providers, baseURLs, credentials, or model maps and must not be copied into `opencode.json`.
 - When deliberately enabled, force mode statically configures exactly the eight fixed harness subagents during startup. Complete native coherence is checked atomically; any missing or mismatched agent/provider/model/baseURL rejects startup without partial mutation or cloud fallback.
 - Endpoint `maxInFlight` values are cooperative dispatch budgets grouped by canonical URL, not enforced runtime semaphores. Measure backend slots before raising them.
@@ -58,4 +60,3 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 - `references/role-routing-matrix.md`
 - `references/validation-checklist.md`
 - `references/trust-and-restart-guide.md`
-- `references/llama-cpp-integration-guide.md`

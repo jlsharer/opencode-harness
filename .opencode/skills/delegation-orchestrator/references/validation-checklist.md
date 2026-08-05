@@ -4,25 +4,23 @@ Use this checklist before accepting delegated OpenCode harness work.
 
 ## File and Schema Checks
 
-- [ ] `opencode.json`, `AGENTS.md`, and `.opencode/harness.manifest.json` exist.
+- [ ] `.opencode/portable.manifest.json` exists, parses, and lists the complete portable inventory with safe unique managed paths and memory seed mappings.
 - [ ] Every expected role file exists under `.opencode/agents/`.
 - [ ] Role frontmatter includes non-empty `description`, `mode: subagent`, and `permission`.
 - [ ] Role-specific command files under `.opencode/commands/` have `description` and `agent` frontmatter.
 - [ ] `.opencode/commands/delegate-orchestration.md` has `description`, omits `agent`, and sets `subtask: false`.
 - [ ] Command files do not set `model`.
-- [ ] `opencode.json` parses as JSON and does not contain harness-owned routing keys.
-- [ ] `.opencode/routing/harness-model-routing.example.json` parses as JSON and is the deterministic routing acceptance input; the optional ignored custom file is excluded.
+- [ ] `.opencode/routing/harness-model-routing.example.json` is a neutral disabled acceptance input, and the explicit enabled-local example is valid but never selected implicitly.
 - [ ] The shared loader selects custom before example without merging, never falls back from a present bad custom file, reads explicit paths exactly, and reports both paths plus the copy command when both implicit files are absent.
 - [ ] `.opencode/schemas/harness-model-routing.schema.json` parses as draft 2020-12, and dependency-free runtime normalization rejects structural and semantic defects.
-- [ ] `.opencode/routing/routing-policy.mjs` and its test file are listed in the manifest and pass deterministic/non-mutating policy checks.
-- [ ] `.opencode/harness.manifest.json` lists only OpenCode-owned artifacts and included root OpenCode project files.
-- [ ] Static memory files exist: `.memory/INDEX.md`, `.memory/protocols/memory-management.md`, `.memory/references/opencode-refs.md`, `.memory/templates/orchestration-index.md`, and `.memory/templates/role-trace-artifact.md`.
+- [ ] `.opencode/routing/routing-policy.mjs` and its tests are in the portable inventory and pass deterministic, non-mutating policy checks.
+- [ ] Minimal memory exists: `.memory/INDEX.md`, `.memory/protocols/memory-management.md`, `.memory/templates/orchestration-index.md`, and `.memory/templates/role-trace-artifact.md`; generated orchestration history is not required.
 - [ ] `.opencode/contracts/role-io-contracts.json` parses and includes all eight roles.
 - [ ] `.opencode/schemas/role-io-contracts.schema.json` and `.opencode/schemas/memory-trace-artifact.schema.json` parse.
 - [ ] Each role references the memory protocol, role contract catalog, trace schema, and `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md` path.
 - [ ] `.opencode/plugins/index.js` exists as the only auto-loaded local plugin file and default-export adapter.
 - [ ] Segmented plugin logic lives outside the auto-loaded plugin directory, for example `.opencode/plugin-modules/harness-lifecycle.js`, and is imported by the adapter.
-- [ ] `opencode.json` does not list local plugin paths.
+- [ ] `node .opencode/scripts/validate-portable-harness.mjs --root .` passes from the installed repository.
 
 ## Delegation Checks
 
@@ -37,20 +35,16 @@ Use this checklist before accepting delegated OpenCode harness work.
 - [ ] Routing labels are preserved when supplied by the caller.
 - [ ] Missing routing labels are not invented.
 
-## Local Routing and Deployment Checks
+## Local Routing and Restart Checks
 
-- [ ] Committed force-local activation is false; local selections outside force mode are described as advisory and do not write native agent configuration.
-- [ ] Example-only plugin startup is clean and does not mutate agents; optional customization uses `cp .opencode/routing/harness-model-routing.example.json .opencode/routing/harness-model-routing.json`, explicit validation can target either exact path, and changes require a full OpenCode quit/restart.
+- [ ] Committed local routing and force-local activation are false; local selections outside force mode are advisory and do not write native agent configuration.
+- [ ] Neutral-example plugin startup is clean and does not mutate agents; optional customization starts from the explicit enabled-local example, explicit validation targets an exact path, and changes require a full OpenCode quit/restart.
 - [ ] Synthetic force tests cover exactly all eight fixed roles, complete native provider/model/baseURL coherence, and no partial agent/provider mutation on asynchronous startup failure.
-- [ ] Native provider transport stays in external merged OpenCode config; no provider, credential, or harness routing policy was added to `opencode.json`.
+- [ ] Native provider transport and credentials stay in operator-owned OpenCode configuration; harness routing does not create them.
 - [ ] Provider ids, aliases, model names, ports, URLs, GPU settings, and capacities are clearly illustrative rather than installed claims.
 - [ ] `OPENCODE_CONFIG` is documented as merging before project config, not as a final override; later `OPENCODE_CONFIG_CONTENT` is not recommended for secrets.
 - [ ] Config and plugin activation requires quitting and restarting OpenCode.
 - [ ] Endpoint `maxInFlight` budgets are cooperative and grouped by canonical URL rather than claimed as runtime semaphores.
-- [ ] Private `instances/*.env` files are ignored while `.env.example` templates remain trackable.
-- [ ] Both named Compose projects render from temporary env files with unique loopback ports, a required digest-pinned image, required model identity, and an existing absolute model directory mounted read-only without automatic creation.
-- [ ] Rendered Compose has one reusable service and no `container_name`, overriding `command`, secret, private host path, or generated output in the repository.
-- [ ] NVIDIA reservations are not described as proof of GPU isolation; static single-model restart behavior is distinguished from separately validated router mode.
 - [ ] Health is not accepted as model/tool-use proof; live endpoint, delegated tool-use, and capacity/VRAM benchmarks remain operator-dependent gates.
 
 ## Safety Checks
@@ -58,6 +52,7 @@ Use this checklist before accepting delegated OpenCode harness work.
 - [ ] No provider tokens, auth secrets, user home auth paths, or machine-local private paths are stored in repo-managed harness files.
 - [ ] Lifecycle plugins are described as telemetry and guardrails only.
 - [ ] Reference-only prior projection directories are not listed as OpenCode runtime dependencies.
+- [ ] Portable files depend only on the managed `.opencode/` inventory and minimal `.memory/` surface.
 
 ## Acceptance Decision
 

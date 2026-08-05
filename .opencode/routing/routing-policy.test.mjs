@@ -20,9 +20,12 @@ import { applyHarnessRoleModelOverrides, resolveHarnessRoutingPath } from '../pl
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const EXAMPLE_PATH = path.join(DIR, 'harness-model-routing.example.json');
+const LOCAL_EXAMPLE_PATH = path.join(DIR, 'harness-model-routing.local.example.json');
 const committed = JSON.parse(fs.readFileSync(EXAMPLE_PATH, 'utf8'));
+const localCommitted = JSON.parse(fs.readFileSync(LOCAL_EXAMPLE_PATH, 'utf8'));
 const clone = (value) => JSON.parse(JSON.stringify(value));
-const routing = () => clone(committed.harnessModelRouting);
+const neutralRouting = () => clone(committed.harnessModelRouting);
+const routing = () => clone(localCommitted.harnessModelRouting);
 const execFileAsync = promisify(execFile);
 
 function deepFreeze(value) {
@@ -81,9 +84,55 @@ test('committed example config is strict v2, normalized freshly, and determinist
   assert.deepEqual(first, second);
   assert.notStrictEqual(first, second);
   assert.equal(first.schemaVersion, '2.0.0');
-  assert.equal(first.localRouting.enabled, true);
+  assert.equal(first.localRouting.enabled, false);
   assert.equal(first.localRouting.forceLocalForHarnessSubagents, false);
+  assert.equal(first.localRouting.defaultLocalModel, null);
+  assert.deepEqual(first.localRouting.models, {});
+  assert.ok(FIXED_HARNESS_ROLES.every((role) => first.roleOverrides[role].localModel === null));
   assert.deepEqual(Object.keys(first.roleOverrides), FIXED_HARNESS_ROLES);
+});
+
+test('separate local example is a valid enabled advisory fixture', () => {
+  const normalized = normalizeAndValidateRoutingConfig(deepFreeze(clone(localCommitted)));
+  assert.equal(normalized.localRouting.enabled, true);
+  assert.equal(normalized.localRouting.forceLocalForHarnessSubagents, false);
+  assert.equal(normalized.localRouting.defaultLocalModel, 'qwen-coder');
+  assert.equal(Object.keys(normalized.localRouting.models).length, 2);
+});
+
+test('neutral routing resolves fixed command and variant without local identity', () => {
+  const decision = resolveRoutingDecision({ config: committed, request: { command: '/delegate-implement' } });
+  assert.equal(decision.agent, 'implementer');
+  assert.equal(decision.model, null);
+  assert.equal(decision.variant, null);
+  assert.deepEqual(decision.local, { enforced: false, catalogName: null, routingServiceUrl: null, maxInFlight: null, networkCalls: false });
+});
+
+test('disabled local routing accepts empty state and keeps dormant catalog and selectors inert', () => {
+  const empty = normalizeAndValidateRoutingConfig(neutralRouting());
+  assert.deepEqual(empty.localRouting.models, {});
+
+  const dormant = routing();
+  dormant.localRouting.enabled = false;
+  const localModel = dormant.localRouting.models['qwen-coder'].model;
+  const roleDecision = resolveRoutingDecision({ config: dormant, request: { role: 'implementer' } });
+  assert.equal(roleDecision.model, null);
+  assert.deepEqual(roleDecision.local, { enforced: false, catalogName: null, routingServiceUrl: null, maxInFlight: null, networkCalls: false });
+  const explicitDecision = resolveRoutingDecision({ config: dormant, request: { role: 'implementer', model: localModel } });
+  assert.equal(explicitDecision.model, localModel);
+  assert.equal(explicitDecision.local.catalogName, null);
+  assert.equal(explicitDecision.local.routingServiceUrl, null);
+  assert.equal(explicitDecision.local.maxInFlight, null);
+});
+
+test('enabled local routing rejects an empty catalog and schema encodes the same condition', () => {
+  const enabledEmpty = neutralRouting();
+  enabledEmpty.localRouting.enabled = true;
+  assert.throws(() => normalizeAndValidateRoutingConfig(enabledEmpty), /at least one catalog entry when localRouting.enabled is true/);
+  const schema = JSON.parse(fs.readFileSync(path.join(DIR, '../schemas/harness-model-routing.schema.json'), 'utf8'));
+  const conditions = schema.$defs.routing.properties.localRouting.allOf;
+  assert.ok(conditions.some((condition) => condition.if?.properties?.enabled?.const === true && condition.then?.properties?.models?.minProperties === 1));
+  assert.equal(schema.$defs.routing.properties.localRouting.properties.models.minProperties, undefined);
 });
 
 test('force plan assigns all eight by role selector or catalog default', () => {
@@ -311,6 +360,17 @@ test('helper, CLI, and core decisions are identical', async () => {
   const core = resolveRoutingDecision({ config: committed, request });
   const helper = await resolveModelForRole({ config: committed, command: request.command });
   const { stdout } = await execFileAsync(process.execPath, [path.join(DIR, 'resolve-model-routing.mjs'), '--config', EXAMPLE_PATH, '--metadata-json', JSON.stringify(request)]);
+  assert.deepEqual(helper, core);
+  assert.deepEqual(JSON.parse(stdout), core);
+});
+
+test('helper and CLI match explicit advisory local fixture', async () => {
+  const request = { command: '/delegate-implement' };
+  const core = resolveRoutingDecision({ config: localCommitted, request });
+  const helper = await resolveModelForRole({ config: localCommitted, command: request.command });
+  const { stdout } = await execFileAsync(process.execPath, [path.join(DIR, 'resolve-model-routing.mjs'), '--config', LOCAL_EXAMPLE_PATH, '--metadata-json', JSON.stringify(request)]);
+  assert.equal(core.model, 'llamacpp-coder/qwen2.5-coder-7b');
+  assert.equal(core.local.enforced, false);
   assert.deepEqual(helper, core);
   assert.deepEqual(JSON.parse(stdout), core);
 });
@@ -583,6 +643,17 @@ test('non-force enforcement preserves config-derived null/no-own-property behavi
   applyHarnessRoleModelOverrides(cfg, { routingDocument: config });
   assert.equal(cfg.agent.implementer.model, 'llamacpp-coder/qwen2.5-coder-7b');
   assert.equal(FIXED_HARNESS_ROLES.filter((role) => Object.hasOwn(cfg.agent[role], 'model')).length, 1);
+});
+
+test('neutral and advisory local config hooks need no providers and do not mutate agents', () => {
+  for (const routingDocument of [committed, localCommitted]) {
+    const cfg = { agent: Object.fromEntries(FIXED_HARNESS_ROLES.map((role) => [role, { mode: 'subagent' }])) };
+    const before = clone(cfg);
+    const plan = applyHarnessRoleModelOverrides(cfg, { routingDocument });
+    assert.equal(plan.mode, 'role-overrides');
+    assert.ok(Object.values(plan.assignments).every((assignment) => assignment === null));
+    assert.deepEqual(cfg, before);
+  }
 });
 
 test('every force failure position including eighth is atomic and providers never mutate', () => {

@@ -94,6 +94,15 @@
                 "required": ["enabled"],
                 "properties": { "enabled": { "const": true } }
               }
+            },
+            {
+              "if": {
+                "required": ["enabled"],
+                "properties": { "enabled": { "const": true } }
+              },
+              "then": {
+                "properties": { "models": { "minProperties": 1 } }
+              }
             }
           ],
           "properties": {
@@ -102,7 +111,6 @@
             "defaultLocalModel": { "$ref": "#/$defs/nullableString" },
             "models": {
               "type": "object",
-              "minProperties": 1,
               "propertyNames": { "pattern": "^[a-z0-9][a-z0-9-]*$" },
               "additionalProperties": { "$ref": "#/$defs/catalogEntry" }
             }

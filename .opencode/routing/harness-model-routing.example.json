@@ -8,31 +8,20 @@
       "model": null
     },
     "localRouting": {
-      "enabled": true,
+      "enabled": false,
       "forceLocalForHarnessSubagents": false,
-      "defaultLocalModel": "qwen-coder",
-      "models": {
-        "qwen-research": {
-          "model": "llamacpp-research/qwen2.5-7b-instruct",
-          "routingServiceUrl": "http://127.0.0.1:8080/v1",
-          "maxInFlight": 2
-        },
-        "qwen-coder": {
-          "model": "llamacpp-coder/qwen2.5-coder-7b",
-          "routingServiceUrl": "http://127.0.0.1:8081/v1",
-          "maxInFlight": 1
-        }
-      }
+      "defaultLocalModel": null,
+      "models": {}
     },
     "roleOverrides": {
-      "researcher": { "model": null, "localModel": "qwen-research", "variant": "research" },
-      "planner": { "model": null, "localModel": "qwen-research", "variant": "planning" },
-      "implementer": { "model": null, "localModel": "qwen-coder", "variant": null },
-      "integrator": { "model": null, "localModel": "qwen-coder", "variant": null },
-      "validator": { "model": null, "localModel": "qwen-research", "variant": "audit" },
-      "reviewer": { "model": null, "localModel": "qwen-research", "variant": "review" },
-      "synthesizer": { "model": null, "localModel": "qwen-research", "variant": "synthesis" },
-      "artifact-verifier": { "model": null, "localModel": "qwen-coder", "variant": "artifact-proof" }
+      "researcher": { "model": null, "localModel": null, "variant": "research" },
+      "planner": { "model": null, "localModel": null, "variant": "planning" },
+      "implementer": { "model": null, "localModel": null, "variant": null },
+      "integrator": { "model": null, "localModel": null, "variant": null },
+      "validator": { "model": null, "localModel": null, "variant": "audit" },
+      "reviewer": { "model": null, "localModel": null, "variant": "review" },
+      "synthesizer": { "model": null, "localModel": null, "variant": "synthesis" },
+      "artifact-verifier": { "model": null, "localModel": null, "variant": "artifact-proof" }
     },
     "commandOverrides": {
       "/delegate-research": { "agent": "researcher", "model": null, "variant": null },

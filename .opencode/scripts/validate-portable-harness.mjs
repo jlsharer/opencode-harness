@@ -1,0 +1,265 @@
+#!/usr/bin/env node
+
+import { lstat, readFile, realpath } from 'node:fs/promises';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+
+const ROLES = ['researcher', 'planner', 'implementer', 'integrator', 'validator', 'reviewer', 'synthesizer', 'artifact-verifier'];
+const COMMAND_ROLES = new Map([
+  ['delegate-research.md', 'researcher'],
+  ['delegate-plan.md', 'planner'],
+  ['delegate-implement.md', 'implementer'],
+  ['delegate-integrate.md', 'integrator'],
+  ['delegate-validate.md', 'validator'],
+  ['delegate-artifact-verify.md', 'artifact-verifier'],
+]);
+const REQUIRED_TRACE_FIELDS = ['orchestrationId', 'role', 'artifactId', 'createdAt', 'inputContract', 'workPerformed', 'outputContract', 'handoff'];
+const EXPECTED_MANAGED_FILES = [
+  ...ROLES.map((role) => `.opencode/agents/${role}.md`),
+  '.opencode/commands/delegate-artifact-verify.md',
+  '.opencode/commands/delegate-implement.md',
+  '.opencode/commands/delegate-integrate.md',
+  '.opencode/commands/delegate-orchestration.md',
+  '.opencode/commands/delegate-plan.md',
+  '.opencode/commands/delegate-research.md',
+  '.opencode/commands/delegate-validate.md',
+  '.opencode/skills/delegation-orchestrator/SKILL.md',
+  '.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md',
+  '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
+  '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
+  '.opencode/workflows/delegation-workflow.md',
+  '.opencode/workflows/validation-workflow.md',
+  '.opencode/contracts/role-io-contracts.json',
+  '.opencode/schemas/harness-model-routing.schema.json',
+  '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/role-io-contracts.schema.json',
+  '.opencode/routing/harness-model-routing.example.json',
+  '.opencode/routing/harness-model-routing.local.example.json',
+  '.opencode/routing/model-routing-helper.mjs',
+  '.opencode/routing/resolve-model-routing.mjs',
+  '.opencode/routing/routing-config-loader.mjs',
+  '.opencode/routing/routing-policy.mjs',
+  '.opencode/routing/routing-policy.test.mjs',
+  '.opencode/plugins/index.js',
+  '.opencode/plugin-modules/harness-lifecycle.js',
+  '.opencode/plugin-modules/role-model-routing-enforcement.js',
+  '.opencode/portable.manifest.json',
+  '.opencode/scripts/bootstrap-portable-harness.mjs',
+  '.opencode/scripts/portable-harness.test.mjs',
+  '.opencode/scripts/validate-portable-harness.mjs',
+  '.opencode/bootstrap/memory/INDEX.md',
+  '.opencode/bootstrap/memory/protocols/memory-management.md',
+  '.opencode/bootstrap/memory/templates/orchestration-index.md',
+  '.opencode/bootstrap/memory/templates/role-trace-artifact.md',
+].sort();
+const EXPECTED_MEMORY_SEEDS = [
+  ['.opencode/bootstrap/memory/INDEX.md', '.memory/INDEX.md'],
+  ['.opencode/bootstrap/memory/protocols/memory-management.md', '.memory/protocols/memory-management.md'],
+  ['.opencode/bootstrap/memory/templates/orchestration-index.md', '.memory/templates/orchestration-index.md'],
+  ['.opencode/bootstrap/memory/templates/role-trace-artifact.md', '.memory/templates/role-trace-artifact.md'],
+];
+const EXPECTED_WRITE_CAPABILITIES = {
+  publication: 'descriptor-relative-same-directory-hard-link',
+  descriptorDirectoryAliases: ['/proc/self/fd', '/dev/fd'],
+  destinationPreflight: 'all-parent-directories-before-publication',
+  unavailableBehavior: 'fail-before-file-publication',
+};
+
+function fail(message) {
+  throw new Error(`Portable harness validation failed: ${message}`);
+}
+
+function parseArgs(argv) {
+  let root = process.cwd();
+  for (let index = 0; index < argv.length; index += 1) {
+    if (argv[index] !== '--root') fail(`unknown argument: ${argv[index]}`);
+    const value = argv[++index];
+    if (!value || value.startsWith('--')) fail('--root requires a path');
+    root = path.resolve(process.cwd(), value);
+  }
+  return { root };
+}
+
+function safeRelative(value, label, prefix) {
+  if (typeof value !== 'string' || !value || value.includes('\\') || value.includes('\0') || path.posix.isAbsolute(value) || path.posix.normalize(value) !== value || value.split('/').some((part) => !part || part === '.' || part === '..')) fail(`${label} is not a safe normalized relative POSIX path`);
+  if (prefix && !value.startsWith(prefix)) fail(`${label} must be under ${prefix}`);
+  return value;
+}
+
+async function statOrNull(file) {
+  try { return await lstat(file); } catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+}
+
+async function regularFile(root, relative) {
+  let current = root;
+  for (const part of relative.split('/')) {
+    current = path.join(current, part);
+    const stat = await statOrNull(current);
+    if (!stat) fail(`missing file: ${relative}`);
+    if (stat.isSymbolicLink()) fail(`symlink is not allowed in portable paths: ${relative}`);
+  }
+  const stat = await lstat(current);
+  if (!stat.isFile()) fail(`not a regular file: ${relative}`);
+  return current;
+}
+
+function validateManifest(manifest) {
+  if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest)) fail('manifest must be an object');
+  const keys = Object.keys(manifest).sort();
+  const expected = ['forbiddenReferences', 'managedFiles', 'memorySeeds', 'profile', 'schemaVersion', 'writeCapabilities'].sort();
+  if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) fail('manifest shape is not closed');
+  if (manifest.schemaVersion !== '1.0.0' || manifest.profile !== 'portable-core') fail('unsupported manifest version/profile');
+  if (!Array.isArray(manifest.managedFiles) || !Array.isArray(manifest.memorySeeds) || !Array.isArray(manifest.forbiddenReferences)) fail('manifest inventories must be arrays');
+  const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, '.opencode/'));
+  if (new Set(managed).size !== managed.length || !managed.includes('.opencode/portable.manifest.json')) fail('managed inventory must be unique and self-containing');
+  if (JSON.stringify([...managed].sort()) !== JSON.stringify(EXPECTED_MANAGED_FILES)) fail('managed inventory differs from the installed validator exact portable-core contract');
+  for (const candidate of managed) if (managed.some((other) => other !== candidate && candidate.startsWith(`${other}/`))) fail(`managed file paths overlap: ${candidate}`);
+  const targets = [];
+  for (const [index, seed] of manifest.memorySeeds.entries()) {
+    if (!seed || typeof seed !== 'object' || Array.isArray(seed) || Object.keys(seed).sort().join(',') !== 'source,target') fail(`memorySeeds[${index}] has an invalid shape`);
+    safeRelative(seed.source, `memorySeeds[${index}].source`, '.opencode/bootstrap/memory/');
+    safeRelative(seed.target, `memorySeeds[${index}].target`, '.memory/');
+    if (!managed.includes(seed.source)) fail(`memory seed source is not managed: ${seed.source}`);
+    targets.push(seed.target);
+  }
+  if (new Set(targets).size !== targets.length) fail('memory seed targets are not unique');
+  const actualSeeds = manifest.memorySeeds.map((seed) => [seed.source, seed.target]).sort((left, right) => left.join('\0').localeCompare(right.join('\0')));
+  const expectedSeeds = [...EXPECTED_MEMORY_SEEDS].sort((left, right) => left.join('\0').localeCompare(right.join('\0')));
+  if (JSON.stringify(actualSeeds) !== JSON.stringify(expectedSeeds)) fail('memory seeds differ from the installed validator exact portable-core contract');
+  if (JSON.stringify(manifest.writeCapabilities) !== JSON.stringify(EXPECTED_WRITE_CAPABILITIES)) fail('write capability contract is missing or unsupported');
+  if (manifest.forbiddenReferences.length === 0 || new Set(manifest.forbiddenReferences).size !== manifest.forbiddenReferences.length || manifest.forbiddenReferences.some((item) => typeof item !== 'string' || !item)) fail('forbidden reference tokens must be unique nonempty strings');
+}
+
+function frontmatter(text, relative) {
+  const match = /^---\n([\s\S]*?)\n---\n/.exec(text);
+  if (!match) fail(`missing frontmatter: ${relative}`);
+  const top = {};
+  for (const line of match[1].split('\n')) {
+    if (/^\s/.test(line) || !line.trim()) continue;
+    const separator = line.indexOf(':');
+    if (separator < 1) fail(`invalid frontmatter line in ${relative}`);
+    top[line.slice(0, separator)] = line.slice(separator + 1).trim();
+  }
+  return top;
+}
+
+async function validateRolesAndCommands(root) {
+  for (const role of ROLES) {
+    const relative = `.opencode/agents/${role}.md`;
+    const text = await readFile(await regularFile(root, relative), 'utf8');
+    const metadata = frontmatter(text, relative);
+    if (!metadata.description || metadata.mode !== 'subagent' || !Object.hasOwn(metadata, 'permission')) fail(`agent frontmatter contract failed: ${relative}`);
+  }
+  for (const [file, role] of COMMAND_ROLES) {
+    const relative = `.opencode/commands/${file}`;
+    const metadata = frontmatter(await readFile(await regularFile(root, relative), 'utf8'), relative);
+    if (Object.keys(metadata).sort().join(',') !== 'agent,description' || metadata.agent !== role || !metadata.description) fail(`command frontmatter contract failed: ${relative}`);
+  }
+  const orchestration = '.opencode/commands/delegate-orchestration.md';
+  const metadata = frontmatter(await readFile(await regularFile(root, orchestration), 'utf8'), orchestration);
+  if (Object.keys(metadata).sort().join(',') !== 'description,subtask' || metadata.subtask !== 'false' || !metadata.description) fail('orchestrator command must omit agent and set subtask false');
+}
+
+async function validateMemory(root, manifest) {
+  const required = new Set([
+    '.memory/INDEX.md',
+    '.memory/protocols/memory-management.md',
+    '.memory/templates/orchestration-index.md',
+    '.memory/templates/role-trace-artifact.md',
+  ]);
+  if (manifest.memorySeeds.length !== required.size || manifest.memorySeeds.some((seed) => !required.delete(seed.target)) || required.size) fail('memory seed targets do not define the minimal memory profile');
+  for (const seed of manifest.memorySeeds) {
+    await regularFile(root, seed.source);
+    const targetText = await readFile(await regularFile(root, seed.target), 'utf8');
+    if (!targetText.trim()) fail(`memory target is empty: ${seed.target}`);
+  }
+}
+
+async function validateTraceAlignment(root) {
+  const contract = JSON.parse(await readFile(await regularFile(root, '.opencode/contracts/role-io-contracts.json'), 'utf8'));
+  const schema = JSON.parse(await readFile(await regularFile(root, '.opencode/schemas/memory-trace-artifact.schema.json'), 'utf8'));
+  if (JSON.stringify(schema.required) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail('trace schema required fields differ from portable contract');
+  for (const role of ROLES) if (JSON.stringify(contract.roles?.[role]?.traceArtifact?.requiredFields) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail(`trace required fields differ for role: ${role}`);
+  const template = await readFile(await regularFile(root, '.memory/templates/role-trace-artifact.md'), 'utf8');
+  for (const heading of ['## Metadata', '## Input Contract', '## Work Performed', '## Output Contract', '## Handoff']) if (!template.includes(heading)) fail(`trace template is missing ${heading}`);
+  for (const field of REQUIRED_TRACE_FIELDS.slice(0, 4)) if (!template.includes(`- ${field}:`)) fail(`trace template is missing ${field}`);
+}
+
+async function validateRoutingAndPlugin(root) {
+  const neutralPath = await regularFile(root, '.opencode/routing/harness-model-routing.example.json');
+  const neutral = JSON.parse(await readFile(neutralPath, 'utf8'));
+  const localPath = await regularFile(root, '.opencode/routing/harness-model-routing.local.example.json');
+  const local = JSON.parse(await readFile(localPath, 'utf8'));
+  const policyUrl = pathToFileURL(await regularFile(root, '.opencode/routing/routing-policy.mjs')).href;
+  const policy = await import(`${policyUrl}?portable-validation=${Date.now()}`);
+  const normalized = policy.normalizeAndValidateRoutingConfig(neutral);
+  if (normalized.defaultModel !== null || normalized.singleModel.enabled || normalized.singleModel.model !== null || normalized.localRouting.enabled || normalized.localRouting.forceLocalForHarnessSubagents || normalized.localRouting.defaultLocalModel !== null || Object.keys(normalized.localRouting.models).length) fail('committed routing example is not neutral');
+  const decision = policy.resolveRoutingDecision({ config: neutral, request: { command: '/delegate-implement' } });
+  if (decision.agent !== 'implementer' || decision.model !== null || decision.local.enforced || decision.local.catalogName !== null || decision.local.routingServiceUrl !== null || decision.local.maxInFlight !== null || decision.local.networkCalls) fail('neutral routing decision is not provider-free');
+  const normalizedLocal = policy.normalizeAndValidateRoutingConfig(local);
+  if (!normalizedLocal.localRouting.enabled || normalizedLocal.localRouting.forceLocalForHarnessSubagents || normalizedLocal.localRouting.defaultLocalModel === null || Object.keys(normalizedLocal.localRouting.models).length === 0) fail('local routing example is not enabled advisory routing');
+  const localDecision = policy.resolveRoutingDecision({ config: local, request: { command: '/delegate-implement' } });
+  if (localDecision.agent !== 'implementer' || localDecision.model === null || localDecision.local.enforced || localDecision.local.catalogName === null || localDecision.local.routingServiceUrl === null || !Number.isInteger(localDecision.local.maxInFlight) || localDecision.local.networkCalls) fail('enabled-local routing decision is not coherent advisory routing');
+
+  const pluginRelative = '.opencode/plugins/index.js';
+  const pluginText = await readFile(await regularFile(root, pluginRelative), 'utf8');
+  for (const imported of ['../plugin-modules/harness-lifecycle.js', '../plugin-modules/role-model-routing-enforcement.js']) if (!pluginText.includes(imported)) fail(`plugin entry is missing import: ${imported}`);
+  const plugin = await import(`${pathToFileURL(path.join(root, pluginRelative)).href}?portable-validation=${Date.now()}`);
+  if (typeof plugin.default !== 'function') fail('plugin entry has no default function export');
+  const hooks = await plugin.default({ routingPath: neutralPath, project: { root } });
+  if (typeof hooks.config !== 'function') fail('plugin has no config hook');
+  const nativeConfig = {};
+  await hooks.config(nativeConfig);
+  if (JSON.stringify(nativeConfig) !== '{}') fail('neutral no-provider config hook must be a no-op');
+  const localHooks = await plugin.default({ routingPath: localPath, project: { root } });
+  const localNativeConfig = {};
+  await localHooks.config(localNativeConfig);
+  if (JSON.stringify(localNativeConfig) !== '{}') fail('advisory local no-provider config hook must be a no-op');
+}
+
+async function validateForbiddenReferences(root, manifest) {
+  const findings = [];
+  for (const relative of manifest.managedFiles) {
+    const text = await readFile(await regularFile(root, relative), 'utf8');
+    if (relative !== '.opencode/portable.manifest.json') for (const token of manifest.forbiddenReferences) if (text.includes(token)) findings.push(`${relative}: ${JSON.stringify(token)}`);
+    const scanInputs = [text];
+    if (relative.endsWith('.json')) {
+      const collectStrings = (value) => {
+        if (typeof value === 'string') scanInputs.push(value);
+        else if (Array.isArray(value)) value.forEach(collectStrings);
+        else if (value && typeof value === 'object') for (const [key, item] of Object.entries(value)) { scanInputs.push(key); collectStrings(item); }
+      };
+      collectStrings(JSON.parse(text));
+    }
+    const machineLocalPatterns = [
+      /(?:^|[\s"'`(])(?:file:\/\/)?\/(?:home|Users)\/[^\s"'`)]+/gm,
+      /(?:^|[\s"'`(])[A-Za-z]:[\\/][^\s"'`)]+/gm,
+      /(?:^|[\s"'`(])\\\\[^\\/\s"'`)]+[\\/][^\\/\s"'`)]+(?:[\\/][^\s"'`)]+)?/gm,
+      /(?:^|[\s"'`(])\/\/[^/\s"'`)]+\/[^/\s"'`)]+(?:\/[^\s"'`)]+)?/gm,
+      /(?:^|[\s"'`(])\/(?:[A-Za-z0-9._-]+\/)+opencode-harness(?:\/[^\s"'`)]+)?/gm,
+    ];
+    for (const input of scanInputs) for (const expression of machineLocalPatterns) for (const match of input.matchAll(expression)) findings.push(`${relative}: machine-local absolute path ${JSON.stringify(match[0].trim())}`);
+  }
+  if (findings.length) fail(`forbidden portable references found (${findings.length}): ${findings.join('; ')}`);
+}
+
+async function main() {
+  const { root } = parseArgs(process.argv.slice(2));
+  const stat = await statOrNull(root);
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) fail(`root must be an existing real directory: ${root}`);
+  const rootReal = await realpath(root);
+  const manifest = JSON.parse(await readFile(await regularFile(rootReal, '.opencode/portable.manifest.json'), 'utf8'));
+  validateManifest(manifest);
+  for (const relative of manifest.managedFiles) await regularFile(rootReal, relative);
+  await validateRolesAndCommands(rootReal);
+  await validateMemory(rootReal, manifest);
+  await validateTraceAlignment(rootReal);
+  await validateRoutingAndPlugin(rootReal);
+  await validateForbiddenReferences(rootReal, manifest);
+  console.log('Portable OpenCode harness validation passed');
+}
+
+main().catch((error) => {
+  console.error(error?.message ?? String(error));
+  process.exitCode = 1;
+});

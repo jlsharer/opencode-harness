@@ -1,24 +1,24 @@
 # OpenCode Harness Validation Workflow
 
-Use this workflow before accepting generated OpenCode harness assets.
+Use this workflow before accepting an installed portable OpenCode harness.
 
 ## Required Checks
 
-1. Confirm required root files and `.opencode/` files exist.
-2. Parse JSON files: `opencode.json`, the deterministic `.opencode/routing/harness-model-routing.example.json`, and `.opencode/harness.manifest.json`. The optional ignored `.opencode/routing/harness-model-routing.json` is not an acceptance input.
-3. Parse `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/role-io-contracts.schema.json`, `.opencode/schemas/memory-trace-artifact.schema.json`, and `.opencode/schemas/harness-model-routing.schema.json`. Treat the dependency-free manual routing normalizer—not an absent schema engine—as executable semantic validation.
-4. Confirm static `.memory` files exist: `.memory/INDEX.md`, `.memory/protocols/memory-management.md`, `.memory/references/opencode-refs.md`, `.memory/templates/orchestration-index.md`, and `.memory/templates/role-trace-artifact.md`.
-5. Check agent frontmatter for `description`, `mode: subagent`, and `permission`.
-6. Check each agent references the memory protocol, role contract catalog, trace schema, and trace artifact path convention.
-7. Check command frontmatter for `description` and `agent`, and verify `model` is absent.
-8. Run routing policy unit tests and representative resolver/helper/plugin cases without network calls. Prove implicit custom-first/example fallback with no merge, fail-closed present-invalid custom behavior, exact explicit paths, actionable absent-both errors, nested plugin discovery, and clean example-only startup with no mutation. Prove committed force-false decisions remain advisory; prove synthetic force mode covers all eight fixed roles and fails atomically on native agent/provider/model/baseURL incoherence.
-9. Confirm native provider transport remains outside committed `opencode.json`, endpoint budgets are cooperative and grouped by canonical URL, and provider/model/catalog identities are explicitly illustrative.
-10. Confirm `.opencode/plugins/index.js` is the only auto-loaded plugin file, is a pure adapter with a default export that imports segmented modules, and that `opencode.json` does not list local plugin paths. Lifecycle behavior is telemetry only.
-11. Render both named Compose projects from temporary private env copies. Require a digest-pinned image, unique loopback ports, an existing absolute read-only model bind with host-path creation disabled, and no `container_name`, overriding `command`, secret, or generated committed output.
-12. Confirm docs describe optional `cp .opencode/routing/harness-model-routing.example.json .opencode/routing/harness-model-routing.json` customization, explicit-path validation, custom-first/no-merge/fail-closed selection, `OPENCODE_CONFIG` as merging before project config, later `OPENCODE_CONFIG_CONTENT` without secret storage, full quit/restart config/plugin loading, static-versus-router behavior, deliberate asynchronous startup failure, and operator-dependent live/model/tool-use/benchmark gates.
-13. Run `node .opencode/scripts/validate-harness.mjs`.
-14. Scan for secrets, provider tokens, user auth paths, private model paths, non-native local routing keys in `opencode.json`, and unintended prior-projection runtime references.
-15. Report pass/fail evidence, trace artifact paths, and remediation needs.
+1. Confirm `.opencode/portable.manifest.json` exists, parses, contains only safe unique managed paths and memory seed mappings, and matches the installed portable inventory.
+2. Parse the role contracts, trace schemas, routing schema, neutral routing example, and explicit enabled-local example. Use the dependency-free routing normalizer for semantic checks.
+3. Confirm minimal memory exists: `.memory/INDEX.md`, `.memory/protocols/memory-management.md`, `.memory/templates/orchestration-index.md`, and `.memory/templates/role-trace-artifact.md`. Do not require generated orchestration history.
+4. Check all eight agent files for non-empty `description`, `mode: subagent`, and conservative `permission` frontmatter. Confirm each references the memory protocol, role contract catalog, trace schema, and trace path convention.
+5. Check role-specific command frontmatter for `description` and `agent`, verify `model` is absent, and confirm the orchestrator-owned command omits `agent` and sets `subtask: false`.
+6. Confirm `.opencode/plugins/index.js` is the only auto-loaded local plugin entry point and imports segmented modules. Treat lifecycle behavior as telemetry and guardrails only.
+7. Run routing policy, resolver, helper, and plugin checks without network calls. Prove neutral disabled behavior, explicit local opt-in, custom-first selection without merging, fail-closed present-invalid custom behavior, exact explicit paths, actionable absent-both errors, and atomic all-eight-role force-mode coherence.
+8. Confirm native provider transport and credentials remain operator-owned. Treat catalog identities and endpoint budgets as illustrative, cooperative routing data rather than endpoint-health or capacity proof.
+9. Run `node .opencode/scripts/validate-portable-harness.mjs --root .`.
+10. Scan portable files for secrets, machine-local private paths, and dependencies outside `.opencode/` and the minimal `.memory/` surface.
+11. Report pass/fail evidence, trace artifact paths, skipped-check rationales, and remediation needs.
+
+## Project-Specific Checks
+
+Repositories may run additional project or release checks separately. Those checks do not replace portable validation and are not prerequisites of the installed harness profile.
 
 ## Acceptance Rule
 

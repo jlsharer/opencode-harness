@@ -15,7 +15,7 @@
         "optional": ["unresolvedQuestions"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/researcher/<artifact-id>.md"
       },
       "verificationExpectations": ["Cite sources or supplied evidence.", "Distinguish direct evidence from inference.", "Do not edit files."]
@@ -30,7 +30,7 @@
         "optional": ["openQuestions"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/planner/<artifact-id>.md"
       },
       "verificationExpectations": ["Specify exact target paths.", "Keep acceptance gates executable.", "Do not edit implementation files."]
@@ -45,7 +45,7 @@
         "optional": ["skippedChecks", "knownLimitations"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/implementer/<artifact-id>.md"
       },
       "verificationExpectations": ["Edit only assigned paths.", "Keep changes deterministic and diffable.", "Run assigned self-checks before handoff."]
@@ -60,7 +60,7 @@
         "optional": ["followUpChecks"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/integrator/<artifact-id>.md"
       },
       "verificationExpectations": ["Confirm paths and manifests agree.", "Check role names and routing labels.", "Do not replace validator evidence."]
@@ -75,7 +75,7 @@
         "optional": ["skippedChecks", "residualRisk"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/validator/<artifact-id>.md"
       },
       "verificationExpectations": ["Run command-backed checks.", "Treat hooks as guardrails only.", "Do not implement fixes."]
@@ -90,7 +90,7 @@
         "optional": ["noIssueStatement"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/reviewer/<artifact-id>.md"
       },
       "verificationExpectations": ["Lead with defects and regressions.", "Ground findings in paths and lines when possible.", "Do not rewrite implementation."]
@@ -105,7 +105,7 @@
         "optional": ["decisionRecordPath"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/synthesizer/<artifact-id>.md"
       },
       "verificationExpectations": ["Resolve conflicts using supplied evidence.", "Do not invent missing evidence.", "Do not replace validator acceptance evidence."]
@@ -120,7 +120,7 @@
         "optional": ["artifactHashes", "screenshots"]
       },
       "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputSummary", "workPerformed", "outputSummary", "evidence", "handoff"],
+        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/artifact-verifier/<artifact-id>.md"
       },
       "verificationExpectations": ["Use reproducible artifact proof.", "Capture temp-directory evidence when practical.", "Do not modify deliverables."]

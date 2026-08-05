@@ -36,6 +36,7 @@ Current orchestrations:
 - `orchestrations/2026-07-19-routing-config-template/INDEX.md`
 - `orchestrations/2026-07-28-agentic-protocol-hooks/INDEX.md`
 - `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/INDEX.md`
+- `orchestrations/2026-08-04-harness-portability/INDEX.md`
 
 Current orchestration trace artifacts:
 

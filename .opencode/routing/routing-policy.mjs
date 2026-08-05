@@ -99,7 +99,7 @@ export function normalizeAndValidateRoutingConfig(document) {
   const forceLocal = boolean(local.forceLocalForHarnessSubagents, '$.harnessModelRouting.localRouting.forceLocalForHarnessSubagents');
   if (forceLocal && !localEnabled) fail('$.harnessModelRouting.localRouting', 'forceLocalForHarnessSubagents:true requires enabled:true');
   const models = object(local.models, '$.harnessModelRouting.localRouting.models');
-  if (Object.keys(models).length === 0) fail('$.harnessModelRouting.localRouting.models', 'must contain at least one catalog entry');
+  if (localEnabled && Object.keys(models).length === 0) fail('$.harnessModelRouting.localRouting.models', 'must contain at least one catalog entry when localRouting.enabled is true');
   const normalizedModels = {};
   const seenModels = new Set();
   const providerUrls = new Map();
@@ -266,7 +266,7 @@ export function resolveRoutingDecision({ config, request = {} } = {}) {
     ];
     const beforeRole = sourceValue(normalCandidates, 'model');
     if (beforeRole.value !== null) ({ value: resolvedModel, source: modelSource } = beforeRole);
-    else if (roleEntry?.localModel !== null && roleEntry?.localModel !== undefined) {
+    else if (routing.localRouting.enabled && roleEntry?.localModel !== null && roleEntry?.localModel !== undefined) {
       catalogName = roleEntry.localModel;
       resolvedModel = routing.localRouting.models[catalogName].model;
       modelSource = 'roleLocalModel';
@@ -280,7 +280,7 @@ export function resolveRoutingDecision({ config, request = {} } = {}) {
       else if (routing.defaultModel !== null) { resolvedModel = routing.defaultModel; modelSource = 'defaultModel'; }
     }
   }
-  if (catalogName === null && resolvedModel !== null) {
+  if (routing.localRouting.enabled && catalogName === null && resolvedModel !== null) {
     catalogName = Object.keys(routing.localRouting.models).find((name) => routing.localRouting.models[name].model === resolvedModel) ?? null;
   }
   const catalog = catalogName === null ? null : routing.localRouting.models[catalogName];

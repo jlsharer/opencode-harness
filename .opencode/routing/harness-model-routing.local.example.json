@@ -1,0 +1,59 @@
+{
+  "harnessModelRouting": {
+    "schemaVersion": "2.0.0",
+    "defaultMode": "single-model",
+    "defaultModel": null,
+    "singleModel": {
+      "enabled": false,
+      "model": null
+    },
+    "localRouting": {
+      "enabled": true,
+      "forceLocalForHarnessSubagents": false,
+      "defaultLocalModel": "qwen-coder",
+      "models": {
+        "qwen-research": {
+          "model": "llamacpp-research/qwen2.5-7b-instruct",
+          "routingServiceUrl": "http://127.0.0.1:8080/v1",
+          "maxInFlight": 2
+        },
+        "qwen-coder": {
+          "model": "llamacpp-coder/qwen2.5-coder-7b",
+          "routingServiceUrl": "http://127.0.0.1:8081/v1",
+          "maxInFlight": 1
+        }
+      }
+    },
+    "roleOverrides": {
+      "researcher": { "model": null, "localModel": "qwen-research", "variant": "research" },
+      "planner": { "model": null, "localModel": "qwen-research", "variant": "planning" },
+      "implementer": { "model": null, "localModel": "qwen-coder", "variant": null },
+      "integrator": { "model": null, "localModel": "qwen-coder", "variant": null },
+      "validator": { "model": null, "localModel": "qwen-research", "variant": "audit" },
+      "reviewer": { "model": null, "localModel": "qwen-research", "variant": "review" },
+      "synthesizer": { "model": null, "localModel": "qwen-research", "variant": "synthesis" },
+      "artifact-verifier": { "model": null, "localModel": "qwen-coder", "variant": "artifact-proof" }
+    },
+    "commandOverrides": {
+      "/delegate-research": { "agent": "researcher", "model": null, "variant": null },
+      "/delegate-plan": { "agent": "planner", "model": null, "variant": null },
+      "/delegate-implement": { "agent": "implementer", "model": null, "variant": null },
+      "/delegate-integrate": { "agent": "integrator", "model": null, "variant": null },
+      "/delegate-validate": { "agent": "validator", "model": null, "variant": "strict" },
+      "/delegate-artifact-verify": { "agent": "artifact-verifier", "model": null, "variant": "artifact-proof" }
+    },
+    "orchestratorCommands": {
+      "/delegate-orchestration": {
+        "owner": "orchestrator",
+        "agent": null,
+        "model": null,
+        "variant": "recursive-orchestration"
+      }
+    },
+    "complexityTiers": {
+      "simple": { "model": null, "variant": "fast" },
+      "standard": { "model": null, "variant": "balanced" },
+      "complex": { "model": null, "variant": "deep" }
+    }
+  }
+}

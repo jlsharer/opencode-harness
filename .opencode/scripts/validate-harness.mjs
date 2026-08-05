@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
+import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
 const ROOT = process.cwd();
@@ -48,7 +49,10 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md',
   '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
   '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
+  '.opencode/skills/opencode-skill-authoring/SKILL.md',
+  '.opencode/skills/opencode-workflow-guidance/SKILL.md',
   '.opencode/workflows/delegation-workflow.md',
+  '.opencode/workflows/implement-feature-workflow.md',
   '.opencode/workflows/validation-workflow.md',
   '.opencode/deployments/llama-server/compose.yaml',
   '.opencode/deployments/llama-server/instances/research.env.example',
@@ -59,6 +63,7 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/schemas/memory-trace-artifact.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
   '.opencode/routing/harness-model-routing.example.json',
+  '.opencode/routing/harness-model-routing.local.example.json',
   '.opencode/routing/routing-config-loader.mjs',
   '.opencode/routing/routing-policy.mjs',
   '.opencode/routing/routing-policy.test.mjs',
@@ -67,6 +72,14 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/plugins/index.js',
   '.opencode/plugin-modules/harness-lifecycle.js',
   '.opencode/plugin-modules/role-model-routing-enforcement.js',
+  '.opencode/bootstrap/memory/INDEX.md',
+  '.opencode/bootstrap/memory/protocols/memory-management.md',
+  '.opencode/bootstrap/memory/templates/orchestration-index.md',
+  '.opencode/bootstrap/memory/templates/role-trace-artifact.md',
+  '.opencode/portable.manifest.json',
+  '.opencode/scripts/bootstrap-portable-harness.mjs',
+  '.opencode/scripts/portable-harness.test.mjs',
+  '.opencode/scripts/validate-portable-harness.mjs',
   '.opencode/scripts/validate-harness.mjs',
   '.opencode/harness.manifest.json',
 ];
@@ -83,6 +96,14 @@ const SCHEMA_PATHS = [
   '.opencode/schemas/harness-model-routing.schema.json',
 ];
 const ROLE_CONTRACT_PATH = '.opencode/contracts/role-io-contracts.json';
+const TRACE_SCHEMA_PATH = '.opencode/schemas/memory-trace-artifact.schema.json';
+const TRACE_FIELDS = ['orchestrationId', 'role', 'artifactId', 'createdAt', 'inputContract', 'workPerformed', 'outputContract', 'handoff'];
+const SOURCE_INVENTORY_EXCLUSIONS = new Set([
+  '.opencode/.gitignore',
+  '.opencode/package.json',
+  '.opencode/package-lock.json',
+  '.opencode/routing/harness-model-routing.json',
+]);
 const HARNESS_ROUTING_KEYS = [
   'harnessModelRouting',
   'roleOverrides',
@@ -193,7 +214,9 @@ function assertLabelsPresent() {
 }
 
 function assertPriorProjectionReferences() {
-  const files = walk('.opencode').concat(['opencode.json']);
+  const files = walk('.opencode')
+    .filter((pathname) => pathname !== '.opencode/portable.manifest.json')
+    .concat(['opencode.json']);
   const priorProjectionTokens = ['.' + 'agents', '.' + 'codex'];
   for (const pathname of files) {
     const text = fs.readFileSync(path.join(ROOT, pathname), 'utf8');
@@ -208,7 +231,15 @@ function expectedManifestPaths() {
     ...STATIC_MANIFEST_PATHS,
     ...ROLES.map((role) => `.opencode/agents/${role}.md`),
     ...COMMANDS.map((command) => `.opencode/commands/${command}.md`),
+    '.opencode/commands/implement-feature.md',
   ];
+}
+
+function assertCompleteSourceInventory() {
+  const discovered = walk('.opencode').filter((pathname) =>
+    !pathname.startsWith('.opencode/node_modules/') && !SOURCE_INVENTORY_EXCLUSIONS.has(pathname)
+  );
+  sameSet(discovered, expectedManifestPaths().filter((pathname) => pathname.startsWith('.opencode/')), 'source .opencode inventory');
 }
 
 function assertManifest(manifest) {
@@ -244,6 +275,7 @@ function assertManifest(manifest) {
   const example = manifest.artifacts.find((artifact) => artifact.path === '.opencode/routing/harness-model-routing.example.json');
   if (example?.kind !== 'harness-routing-config') fail('Manifest must classify the routing example as harness-routing-config');
   if (!seen.has('.opencode/routing/routing-config-loader.mjs')) fail('Manifest must own the shared routing config loader');
+  if (!seen.has('.opencode/portable.manifest.json')) fail('Source manifest must own the portable profile manifest without conflating profiles');
 }
 
 function assertRoutingConfigSplit() {
@@ -299,8 +331,10 @@ async function assertRouting(routingConfig) {
   const policy = await import(pathToFileURL(path.join(ROOT, '.opencode/routing/routing-policy.mjs')).href);
   const routing = policy.normalizeAndValidateRoutingConfig(routingConfig);
   if (routing.schemaVersion !== '2.0.0') fail('Routing must use exact schemaVersion 2.0.0');
-  if (!routing.localRouting.enabled || routing.localRouting.forceLocalForHarnessSubagents) {
-    fail('Committed routing must have localRouting enabled and forceLocalForHarnessSubagents false');
+  if (routing.defaultModel !== null || routing.singleModel.enabled || routing.singleModel.model !== null ||
+      routing.localRouting.enabled || routing.localRouting.forceLocalForHarnessSubagents ||
+      routing.localRouting.defaultLocalModel !== null || Object.keys(routing.localRouting.models).length !== 0) {
+    fail('Committed routing example must be neutral and provider-free');
   }
   sameSet(Object.keys(routing.roleOverrides ?? {}), ROLES, 'routing roleOverrides');
   sameSet(
@@ -339,14 +373,14 @@ async function assertRouting(routingConfig) {
   expectThrows('orchestrator command key parity', () => policy.normalizeAndValidateRoutingConfig(invalidOrchestrator), /command keys must start with \/$/);
 }
 
-async function assertRoutingResolver(routingConfig) {
+async function assertRoutingResolver(routingConfig, expectedCatalogName) {
   const { resolveRoutingDecision } = await import(pathToFileURL(path.join(ROOT, '.opencode/routing/routing-policy.mjs')).href);
   const decision = resolveRoutingDecision({ config: routingConfig, request: { command: '/delegate-implement' } });
   if (decision.agent !== 'implementer' || decision.sources.agent !== 'commandOverride') {
     fail('Routing resolver must lock /delegate-implement to implementer');
   }
-  if (decision.local.enforced || decision.local.networkCalls || decision.local.catalogName !== 'qwen-coder') {
-    fail('Committed resolver decision must be advisory, network-free, and identify qwen-coder');
+  if (decision.local.enforced || decision.local.networkCalls || decision.local.catalogName !== expectedCatalogName) {
+    fail(`Resolver decision must be network-free with expected catalog identity ${expectedCatalogName}`);
   }
   if (Object.hasOwn(decision, 'localModel') || Object.hasOwn(decision.local, 'effectiveFallbackModel')) {
     fail('Routing resolver must not emit legacy localModel output');
@@ -378,6 +412,42 @@ function assertRoleContracts(contract) {
   }
 }
 
+function assertTraceAlignment(contract) {
+  const schema = json(TRACE_SCHEMA_PATH);
+  sameSet(schema.required ?? [], TRACE_FIELDS, 'trace schema required fields');
+  for (const role of ROLES) {
+    sameSet(contract.roles[role].traceArtifact.requiredFields ?? [], schema.required, `trace fields for ${role}`);
+  }
+  const template = read('.memory/templates/role-trace-artifact.md');
+  for (const heading of ['## Metadata', '## Input Contract', '## Work Performed', '## Output Contract', '## Handoff']) {
+    if (!template.includes(heading)) fail(`Source trace template is missing schema section: ${heading}`);
+  }
+  for (const field of TRACE_FIELDS.slice(0, 4)) {
+    if (!template.includes(`- ${field}:`)) fail(`Source trace template is missing field: ${field}`);
+  }
+}
+
+function assertMemorySeeds() {
+  for (const relative of [
+    'protocols/memory-management.md',
+    'templates/orchestration-index.md',
+    'templates/role-trace-artifact.md',
+  ]) {
+    const source = `.memory/${relative}`;
+    const seed = `.opencode/bootstrap/memory/${relative}`;
+    if (read(source) !== read(seed)) fail(`Portable memory seed differs from source canonical file: ${relative}`);
+  }
+  const portableManifest = json('.opencode/portable.manifest.json');
+  const mappings = portableManifest.memorySeeds ?? [];
+  const expectedTargets = [
+    '.memory/INDEX.md',
+    '.memory/protocols/memory-management.md',
+    '.memory/templates/orchestration-index.md',
+    '.memory/templates/role-trace-artifact.md',
+  ];
+  sameSet(mappings.map((entry) => entry.target), expectedTargets, 'portable memory seed targets');
+}
+
 function assertMemoryIndex() {
   const index = read('.memory/INDEX.md');
   for (const memoryPath of STATIC_MEMORY_PATHS) {
@@ -388,14 +458,17 @@ function assertMemoryIndex() {
   }
 
   const orchestrationRoot = path.join(ROOT, '.memory/orchestrations');
-  if (!fs.existsSync(orchestrationRoot)) return;
+  if (!fs.existsSync(orchestrationRoot) || !fs.statSync(orchestrationRoot).isDirectory()) {
+    fail('Source validation requires .memory/orchestrations history');
+  }
   const orchestrationFiles = walk('.memory/orchestrations')
     .filter((pathname) => pathname.endsWith('.md'))
     .map((pathname) => pathname.replace(/^\.memory\//, ''));
-  for (const pathname of orchestrationFiles) {
-    if (!index.includes(pathname)) {
-      fail(`.memory/INDEX.md must index orchestration memory path: ${pathname}`);
-    }
+  if (orchestrationFiles.length === 0) fail('Source validation requires indexed orchestration history');
+  const indexedOrchestrations = [...index.matchAll(/`(orchestrations\/[^`]+\/INDEX\.md)`/g)].map((match) => match[1]);
+  if (indexedOrchestrations.length === 0) fail('.memory/INDEX.md must index retained orchestration history');
+  for (const pathname of indexedOrchestrations) {
+    file(`.memory/${pathname}`);
   }
 }
 
@@ -439,7 +512,7 @@ function expectThrows(label, fn, pattern) {
   fail(`${label} must throw`);
 }
 
-async function assertRoleModelRoutingEnforcement(routingConfig) {
+async function assertRoleModelRoutingEnforcement(neutralRoutingConfig, localRoutingConfig) {
   const modulePath = path.join(ROOT, '.opencode/plugin-modules/role-model-routing-enforcement.js');
   const { applyHarnessRoleModelOverrides, resolveHarnessRoutingPath } = await import(pathToFileURL(modulePath).href);
   if (typeof applyHarnessRoleModelOverrides !== 'function') {
@@ -471,7 +544,7 @@ async function assertRoleModelRoutingEnforcement(routingConfig) {
   try {
     process.chdir(cwdSubdir);
     const defaultCfg = cfgWithAgents();
-    applyHarnessRoleModelOverrides(defaultCfg, { routingDocument: routingConfig });
+    applyHarnessRoleModelOverrides(defaultCfg, { routingDocument: neutralRoutingConfig });
     if (ROLES.some((role) => Object.hasOwn(defaultCfg.agent[role], 'model'))) {
       fail('Committed non-force config must preserve null roleOverrides without own model mutation');
     }
@@ -483,7 +556,7 @@ async function assertRoleModelRoutingEnforcement(routingConfig) {
     process.chdir(previousCwd);
   }
 
-  const forceRouting = clone(routingConfig);
+  const forceRouting = clone(localRoutingConfig);
   forceRouting.harnessModelRouting.localRouting.forceLocalForHarnessSubagents = true;
   const forceCfg = cfgWithAgents();
   const providerBefore = clone(forceCfg.provider);
@@ -521,6 +594,19 @@ async function assertRoleModelRoutingEnforcement(routingConfig) {
     /Malformed routing config JSON/,
   );
   fs.rmSync(tempDir, { recursive: true, force: true });
+}
+
+function assertPortableValidator() {
+  const result = spawnSync(process.execPath, ['.opencode/scripts/validate-portable-harness.mjs', '--root', ROOT], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    fail(`Portable validator failed during source QA: ${(result.stderr || result.stdout).trim()}`);
+  }
+  if (result.stdout.trim() !== 'Portable OpenCode harness validation passed') {
+    fail(`Portable validator returned unexpected output: ${result.stdout.trim()}`);
+  }
 }
 
 function assertRecursiveOrchestrationDocs() {
@@ -645,6 +731,7 @@ function walk(dirname) {
 }
 
 async function main() {
+  file('.gitignore');
   file('opencode.json');
   file('AGENTS.md');
   file('opencode-harness.design.md');
@@ -658,11 +745,14 @@ async function main() {
     fail('opencode.json instructions must include AGENTS.md and .memory/protocols/memory-management.md');
   }
   const routing = json('.opencode/routing/harness-model-routing.example.json');
+  const localRouting = json('.opencode/routing/harness-model-routing.local.example.json');
   await assertRouting(routing);
-  await assertRoutingResolver(routing);
-  await assertRoleModelRoutingEnforcement(routing);
+  await assertRoutingResolver(routing, null);
+  await assertRoutingResolver(localRouting, 'qwen-coder');
+  await assertRoleModelRoutingEnforcement(routing, localRouting);
   const roleContracts = json(ROLE_CONTRACT_PATH);
   assertRoleContracts(roleContracts);
+  assertTraceAlignment(roleContracts);
   for (const schemaPath of SCHEMA_PATHS) {
     json(schemaPath);
   }
@@ -671,12 +761,14 @@ async function main() {
     file(memoryPath);
   }
   assertMemoryIndex();
+  assertMemorySeeds();
   assertOpenCodeReferences();
   const manifest = json('.opencode/harness.manifest.json');
   if (!Array.isArray(manifest.artifacts)) {
     fail('.opencode/harness.manifest.json must contain artifacts array');
   }
   assertManifest(manifest);
+  assertCompleteSourceInventory();
   assertRoutingConfigSplit();
 
   for (const role of ROLES) {
@@ -713,6 +805,7 @@ async function main() {
   assertPriorProjectionReferences();
   await assertPluginAdapter();
   assertGuardrailOnlyDocs();
+  assertPortableValidator();
 
   process.stdout.write('OpenCode harness validation passed\n');
 }
