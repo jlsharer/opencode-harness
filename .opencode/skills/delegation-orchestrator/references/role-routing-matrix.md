@@ -22,6 +22,7 @@ Research is mandatory before planning. Validation is mandatory before acceptance
 Every delegated packet must include:
 
 - `orchestration-id`
+- nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`
 - memory root `.memory/orchestrations/<orchestration-id>/`
 - role contract catalog `.opencode/contracts/role-io-contracts.json`
 - trace schema `.opencode/schemas/memory-trace-artifact.schema.json`
@@ -31,7 +32,11 @@ Use scoped artifact IDs for repeatable role instances:
 
 `<scope>-<role>-<sequence>-<slug>`
 
-Use at most 3 remediation loops per scoped work unit. After the third failed loop, route blocker synthesis to `synthesizer` and ask the user for direction.
+Use at most 3 remediation loops per scoped work unit. Every remediation is a new delegated task with a new child thread, `delegationTaskId`, and artifact ID linked to its predecessor. After the third failed loop, route blocker synthesis to `synthesizer` and ask the user for direction.
+
+## Child Thread Rule
+
+Fresh tasks omit the `task_id` property. Reuse it only once to answer a recorded child-originated clarification for the exact unchanged unresolved task, using the matching `clarification-response` envelope; replay and post-restart reuse fail closed. New work, changed scope or role, new deliverables, retries, remediation, follow-ups, corrections, and terminal work always use fresh child threads. Managed orchestration does not use direct `@subagent` or subagent-targeted command dispatch unless live validation proves it traverses the same guard.
 
 The orchestration index should link all role trace artifacts, validation evidence, and final decisions.
 

@@ -4,6 +4,7 @@ import { lstat, readFile, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { spawnSync } from 'node:child_process';
 
 const ROLES = ['researcher', 'planner', 'implementer', 'integrator', 'validator', 'reviewer', 'synthesizer', 'artifact-verifier'];
 const COMMAND_ROLES = new Map([
@@ -45,6 +46,8 @@ const EXPECTED_MANAGED_FILES = [
   '.opencode/routing/routing-policy.test.mjs',
   '.opencode/plugins/index.js',
   '.opencode/plugin-modules/harness-lifecycle.js',
+  '.opencode/plugin-modules/task-thread-policy.js',
+  '.opencode/plugin-modules/task-thread-policy.test.mjs',
   '.opencode/plugin-modules/role-model-routing-enforcement.js',
   '.opencode/bootstrap/native/darwin-portable-fs.c',
   DARWIN_HELPER_PATH,
@@ -196,6 +199,7 @@ async function validateRolesAndCommands(root) {
     const text = await readFile(await regularFile(root, relative), 'utf8');
     const metadata = frontmatter(text, relative);
     if (!metadata.description || metadata.mode !== 'subagent' || !Object.hasOwn(metadata, 'permission')) fail(`agent frontmatter contract failed: ${relative}`);
+    for (const snippet of ['contract-complete Task packet', '/delegate-orchestration', `@${role}`, 'refuse']) if (!text.includes(snippet)) fail(`agent direct-dispatch boundary is missing from ${relative}: ${snippet}`);
   }
   for (const [file, role] of COMMAND_ROLES) {
     const relative = `.opencode/commands/${file}`;
@@ -216,9 +220,10 @@ async function validateMemory(root, manifest) {
   ]);
   if (manifest.memorySeeds.length !== required.size || manifest.memorySeeds.some((seed) => !required.delete(seed.target)) || required.size) fail('memory seed targets do not define the minimal memory profile');
   for (const seed of manifest.memorySeeds) {
-    await regularFile(root, seed.source);
+    const sourceText = await readFile(await regularFile(root, seed.source), 'utf8');
     const targetText = await readFile(await regularFile(root, seed.target), 'utf8');
     if (!targetText.trim()) fail(`memory target is empty: ${seed.target}`);
+    if (seed.target !== '.memory/INDEX.md' && sourceText !== targetText) fail(`memory seed differs from canonical target: ${seed.target}`);
   }
 }
 
@@ -227,6 +232,7 @@ async function validateTraceAlignment(root) {
   const schema = JSON.parse(await readFile(await regularFile(root, '.opencode/schemas/memory-trace-artifact.schema.json'), 'utf8'));
   if (JSON.stringify(schema.required) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail('trace schema required fields differ from portable contract');
   for (const role of ROLES) if (JSON.stringify(contract.roles?.[role]?.traceArtifact?.requiredFields) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail(`trace required fields differ for role: ${role}`);
+  for (const role of ROLES) for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind']) if (!contract.roles?.[role]?.inputContract?.required?.includes(field)) fail(`role input contract is missing ${field}: ${role}`);
   const template = await readFile(await regularFile(root, '.memory/templates/role-trace-artifact.md'), 'utf8');
   for (const heading of ['## Metadata', '## Input Contract', '## Work Performed', '## Output Contract', '## Handoff']) if (!template.includes(heading)) fail(`trace template is missing ${heading}`);
   for (const field of REQUIRED_TRACE_FIELDS.slice(0, 4)) if (!template.includes(`- ${field}:`)) fail(`trace template is missing ${field}`);
@@ -254,7 +260,7 @@ async function validateRoutingAndPlugin(root) {
   const plugin = await import(`${pathToFileURL(path.join(root, pluginRelative)).href}?portable-validation=${Date.now()}`);
   if (typeof plugin.default !== 'function') fail('plugin entry has no default function export');
   const hooks = await plugin.default({ routingPath: neutralPath, project: { root } });
-  if (typeof hooks.config !== 'function') fail('plugin has no config hook');
+  for (const hook of ['config', 'tool.execute.before', 'tool.execute.after', 'command.execute.before']) if (typeof hooks[hook] !== 'function') fail(`plugin has no ${hook} hook`);
   const nativeConfig = {};
   await hooks.config(nativeConfig);
   if (JSON.stringify(nativeConfig) !== '{}') fail('neutral no-provider config hook must be a no-op');
@@ -262,6 +268,43 @@ async function validateRoutingAndPlugin(root) {
   const localNativeConfig = {};
   await localHooks.config(localNativeConfig);
   if (JSON.stringify(localNativeConfig) !== '{}') fail('advisory local no-provider config hook must be a no-op');
+}
+
+async function validateTaskThreadPolicy(root) {
+  const policyPath = '.opencode/plugin-modules/task-thread-policy.js';
+  const testPath = '.opencode/plugin-modules/task-thread-policy.test.mjs';
+  const policySource = await readFile(await regularFile(root, policyPath), 'utf8');
+  if (/\bfrom\s+['"]|\brequire\s*\(/.test(policySource)) fail('task-thread policy must remain dependency-free');
+  const policyModule = await import(`${pathToFileURL(path.join(root, policyPath)).href}?contract-check=${Date.now()}`);
+  const contract = JSON.parse(await readFile(await regularFile(root, '.opencode/contracts/role-io-contracts.json'), 'utf8'));
+  for (const role of ROLES) {
+    const policyFields = policyModule.TASK_THREAD_ROLE_PACKET_FIELDS?.[role];
+    if (!policyFields) fail(`task-thread policy has no role packet contract: ${role}`);
+    for (const kind of ['required', 'optional']) {
+      const actual = [...(policyFields[kind] ?? [])].sort();
+      const expected = [...(contract.roles?.[role]?.inputContract?.[kind] ?? [])].sort();
+      if (JSON.stringify(actual) !== JSON.stringify(expected)) fail(`task envelope ${kind} packet fields differ from role contract: ${role}`);
+    }
+  }
+  const lifecycle = await readFile(await regularFile(root, '.opencode/plugin-modules/harness-lifecycle.js'), 'utf8');
+  for (const snippet of ["from './task-thread-policy.js'", 'output?.args', "'tool.execute.after'", "'command.execute.before'", 'blockedRoleCommands', "'session.created'"]) if (!lifecycle.includes(snippet)) fail(`lifecycle task-thread adapter is missing: ${snippet}`);
+  for (const stale of ['input?.args', 'session.start', 'message.after']) if (lifecycle.includes(stale)) fail(`lifecycle uses stale hook shape: ${stale}`);
+
+  const protocol = await readFile(await regularFile(root, '.memory/protocols/memory-management.md'), 'utf8');
+  const policyPhrases = ['strict 1:1 boundary', 'clarification-response', 'Start a fresh child task and omit `task_id`.', 'process restart loses authorization and denies reuse', 'exact completed foreground', 'bounded process-local ledgers'];
+  for (const phrase of policyPhrases) if (!protocol.includes(phrase)) fail(`task-thread policy wording is missing: ${phrase}`);
+  for (const relative of ['.opencode/commands/delegate-orchestration.md', '.opencode/skills/delegation-orchestrator/SKILL.md', '.opencode/workflows/delegation-workflow.md', '.opencode/skills/delegation-orchestrator/references/validation-checklist.md']) {
+    const text = await readFile(await regularFile(root, relative), 'utf8');
+    for (const phrase of ['delegationTaskId', 'scopeKey', 'task_id', 'clarification']) if (!text.includes(phrase)) fail(`task-thread policy wording missing from ${relative}: ${phrase}`);
+  }
+  for (const file of COMMAND_ROLES.keys()) {
+    const text = await readFile(await regularFile(root, `.opencode/commands/${file}`), 'utf8');
+    for (const phrase of ['fail-closed', '/delegate-orchestration', 'delegationTaskId', 'scopeKey', 'dispatchKind: fresh', 'without any `task_id` property']) if (!text.includes(phrase)) fail(`role command task-thread wording missing from ${file}: ${phrase}`);
+  }
+
+  await regularFile(root, testPath);
+  const result = spawnSync(process.execPath, [testPath], { cwd: root, encoding: 'utf8' });
+  if (result.status !== 0) fail(`task-thread policy tests failed: ${(result.stderr || result.stdout).trim()}`);
 }
 
 async function validateForbiddenReferences(root, manifest) {
@@ -303,6 +346,7 @@ async function main() {
   await validateRolesAndCommands(rootReal);
   await validateMemory(rootReal, manifest);
   await validateTraceAlignment(rootReal);
+  await validateTaskThreadPolicy(rootReal);
   await validateRoutingAndPlugin(rootReal);
   await validateForbiddenReferences(rootReal, manifest);
   console.log('Portable OpenCode harness validation passed');

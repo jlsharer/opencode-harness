@@ -18,6 +18,8 @@ Required output: ordered plan, file contracts, dependencies, verification gates,
 
 Boundaries: do not edit implementation files, perform final validation, or invent host formats beyond documented OpenCode surfaces.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@planner` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.

@@ -65,7 +65,7 @@ test.after(async () => rm(tempParent, { recursive: true, force: true }));
 test('fresh foreign repository installs and validates without source-owned roots or history', async () => {
   const repo = await makeRepo(tempParent, 'fresh');
   const installed = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(installed.stdout, /created\/updated=45, memory-created=4, unchanged=0, collisions=0/);
+  assert.match(installed.stdout, /created\/updated=47, memory-created=4, unchanged=0, collisions=0/);
   assert.match(installed.stdout, process.platform === 'darwin' ? /write-safety=darwin-native-race-detecting/ : /write-safety=linux-descriptor-relative-race-detecting:\/proc\/self\/fd/);
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
   const validated = await runNode([validator, '--root', '.'], { cwd: repo });
@@ -78,15 +78,17 @@ test('fresh foreign repository installs and validates without source-owned roots
     'templates/orchestration-index.md',
     'templates/role-trace-artifact.md',
   ]);
+  for (const relative of ['task-thread-policy.js', 'task-thread-policy.test.mjs']) await readFile(path.join(repo, '.opencode/plugin-modules', relative), 'utf8');
+  await runNode(['--test', path.join(repo, '.opencode/plugin-modules/task-thread-policy.test.mjs')], { cwd: repo });
 });
 
 test('bootstrap is idempotent and dry-run performs no writes', async () => {
   const repo = path.join(tempParent, 'fresh');
   const second = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=49, collisions=0/);
+  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=51, collisions=0/);
   const dryRepo = await makeRepo(tempParent, 'dry-run');
   const dry = await runNode([BOOTSTRAP, '--target', dryRepo, '--dry-run']);
-  assert.match(dry.stdout, /dry-run complete: created\/updated=45, memory-created=4/);
+  assert.match(dry.stdout, /dry-run complete: created\/updated=47, memory-created=4/);
   assert.deepEqual(await readdir(dryRepo), []);
 });
 
@@ -349,6 +351,27 @@ test('installed validator independently rejects removed inventory entries', asyn
   await rm(path.join(repo, removed));
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
   assert.match(await expectFailure([validator, '--root', repo]), /exact portable-core contract/);
+});
+
+test('installed validator rejects missing task-thread policy assets and stale policy wording', async () => {
+  const repo = await makeRepo(tempParent, 'thread-policy-corruption');
+  await runNode([BOOTSTRAP, '--target', repo]);
+  const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
+  const modulePath = path.join(repo, '.opencode/plugin-modules/task-thread-policy.js');
+  await rm(modulePath);
+  assert.match(await expectFailure([validator, '--root', repo]), /missing file: \.opencode\/plugin-modules\/task-thread-policy\.js/);
+
+  await runNode([BOOTSTRAP, '--target', repo, '--overwrite-managed']);
+  const testPath = path.join(repo, '.opencode/plugin-modules/task-thread-policy.test.mjs');
+  await rm(testPath);
+  assert.match(await expectFailure([validator, '--root', repo]), /missing file: \.opencode\/plugin-modules\/task-thread-policy\.test\.mjs/);
+
+  await runNode([BOOTSTRAP, '--target', repo, '--overwrite-managed']);
+  const protocol = path.join(repo, '.memory/protocols/memory-management.md');
+  const staleProtocol = (await readFile(protocol, 'utf8')).replace('strict 1:1 boundary', 'legacy boundary');
+  await writeFile(protocol, staleProtocol);
+  await writeFile(path.join(repo, '.opencode/bootstrap/memory/protocols/memory-management.md'), staleProtocol);
+  assert.match(await expectFailure([validator, '--root', repo]), /task-thread policy wording/);
 });
 
 test('installed validator independently rejects a corrupted Darwin helper binary', async () => {

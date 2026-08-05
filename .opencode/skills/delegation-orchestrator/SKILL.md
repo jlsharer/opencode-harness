@@ -19,6 +19,8 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 - Preserve caller-supplied routing labels exactly when present: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`.
 - Do not invent routing metadata values when the original request does not include them.
 - Require concrete validator evidence before accepting any delegated task as complete.
+- Enforce one separately scoped delegated task per fresh child session/thread. Fresh Task calls omit the `task_id` property. Use `/delegate-orchestration`; direct `@subagent` is prohibited and the lifecycle guard rejects direct subagent-targeted `/delegate-*` role commands.
+- Permit `task_id` reuse only for one parent answer to a machine-recorded, child-originated clarification while the exact task remains unresolved. Consume authorization before execution and deny replay or reuse after restart.
 - Treat lifecycle hooks and plugins as guardrails and telemetry, not acceptance proof.
 - Require an `orchestration-id`, `.memory/orchestrations/<orchestration-id>/` index, role I/O contract reference `.opencode/contracts/role-io-contracts.json`, trace schema reference `.opencode/schemas/memory-trace-artifact.schema.json`, and role trace artifact path `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md` for every delegated role output.
 
@@ -30,8 +32,18 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 4. Delegate research before planning, then delegate each remaining category to the matching OpenCode subagent instance.
 5. Pass full context, constraints, allowed paths, artifact expectations, verification commands, orchestration memory paths, role I/O contracts, trace schema, resolved model metadata, and caller-supplied routing metadata.
 6. Inspect returned evidence for completeness.
-7. Request remediation from the responsible role instance when evidence is incomplete, up to the loop limit.
+7. When evidence is incomplete, create a fresh remediation task/role instance with a new `delegationTaskId`, artifact ID, and child thread linked to its predecessor, up to the original scoped work unit's loop limit.
 8. Consolidate only after required validation evidence is present.
+
+## Task/Thread Decision Table
+
+| Parent intent | `task_id` rule |
+| --- | --- |
+| New task or deliverable, changed scope, role reassignment, follow-up, retry, remediation, post-result correction, or completed/failed/cancelled work | Start a fresh child task with `dispatchKind: fresh` and omit `task_id`. |
+| One answer to a recorded child-originated clarification while the exact task is unresolved | Reuse that child's `task_id` once with `dispatchKind: clarification-response` and the matching version-1 envelope. |
+| Missing, malformed, stale, mismatched, replayed, or post-restart authorization | Deny reuse; do not fall back to fresh creation with a supplied `task_id`. |
+
+Every fresh delegated packet requires a nonempty `orchestrationId`, `delegationTaskId`, stable `scopeKey`, `dispatchKind: fresh`, `routingMetadataStatus`, and every role-specific required input. Use the exact envelope/packet grammar in `.memory/protocols/memory-management.md`; a clarification response carries only the answer and necessary context and cannot change the immutable role packet.
 
 ## Local Model Routing Boundary
 

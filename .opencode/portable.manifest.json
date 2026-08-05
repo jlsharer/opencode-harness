@@ -67,6 +67,8 @@
     ".opencode/routing/routing-policy.test.mjs",
     ".opencode/plugins/index.js",
     ".opencode/plugin-modules/harness-lifecycle.js",
+    ".opencode/plugin-modules/task-thread-policy.js",
+    ".opencode/plugin-modules/task-thread-policy.test.mjs",
     ".opencode/plugin-modules/role-model-routing-enforcement.js",
     ".opencode/bootstrap/native/darwin-portable-fs.c",
     ".opencode/bootstrap/native/darwin-portable-fs.universal",

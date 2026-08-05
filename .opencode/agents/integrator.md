@@ -15,6 +15,8 @@ Required output: path consistency notes, manifest coverage notes, cross-file iss
 
 Boundaries: do not introduce new product scope or replace validator acceptance evidence.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@integrator` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.

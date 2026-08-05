@@ -36,6 +36,7 @@ Ask clarifying questions only when required intake is missing or ambiguous. At m
    - Create or update `.memory/orchestrations/<orchestration-id>/INDEX.md`.
    - Record the goal, boundaries, non-goals, acceptance criteria, routing metadata status, and initial DAG.
    - Keep the parent context concise; link to artifacts instead of embedding long source excerpts.
+   - Assign every new scoped task a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; invoke Task without a `task_id` property.
 
 2. **Source research**
    - Delegate one or more scoped `researcher` instances before planning.
@@ -61,7 +62,7 @@ Ask clarifying questions only when required intake is missing or ambiguous. At m
 6. **Integration**
    - Delegate `integrator` after implementation branches join.
    - Check cross-file consistency, manifests, routing, schemas, workflows, command names, generated artifacts, and path relationships.
-   - Request targeted remediation instead of silently expanding scope.
+   - Create targeted remediation as a new role task, artifact, and fresh child thread linked to the predecessor instead of silently expanding scope.
 
 7. **Validation and artifact proof**
    - Delegate `validator` before acceptance. Use `artifact-verifier` when generated artifacts, rendered output, package contents, temp-directory proof, or externally inspectable deliverables require reproducible proof.
@@ -81,6 +82,7 @@ Ask clarifying questions only when required intake is missing or ambiguous. At m
 - Preserve fixed role names exactly: `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, and `artifact-verifier`.
 - Give each role instance a unique scoped artifact ID, such as `api-researcher-001-docs`, `ui-implementer-002-form-state`, or `root-validator-003-final`.
 - Use at most 3 remediation loops for each scoped work unit. After the third failed loop, delegate a `synthesizer` blocker artifact and ask the user for direction.
+- Reuse `task_id` only once to answer a recorded child-originated clarification while the exact task is unresolved. Retry, remediation, correction, follow-up, changed scope/role/deliverable, terminal work, replay, and post-restart response use no prior `task_id` and start fresh. Do not use unverified direct child-dispatch surfaces for managed orchestration.
 - Require validation before acceptance for every workflow and sub-workflow.
 
 ## Completion Evidence

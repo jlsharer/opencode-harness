@@ -18,6 +18,8 @@ Required output: cited findings, source list, implementation implications, risks
 
 Boundaries: do not edit files, produce final plans, integrate outputs, or validate acceptance.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@researcher` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.

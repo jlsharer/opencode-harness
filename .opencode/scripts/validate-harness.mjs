@@ -72,6 +72,8 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/routing/model-routing-helper.mjs',
   '.opencode/plugins/index.js',
   '.opencode/plugin-modules/harness-lifecycle.js',
+  '.opencode/plugin-modules/task-thread-policy.js',
+  '.opencode/plugin-modules/task-thread-policy.test.mjs',
   '.opencode/plugin-modules/role-model-routing-enforcement.js',
   '.opencode/bootstrap/memory/INDEX.md',
   '.opencode/bootstrap/memory/protocols/memory-management.md',
@@ -411,6 +413,9 @@ function assertRoleContracts(contract) {
     if (!entry?.inputContract?.required?.length) {
       fail(`Missing input contract required fields for role: ${role}`);
     }
+    for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind']) {
+      if (!entry.inputContract.required.includes(field)) fail(`Role ${role} input contract is missing ${field}`);
+    }
     if (!entry?.outputContract?.required?.length) {
       fail(`Missing output contract required fields for role: ${role}`);
     }
@@ -699,6 +704,9 @@ function assertAgentContractReferences(role, text) {
       fail(`Role ${role} must reference ${snippet}`);
     }
   }
+  for (const snippet of ['contract-complete Task packet', '/delegate-orchestration', `@${role}`, 'refuse']) {
+    if (!text.includes(snippet)) fail(`Role ${role} direct-dispatch boundary is missing ${snippet}`);
+  }
 }
 
 async function assertPluginAdapter() {
@@ -721,6 +729,10 @@ async function assertPluginAdapter() {
   if (!lifecycle.includes('HarnessLifecyclePlugin')) {
     fail('Segmented lifecycle plugin export must remain separate');
   }
+  for (const snippet of ["from './task-thread-policy.js'", 'output?.args', "'tool.execute.before'", "'tool.execute.after'", "'session.created'"]) {
+    if (!lifecycle.includes(snippet)) fail(`Lifecycle task-thread adapter is missing current hook detail: ${snippet}`);
+  }
+  for (const stale of ['input?.args', 'session.start', 'message.after']) if (lifecycle.includes(stale)) fail(`Lifecycle plugin uses stale hook detail: ${stale}`);
   for (const staleRoutingSnippet of ['resolvedRouting', 'injectModelFlag', 'resolveModelForRole', 'input.args.command =']) {
     if (lifecycle.includes(staleRoutingSnippet)) {
       fail(`Lifecycle plugin must not perform model injection or cached routing: ${staleRoutingSnippet}`);
@@ -740,9 +752,42 @@ async function assertPluginAdapter() {
     fail('Plugin adapter dynamic import must expose a default function');
   }
   const hooks = await pluginModule.default({});
-  if (typeof hooks.config !== 'function') {
-    fail('Plugin adapter must expose reachable config hook');
+  for (const hook of ['config', 'tool.execute.before', 'tool.execute.after', 'command.execute.before']) if (typeof hooks[hook] !== 'function') fail(`Plugin adapter must expose reachable ${hook} hook`);
+}
+
+async function assertTaskThreadPolicy() {
+  const policy = read('.opencode/plugin-modules/task-thread-policy.js');
+  if (/\bfrom\s+['"]|\brequire\s*\(/.test(policy)) fail('Task-thread policy must remain dependency-free');
+  const policyModule = await import(`${pathToFileURL(path.join(ROOT, '.opencode/plugin-modules/task-thread-policy.js')).href}?contract-check=${Date.now()}`);
+  const contract = json('.opencode/contracts/role-io-contracts.json');
+  for (const role of ROLES) {
+    const policyFields = policyModule.TASK_THREAD_ROLE_PACKET_FIELDS?.[role];
+    if (!policyFields) fail(`Task-thread policy has no role packet contract: ${role}`);
+    sameSet(policyFields.required, contract.roles[role].inputContract.required, `task envelope required packet fields for ${role}`);
+    sameSet(policyFields.optional, contract.roles[role].inputContract.optional, `task envelope optional packet fields for ${role}`);
   }
+  const protocol = read('.memory/protocols/memory-management.md');
+  for (const phrase of ['strict 1:1 boundary', 'clarification-response', 'Start a fresh child task and omit `task_id`.', 'process restart loses authorization and denies reuse', 'exact completed foreground', 'bounded process-local ledgers']) if (!protocol.includes(phrase)) fail(`Canonical task-thread policy wording is missing: ${phrase}`);
+  for (const pathname of [
+    '.opencode/commands/delegate-orchestration.md',
+    '.opencode/skills/delegation-orchestrator/SKILL.md',
+    '.opencode/workflows/delegation-workflow.md',
+    '.opencode/workflows/validation-workflow.md',
+    '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
+    'AGENTS.md',
+    'opencode-harness.design.md',
+  ]) {
+    const text = read(pathname);
+    for (const phrase of ['task_id', 'clarification', 'fresh']) if (!text.includes(phrase)) fail(`Task-thread policy wording missing from ${pathname}: ${phrase}`);
+  }
+  for (const command of ROLE_COMMANDS) {
+    const text = read(`.opencode/commands/${command}.md`);
+    for (const phrase of ['fail-closed', '/delegate-orchestration', 'delegationTaskId', 'scopeKey', 'dispatchKind: fresh', 'without any `task_id` property']) if (!text.includes(phrase)) fail(`Role command task-thread wording missing from ${command}: ${phrase}`);
+  }
+  const lifecycle = read('.opencode/plugin-modules/harness-lifecycle.js');
+  for (const phrase of ["'command.execute.before'", 'blockedRoleCommands', 'not a managed dispatch surface']) if (!lifecycle.includes(phrase)) fail(`Lifecycle direct-command guard is missing: ${phrase}`);
+  const result = spawnSync(process.execPath, ['--test', '.opencode/plugin-modules/task-thread-policy.test.mjs'], { cwd: ROOT, encoding: 'utf8' });
+  if (result.status !== 0) fail(`Task-thread policy tests failed: ${(result.stderr || result.stdout).trim()}`);
 }
 
 function assertGuardrailOnlyDocs() {
@@ -843,6 +888,7 @@ async function main() {
 
   assertLabelsPresent();
   assertRecursiveOrchestrationDocs();
+  await assertTaskThreadPolicy();
   assertPriorProjectionReferences();
   await assertPluginAdapter();
   assertGuardrailOnlyDocs();

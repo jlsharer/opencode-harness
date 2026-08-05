@@ -41,6 +41,20 @@
 
 - `<packet-id>`:
 
+## Delegated Tasks
+
+- `<delegationTaskId>`:
+  - scopeKey:
+  - role:
+  - artifactId:
+  - dispatchKind: fresh | clarification-response
+  - childTaskOrSessionId:
+  - parentSessionId:
+  - predecessorTaskOrArtifact:
+  - clarificationRequestNonceStatus:
+  - remediationLoop:
+  - terminalStatus:
+
 ## Role Trace Artifacts
 
 - `researcher`:

@@ -50,6 +50,18 @@ Ask questions before delegation only when required context is missing or ambiguo
 10. For each scoped work unit, use at most 3 remediation loops. After the third failed loop, delegate synthesis of the blocker and ask the user for direction.
 11. Treat lifecycle hooks and plugins as guardrails and telemetry only. They cannot replace validator or artifact-verifier evidence.
 
+## Child Thread Dispatch Policy
+
+Managed orchestration has a strict 1:1 boundary: one separately scoped delegated task uses one fresh child session/thread. Assign every new task a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; invoke Task with the version-1 fresh envelope and omit the `task_id` property entirely. This command is the managed dispatch surface. Do not use direct `@subagent`; the lifecycle guard rejects direct subagent-targeted `/delegate-*` role commands.
+
+| Parent intent | `task_id` rule |
+| --- | --- |
+| New task or deliverable, changed scope, role reassignment, follow-up, retry, remediation, post-result correction, or completed/failed/cancelled work | Start a fresh child task and omit `task_id`. |
+| One answer to a recorded child-originated clarification while the exact task is unresolved | Reuse that child's `task_id` once with `dispatchKind: clarification-response` and the matching response envelope. |
+| Missing, malformed, stale, mismatched, replayed, or post-restart authorization | Deny reuse; do not fall back to fresh creation with a supplied `task_id`. |
+
+The exact envelope and contract-complete role-packet grammar is normative in `.memory/protocols/memory-management.md`. Authorization is consumed before execution; a continuation contains only the answer and necessary context and cannot change the role packet. A remediation is a fresh task/role instance with a new `delegationTaskId`, artifact ID, and child thread linked to its predecessor, while its loop remains charged to the original scoped work unit.
+
 ## Local Routing Boundary
 
 - Native provider transport is external merged OpenCode configuration. Do not add provider transport or harness policy to repository `opencode.json`.

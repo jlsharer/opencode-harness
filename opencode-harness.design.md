@@ -15,7 +15,7 @@ The harness preserves these eight role names exactly:
 - `synthesizer`
 - `artifact-verifier`
 
-The baseline projection covers role agents, command prompts, delegation and validation workflows, a harness-owned model routing resolver, lifecycle guardrails, and validation tooling. It does not define provider credentials, durable task state, external routing services, or canonical orchestration ledgers.
+The baseline projection covers role agents, command prompts, delegation and validation workflows, a harness-owned model routing resolver, lifecycle guardrails, and validation tooling. It does not define provider credentials, durable task state, external routing services, or canonical durable orchestration ledgers. Its task-thread guard retains only process-local, non-durable authorization state and fails closed after restart.
 
 ## Standalone OpenCode Surface
 
@@ -97,7 +97,7 @@ The workflow is:
 2. Dispatch each work category to the matching role.
 3. Pass complete task context, allowed paths, file contracts, verification gates, `orchestration-id`, memory root, role contract catalog, trace schema, trace artifact requirement, and any caller-supplied routing metadata.
 4. Inspect role outputs for required evidence and trace artifact references.
-5. Request remediation from the responsible role when evidence is incomplete.
+5. When evidence is incomplete, create a fresh remediation role task and child thread linked to the predecessor.
 6. Accept only after validator evidence, and artifact-verifier evidence when generated artifacts are involved, is present.
 
 Delegated prompts that originate from enriched orchestration input must preserve caller-supplied labels exactly:
@@ -119,6 +119,8 @@ If those labels are absent from the original request, the OpenCode harness does 
 Role names are fixed, but role instances are repeatable. A workflow can use many `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, or `artifact-verifier` instances as long as each instance has a scoped artifact ID and trace artifact under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
 
 Remediation is capped at 3 loops per scoped work unit. After the third failed loop, the orchestrator delegates blocker synthesis and asks the user for direction.
+
+Managed orchestration enforces one separately scoped delegated task per fresh child session/thread. Every new role task has a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; Task calls omit the `task_id` property. The sole reuse is one `clarification-response` to a recorded child-originated request while the exact task remains unresolved. New deliverables, changed scope or role, retries, remediation, corrections, follow-ups, terminal work, replay, and post-restart responses start fresh. `/delegate-orchestration` is the managed surface; direct `@subagent` dispatch is prohibited and the lifecycle guard rejects direct subagent-targeted role commands.
 
 OpenCode command files are thin wrappers around role-specific prompts:
 
@@ -161,7 +163,7 @@ The checked-in env templates align with the illustrative routing identities but 
 
 `.opencode/plugins/index.js` is the local project plugin entry point. It is the only JavaScript module in the auto-loaded `.opencode/plugins/` directory. It is a pure adapter that imports segmented logic from `.opencode/plugin-modules/` and exports the default plugin function expected by OpenCode local plugin loading.
 
-`.opencode/plugin-modules/harness-lifecycle.js` provides guardrail and telemetry hooks for OpenCode sessions. It can warn about dangerous commands, remind users that delegation evidence is required, and surface validation guidance. Keeping it outside `.opencode/plugins/` prevents OpenCode from auto-loading segmented modules separately from the adapter.
+`.opencode/plugin-modules/harness-lifecycle.js` provides guardrail and telemetry hooks for OpenCode sessions. It warns about dangerous commands, reminds users that delegation evidence is required, and enforces the process-local task-thread policy through the dependency-free `.opencode/plugin-modules/task-thread-policy.js`. The ledger stores immutable task contracts and one-shot clarification authorization only in the running plugin process; it logs sanitized identifiers rather than prompts, answers, output, or paths and denies reuse after restart. Keeping segmented modules outside `.opencode/plugins/` prevents OpenCode from auto-loading them separately from the adapter.
 
 `.opencode/plugin-modules/role-model-routing-enforcement.js` is the startup configuration boundary for the assignment plan described above. It is separate from lifecycle telemetry and is not acceptance evidence. Although its config callback is asynchronous, all selected native relationships are checked before any agent mutation.
 

@@ -86,7 +86,7 @@ test('Darwin bootstrap helper performs no-clobber, overwrite, and installed reru
   assert.match(first.stdout, /write-safety=darwin-native-race-detecting/);
   const installedBootstrap = path.join(repo, '.opencode/scripts/bootstrap-portable-harness.mjs');
   const rerun = await execFileAsync(process.execPath, [installedBootstrap, '--target', repo]);
-  assert.match(rerun.stdout, /unchanged=49/);
+  assert.match(rerun.stdout, /unchanged=51/);
   const managed = path.join(repo, '.opencode/agents/researcher.md');
   const original = await readFile(managed);
   await rm(managed);

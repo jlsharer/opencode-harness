@@ -8,6 +8,7 @@ This document defines the project-local `implement-feature` workflow for delegat
 - Native OpenCode invocation surfaces remain commands, skills, agents, plugins, MCP servers, permissions, and configuration files documented by OpenCode.
 - This workflow uses only the fixed roles: `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, and `artifact-verifier`.
 - Parent orchestration delegates scoped role work, preserves or records routing metadata status, and consolidates evidence; it does not perform role work directly.
+- Every new scoped role task gets a nonempty `delegationTaskId`, stable `scopeKey`, `dispatchKind: fresh`, and a fresh child thread; its Task call omits `task_id`.
 
 ## Intake Packet
 
@@ -42,7 +43,7 @@ Capture a concise feature packet before delegation:
 
 5. **Integration gate** (`integrator`)
    - Join implementation branches and check cross-file consistency, manifests, schemas, role names, connector assumptions, and acceptance coverage.
-   - Request remediation instead of broadening scope silently.
+    - Create remediation as a new task, artifact, and fresh child thread linked to its predecessor instead of broadening scope silently.
 
 6. **Validation gate** (`validator`)
    - Run command-backed checks before acceptance.
@@ -69,6 +70,7 @@ Capture a concise feature packet before delegation:
 - Use scoped artifact IDs such as `<scope>-researcher-001-docs`, `<scope>-planner-002-contracts`, `<scope>-implementer-003-api`, and `<scope>-validator-004-final`.
 - Update the orchestration `INDEX.md` with DAG nodes, retained role traces, validation evidence, decisions, and remediation status.
 - Use at most 3 remediation loops per scoped work unit; after the third failed loop, request a `synthesizer` blocker artifact and user direction.
+- Reuse `task_id` only for one response to a recorded child-originated clarification while the exact task remains unresolved. Retry, remediation, correction, follow-up, changed scope/role/deliverable, terminal work, replay, and post-restart responses start fresh. Do not use unverified direct child-dispatch surfaces for managed orchestration.
 
 ## Acceptance Standard
 

@@ -18,6 +18,8 @@ Required output: findings, open questions, residual risk, and concise change sum
 
 Boundaries: do not rewrite implementation or validate final acceptance unless separately assigned.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@reviewer` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.

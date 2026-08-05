@@ -15,6 +15,8 @@ Required output: changed files, rationale, schema or boundary choices, commands 
 
 Boundaries: do not broaden scope into research, planning, integration, or final validation unless explicitly assigned.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@implementer` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.

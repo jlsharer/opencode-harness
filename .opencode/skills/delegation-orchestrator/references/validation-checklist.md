@@ -31,6 +31,9 @@ Use this checklist before accepting delegated OpenCode harness work.
 - [ ] Recursive work uses a DAG, parallelizes independent role instances, and permits repeatable role instances with scoped artifact IDs.
 - [ ] Remediation is limited to 3 loops per scoped work unit before synthesizing blockers and asking the user.
 - [ ] Every delegated role receives an `orchestration-id`, memory root, role contract catalog, trace schema, and trace artifact requirement.
+- [ ] Every new role task has a nonempty `delegationTaskId`, stable `scopeKey`, `dispatchKind: fresh`, and a Task call with no own `task_id` property.
+- [ ] The only `task_id` reuse is one matching parent response to a recorded child-originated clarification for the unchanged unresolved task; replay and post-restart reuse fail closed.
+- [ ] Retry, remediation, correction, follow-up, changed scope/role/deliverable, and completed/failed/cancelled work start fresh child threads; direct unverified child-dispatch surfaces are not used.
 - [ ] Acceptance requires validator or artifact-verifier evidence.
 - [ ] Routing labels are preserved when supplied by the caller.
 - [ ] Missing routing labels are not invented.
@@ -51,6 +54,7 @@ Use this checklist before accepting delegated OpenCode harness work.
 
 - [ ] No provider tokens, auth secrets, user home auth paths, or machine-local private paths are stored in repo-managed harness files.
 - [ ] Lifecycle plugins are described as telemetry and guardrails only.
+- [ ] `node --test .opencode/plugin-modules/task-thread-policy.test.mjs` passes and lifecycle hooks read Task/Bash arguments from the second hook parameter `output.args`.
 - [ ] Reference-only prior projection directories are not listed as OpenCode runtime dependencies.
 - [ ] Portable files depend only on the managed `.opencode/` inventory and minimal `.memory/` surface.
 

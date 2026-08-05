@@ -20,6 +20,18 @@ Use `/delegate-orchestration` for parent orchestration across complete workflows
 - Each delegated packet includes an `orchestration-id`, memory root `.memory/orchestrations/<orchestration-id>/`, role contracts from `.opencode/contracts/role-io-contracts.json`, trace schema `.opencode/schemas/memory-trace-artifact.schema.json`, and expected trace path `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
 - Caller-supplied routing labels are preserved exactly when present: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`.
 - Missing routing metadata is not invented.
+- Managed orchestration uses one separately scoped delegated task per fresh child session/thread. Each new task has `delegationTaskId`, `scopeKey`, and `dispatchKind: fresh`, and its Task call omits `task_id`.
+- `/delegate-orchestration` is the managed dispatch surface. Direct `@subagent` is prohibited, and the lifecycle guard rejects direct subagent-targeted `/delegate-*` role commands.
+
+## Task/Thread Decision Table
+
+| Parent intent | `task_id` rule |
+| --- | --- |
+| New task or deliverable, changed scope, role reassignment, follow-up, retry, remediation, post-result correction, or completed/failed/cancelled work | Start a fresh child task and omit `task_id`. |
+| One answer to a recorded child-originated clarification while the exact task is unresolved | Reuse that child's `task_id` once with `dispatchKind: clarification-response` and the matching version-1 response envelope. |
+| Missing, malformed, stale, mismatched, replayed, or post-restart authorization | Deny reuse; do not fall back to fresh creation with a supplied `task_id`. |
+
+The exact contract-complete envelope/role-packet grammar is in `.memory/protocols/memory-management.md`. Clarification authorization is consumed before execution and cannot change the task contract.
 
 ## Phase Gates
 
@@ -31,7 +43,7 @@ Use `/delegate-orchestration` for parent orchestration across complete workflows
 6. Implementation: apply assigned edits only, report self-checks, and write or reference implementer trace artifacts.
 7. Integration: confirm role names, command names, paths, manifests, workflows, contracts, schemas, and routing labels agree across each affected scope.
 8. Validation: run file, parse, schema, routing, and command checks, then store or reference validation evidence for each accepted workflow or sub-workflow.
-9. Remediation: use at most 3 remediation loops per scoped work unit. After that, delegate synthesis of blockers and ask the user for direction.
+9. Remediation: create a fresh task/role instance, `delegationTaskId`, artifact ID, and child thread linked to the predecessor. Charge it to the original scoped work unit and use at most 3 loops before delegating blocker synthesis and asking the user for direction.
 10. Artifact proof: capture temp-directory proof when generated artifacts require independent inspection.
 11. Final consolidation: summarize validated changes, evidence, risks, trace artifacts, and handoff notes.
 

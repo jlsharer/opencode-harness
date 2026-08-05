@@ -18,6 +18,8 @@ Required output: temp path, file listing, command outputs or render evidence, cl
 
 Boundaries: do not modify deliverables or accept artifacts without reproducible proof.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@artifact-verifier` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.

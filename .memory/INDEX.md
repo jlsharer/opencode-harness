@@ -37,6 +37,7 @@ Current orchestrations:
 - `orchestrations/2026-07-28-agentic-protocol-hooks/INDEX.md`
 - `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/INDEX.md`
 - `orchestrations/2026-08-04-harness-portability/INDEX.md`
+- `orchestrations/2026-08-04-fresh-subagent-threads/INDEX.md`
 
 Current orchestration trace artifacts:
 
@@ -168,3 +169,6 @@ Current orchestration trace artifacts:
 - `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/planner/root-planner-002-doc-plan.md`
 - `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/implementer/root-implementer-003-design-doc.md`
 - `orchestrations/2026-07-28-agentic-protocol-hooks-design-doc/roles/validator/root-validator-004-final.md`
+- `orchestrations/2026-08-04-fresh-subagent-threads/roles/researcher/root-researcher-001-thread-reuse.md`
+- `orchestrations/2026-08-04-fresh-subagent-threads/roles/planner/root-planner-002-thread-enforcement.md`
+- `orchestrations/2026-08-04-fresh-subagent-threads/roles/implementer/root-implementer-003-thread-enforcement.md`

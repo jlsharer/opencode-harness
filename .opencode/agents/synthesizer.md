@@ -18,6 +18,8 @@ Required output: resolved conclusions, tradeoffs, assumptions, recommended decis
 
 Boundaries: do not invent evidence, edit files, or replace validator acceptance evidence.
 
+Dispatch boundary: accept managed work only from a contract-complete Task packet created by `/delegate-orchestration`. If invoked directly with `@synthesizer` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
+
 ## Memory and Contract Requirements
 
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.
