@@ -1,14 +1,36 @@
 {
-  "schemaVersion": "1.0.0",
+  "schemaVersion": "2.0.0",
   "profile": "portable-core",
   "writeCapabilities": {
     "publication": "descriptor-relative-same-directory-hard-link",
-    "descriptorDirectoryAliases": [
-      "/proc/self/fd",
-      "/dev/fd"
-    ],
     "destinationPreflight": "all-parent-directories-before-publication",
-    "unavailableBehavior": "fail-before-file-publication"
+    "unavailableBehavior": "fail-before-file-publication",
+    "parentRelocationLimit": "pinned-parent-relocation-is-detected-before-and-after-publication-but-is-not-atomically-confined-beneath-root",
+    "backends": {
+      "linux": {
+        "platform": "linux",
+        "descriptorDirectoryAliases": [
+          "/proc/self/fd",
+          "/dev/fd"
+        ],
+        "safety": "linux-descriptor-relative-race-detecting"
+      },
+      "darwin": {
+        "platform": "darwin",
+        "safety": "darwin-native-race-detecting",
+        "helper": {
+          "path": ".opencode/bootstrap/native/darwin-portable-fs.universal",
+          "sha256": "931f981849fdd209fc8fa066dd194eb33075ff9c88dc936dd0792695896918a9",
+          "protocol": 1,
+          "architectures": [
+            "arm64",
+            "x86_64"
+          ],
+          "minimumMacOS": "11.0",
+          "signing": "adhoc-all-slices-no-team-id-materialized-private-copy"
+        }
+      }
+    }
   },
   "managedFiles": [
     ".opencode/agents/artifact-verifier.md",
@@ -46,6 +68,8 @@
     ".opencode/plugins/index.js",
     ".opencode/plugin-modules/harness-lifecycle.js",
     ".opencode/plugin-modules/role-model-routing-enforcement.js",
+    ".opencode/bootstrap/native/darwin-portable-fs.c",
+    ".opencode/bootstrap/native/darwin-portable-fs.universal",
     ".opencode/portable.manifest.json",
     ".opencode/scripts/bootstrap-portable-harness.mjs",
     ".opencode/scripts/portable-harness.test.mjs",

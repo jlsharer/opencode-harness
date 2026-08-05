@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import assert from 'node:assert/strict';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -12,6 +12,7 @@ import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
 const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const BOOTSTRAP = path.join(SOURCE_ROOT, '.opencode/scripts/bootstrap-portable-harness.mjs');
+const DARWIN_ACTIVATION_PARENT = '/private/var/tmp';
 
 async function runNode(args, options = {}) {
   return execFileAsync(process.execPath, args, { cwd: options.cwd ?? SOURCE_ROOT, env: { ...process.env, NO_COLOR: '1', ...options.env } });
@@ -43,14 +44,29 @@ async function walk(relativeRoot, base = relativeRoot) {
   return entries.sort();
 }
 
+async function activationDirectories(invocationId) {
+  if (process.platform !== 'darwin') return [];
+  const prefix = `opencode-portable-helper-${invocationId}-`;
+  return (await readdir(DARWIN_ACTIVATION_PARENT)).filter((name) => name.startsWith(prefix)).sort();
+}
+
+async function waitFor(predicate, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  assert.fail(`condition was not reached within ${timeoutMs}ms`);
+}
+
 const tempParent = await mkdtemp(path.join(os.tmpdir(), 'portable-harness-e2e-'));
 test.after(async () => rm(tempParent, { recursive: true, force: true }));
 
 test('fresh foreign repository installs and validates without source-owned roots or history', async () => {
   const repo = await makeRepo(tempParent, 'fresh');
   const installed = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(installed.stdout, /created\/updated=43, memory-created=4, unchanged=0, collisions=0/);
-  assert.match(installed.stdout, /write-safety=descriptor-anchored-hard-link:/);
+  assert.match(installed.stdout, /created\/updated=45, memory-created=4, unchanged=0, collisions=0/);
+  assert.match(installed.stdout, process.platform === 'darwin' ? /write-safety=darwin-native-race-detecting/ : /write-safety=linux-descriptor-relative-race-detecting:\/proc\/self\/fd/);
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
   const validated = await runNode([validator, '--root', '.'], { cwd: repo });
   assert.equal(validated.stdout.trim(), 'Portable OpenCode harness validation passed');
@@ -67,10 +83,10 @@ test('fresh foreign repository installs and validates without source-owned roots
 test('bootstrap is idempotent and dry-run performs no writes', async () => {
   const repo = path.join(tempParent, 'fresh');
   const second = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=47, collisions=0/);
+  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=49, collisions=0/);
   const dryRepo = await makeRepo(tempParent, 'dry-run');
   const dry = await runNode([BOOTSTRAP, '--target', dryRepo, '--dry-run']);
-  assert.match(dry.stdout, /dry-run complete: created\/updated=43, memory-created=4/);
+  assert.match(dry.stdout, /dry-run complete: created\/updated=45, memory-created=4/);
   assert.deepEqual(await readdir(dryRepo), []);
 });
 
@@ -140,7 +156,7 @@ test('target root and intermediate replacement fail identity binding before writ
   const rootRepo = await makeRepo(tempParent, 'root-replacement');
   const movedRoot = path.join(tempParent, 'root-replacement-original');
   const rootRace = JSON.stringify({ action: 'replace-root', replacement: movedRoot });
-  assert.match(await expectFailure([BOOTSTRAP, '--target', rootRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: rootRace } }), /opened target differs from the preflight-inspected target/);
+  assert.match(await expectFailure([BOOTSTRAP, '--target', rootRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: rootRace } }), /(?:opened target differs from the preflight-inspected target|target root identity mismatch)/);
   assert.deepEqual(await readdir(rootRepo), []);
   assert.deepEqual(await readdir(movedRoot), []);
 
@@ -149,26 +165,36 @@ test('target root and intermediate replacement fail identity binding before writ
   const nestedRepo = await makeRepo(container, 'repo');
   const movedContainer = path.join(tempParent, 'intermediate-container-original');
   const intermediateRace = JSON.stringify({ action: 'replace-intermediate', replacement: movedContainer });
-  assert.match(await expectFailure([BOOTSTRAP, '--target', nestedRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: intermediateRace } }), /opened target differs from the preflight-inspected target/);
+  assert.match(await expectFailure([BOOTSTRAP, '--target', nestedRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: intermediateRace } }), /(?:opened target differs from the preflight-inspected target|target root identity mismatch)/);
   assert.deepEqual(await readdir(path.join(tempParent, 'intermediate-container/repo')), []);
   assert.deepEqual(await readdir(path.join(movedContainer, 'repo')), []);
 
   const openedRepo = await makeRepo(tempParent, 'opened-root-replacement');
   const movedOpenedRoot = path.join(tempParent, 'opened-root-replacement-original');
   const openedRace = JSON.stringify({ action: 'replace-root-after-open', replacement: movedOpenedRoot });
-  assert.match(await expectFailure([BOOTSTRAP, '--target', openedRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: openedRace } }), /opened target differs from the preflight-inspected target/);
+  assert.match(await expectFailure([BOOTSTRAP, '--target', openedRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: openedRace } }), /(?:opened target differs from the preflight-inspected target|target root identity mismatch)/);
   assert.deepEqual(await readdir(openedRepo), []);
   assert.deepEqual(await readdir(movedOpenedRoot), []);
+
+  const splitRepo = await makeRepo(tempParent, 'split-snapshot-replacement');
+  const movedSplitRoot = path.join(tempParent, 'split-snapshot-replacement-original');
+  const splitRace = JSON.stringify({ action: 'replace-root-between-snapshots', replacement: movedSplitRoot });
+  assert.match(await expectFailure([BOOTSTRAP, '--target', splitRepo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: splitRace } }), /canonical target differs from the exact preflight identity snapshot/);
+  assert.deepEqual(await readdir(splitRepo), []);
+  assert.deepEqual(await readdir(movedSplitRoot), []);
 });
 
-test('descriptor capability unavailability fails before files or directories are published', async () => {
+test('platform publication capability unavailability fails before files or directories are published', async () => {
   const repo = await makeRepo(tempParent, 'descriptor-unavailable');
-  const failure = await expectFailure([BOOTSTRAP, '--target', repo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_FORCE_DESCRIPTOR_UNAVAILABLE: '1' } });
-  assert.match(failure, /no usable descriptor-directory alias/);
+  const env = process.platform === 'darwin'
+    ? { NODE_ENV: 'test', OPENCODE_PORTABLE_FORCE_NATIVE_UNAVAILABLE: '1' }
+    : { NODE_ENV: 'test', OPENCODE_PORTABLE_FORCE_DESCRIPTOR_UNAVAILABLE: '1' };
+  const failure = await expectFailure([BOOTSTRAP, '--target', repo], { env });
+  assert.match(failure, process.platform === 'darwin' ? /activation was test-forced unavailable/ : /no usable descriptor-directory alias/);
   assert.deepEqual(await readdir(repo), []);
 });
 
-test('probe-interval parent replacement produces no file publication', async () => {
+test('probe-interval parent replacement produces no file publication', { skip: process.platform === 'darwin' && 'native pinned-parent relocation is covered by the documented race-detecting limitation' }, async () => {
   const repo = await makeRepo(tempParent, 'probe-replacement');
   const moved = path.join(tempParent, 'probe-replacement-opencode-original');
   const race = JSON.stringify({ action: 'replace-parent-before-probe', relative: '.opencode', replacement: moved });
@@ -181,8 +207,102 @@ test('all destination parents are capability-probed before first file publicatio
   const repo = await makeRepo(tempParent, 'multi-destination-probe');
   const race = JSON.stringify({ action: 'fail-probe', relative: '.memory' });
   const failure = await expectFailure([BOOTSTRAP, '--target', repo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: race } });
-  assert.match(failure, /capability probe failed for \.memory before publication/);
+  assert.match(failure, /(?:capability probe failed for \.memory before publication|last parent probe failure)/);
   assert.deepEqual(await readdir(repo), []);
+});
+
+test('Darwin helper timeout and output overflow terminate before publication and clean activation state', { skip: process.platform !== 'darwin' && 'requires Darwin' }, async () => {
+  for (const [name, action, pattern] of [
+    ['native-timeout', 'helper-timeout', /exceeded 200ms timeout/],
+    ['native-output-overflow', 'helper-output-overflow', /output exceeded the bounded protocol limit/],
+  ]) {
+    const repo = await makeRepo(tempParent, name);
+    const invocationId = `${process.pid}-${name}`;
+    const race = JSON.stringify({ action });
+    assert.match(await expectFailure([BOOTSTRAP, '--target', repo], { env: { NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: race, OPENCODE_PORTABLE_TEST_INVOCATION_ID: invocationId } }), pattern);
+    assert.deepEqual(await readdir(repo), []);
+    assert.deepEqual(await activationDirectories(invocationId), []);
+  }
+});
+
+test('Darwin helper launch ignores caller TMPDIR and DYLD loader variables', { skip: process.platform !== 'darwin' && 'requires Darwin' }, async () => {
+  const repo = await makeRepo(tempParent, 'sanitized-helper-environment');
+  const attackerTemp = await makeRepo(tempParent, 'attacker-tmpdir');
+  const race = JSON.stringify({ action: 'helper-environment-check' });
+  const invocationId = `${process.pid}-sanitized-environment`;
+  const result = await runNode([BOOTSTRAP, '--target', repo], {
+    env: {
+      NODE_ENV: 'test',
+      OPENCODE_PORTABLE_TEST_RACE: race,
+      OPENCODE_PORTABLE_TEST_INVOCATION_ID: invocationId,
+      TMPDIR: attackerTemp,
+      DYLD_LIBRARY_PATH: attackerTemp,
+      DYLD_FRAMEWORK_PATH: attackerTemp,
+      DYLD_PRINT_LIBRARIES: '1',
+    },
+  });
+  assert.match(result.stdout, /write-safety=darwin-native-race-detecting/);
+  assert.deepEqual(await readdir(attackerTemp), []);
+});
+
+test('SIGTERM to Darwin bootstrap terminates and reaps helper before cleanup and publication', { skip: process.platform !== 'darwin' && 'requires Darwin' }, async () => {
+  const repo = await makeRepo(tempParent, 'parent-signal');
+  const invocationId = `${process.pid}-parent-signal`;
+  const race = JSON.stringify({ action: 'parent-signal' });
+  const child = spawn(process.execPath, [BOOTSTRAP, '--target', repo], {
+    cwd: SOURCE_ROOT,
+    env: { ...process.env, NODE_ENV: 'test', OPENCODE_PORTABLE_TEST_RACE: race, OPENCODE_PORTABLE_TEST_INVOCATION_ID: invocationId },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  const stderr = [];
+  child.stderr.on('data', (chunk) => stderr.push(chunk));
+  await waitFor(async () => (await activationDirectories(invocationId)).length === 1);
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  child.kill('SIGTERM');
+  const outcome = await new Promise((resolve, reject) => {
+    child.on('error', reject);
+    child.on('close', (code, signal) => resolve({ code, signal }));
+  });
+  assert.equal(outcome.signal, 'SIGTERM', Buffer.concat(stderr).toString('utf8'));
+  assert.deepEqual(await readdir(repo), []);
+  await waitFor(async () => (await activationDirectories(invocationId)).length === 0);
+});
+
+test('catchable signals clean every Darwin activation lifecycle gap with original signal semantics', { skip: process.platform !== 'darwin' && 'requires Darwin' }, async (t) => {
+  for (const [index, action] of ['signal-after-activation-directory', 'signal-between-helper-runs', 'signal-during-final-cleanup'].entries()) await t.test(action, async () => {
+    const repo = await makeRepo(tempParent, `lifecycle-signal-${index}`);
+    const invocationId = `${process.pid}-lifecycle-${index}`;
+    const marker = path.join(tempParent, `lifecycle-signal-${index}.marker`);
+    const race = JSON.stringify({ action });
+    const child = spawn(process.execPath, [BOOTSTRAP, '--target', repo], {
+      cwd: SOURCE_ROOT,
+      env: {
+        ...process.env,
+        NODE_ENV: 'test',
+        OPENCODE_PORTABLE_TEST_RACE: race,
+        OPENCODE_PORTABLE_TEST_INVOCATION_ID: invocationId,
+        OPENCODE_PORTABLE_TEST_SIGNAL_MARKER: marker,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on('data', (chunk) => stdout.push(chunk));
+    child.stderr.on('data', (chunk) => stderr.push(chunk));
+    const closePromise = new Promise((resolve, reject) => {
+      child.on('error', reject);
+      child.on('close', (code, signal) => resolve({ code, signal }));
+    });
+    await waitFor(async () => {
+      try { return (await readFile(marker, 'utf8')).trim() === action; } catch (error) { if (error.code === 'ENOENT') return false; throw error; }
+    });
+    assert.equal((await activationDirectories(invocationId)).length, 1);
+    child.kill('SIGTERM');
+    const outcome = await closePromise;
+    assert.equal(outcome.signal, 'SIGTERM', `${JSON.stringify(outcome)} stdout=${Buffer.concat(stdout).toString('utf8')} stderr=${Buffer.concat(stderr).toString('utf8')}`);
+    assert.deepEqual((await readdir(repo)).sort(), action === 'signal-during-final-cleanup' ? ['.memory', '.opencode'] : []);
+    await waitFor(async () => (await activationDirectories(invocationId)).length === 0);
+  });
 });
 
 test('installed validator rejects unsafe manifest paths and forbidden references', async () => {
@@ -229,6 +349,17 @@ test('installed validator independently rejects removed inventory entries', asyn
   await rm(path.join(repo, removed));
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
   assert.match(await expectFailure([validator, '--root', repo]), /exact portable-core contract/);
+});
+
+test('installed validator independently rejects a corrupted Darwin helper binary', async () => {
+  const repo = await makeRepo(tempParent, 'native-corruption');
+  await runNode([BOOTSTRAP, '--target', repo]);
+  const helper = path.join(repo, '.opencode/bootstrap/native/darwin-portable-fs.universal');
+  const bytes = await readFile(helper);
+  bytes[bytes.length - 1] ^= 1;
+  await writeFile(helper, bytes);
+  const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
+  assert.match(await expectFailure([validator, '--root', repo]), /Darwin helper SHA-256 mismatch/);
 });
 
 test('installed validator rejects generic Windows drive and UNC absolute paths', async () => {

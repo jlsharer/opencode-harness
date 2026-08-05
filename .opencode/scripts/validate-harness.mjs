@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 
 const ROOT = process.cwd();
@@ -76,8 +77,12 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/bootstrap/memory/protocols/memory-management.md',
   '.opencode/bootstrap/memory/templates/orchestration-index.md',
   '.opencode/bootstrap/memory/templates/role-trace-artifact.md',
+  '.opencode/bootstrap/native/darwin-portable-fs.c',
+  '.opencode/bootstrap/native/darwin-portable-fs.universal',
   '.opencode/portable.manifest.json',
   '.opencode/scripts/bootstrap-portable-harness.mjs',
+  '.opencode/scripts/build-darwin-portable-fs.mjs',
+  '.opencode/scripts/darwin-portable-fs.test.mjs',
   '.opencode/scripts/portable-harness.test.mjs',
   '.opencode/scripts/validate-portable-harness.mjs',
   '.opencode/scripts/validate-harness.mjs',
@@ -215,7 +220,7 @@ function assertLabelsPresent() {
 
 function assertPriorProjectionReferences() {
   const files = walk('.opencode')
-    .filter((pathname) => pathname !== '.opencode/portable.manifest.json')
+    .filter((pathname) => !['.opencode/portable.manifest.json', '.opencode/bootstrap/native/darwin-portable-fs.universal'].includes(pathname))
     .concat(['opencode.json']);
   const priorProjectionTokens = ['.' + 'agents', '.' + 'codex'];
   for (const pathname of files) {
@@ -274,6 +279,12 @@ function assertManifest(manifest) {
   }
   const example = manifest.artifacts.find((artifact) => artifact.path === '.opencode/routing/harness-model-routing.example.json');
   if (example?.kind !== 'harness-routing-config') fail('Manifest must classify the routing example as harness-routing-config');
+  for (const [pathname, kind] of [
+    ['.opencode/bootstrap/native/darwin-portable-fs.c', 'portable-native-source'],
+    ['.opencode/bootstrap/native/darwin-portable-fs.universal', 'portable-native-binary'],
+    ['.opencode/scripts/build-darwin-portable-fs.mjs', 'native-release-build-script'],
+    ['.opencode/scripts/darwin-portable-fs.test.mjs', 'native-release-test'],
+  ]) if (manifest.artifacts.find((artifact) => artifact.path === pathname)?.kind !== kind) fail(`Manifest native artifact classification differs for ${pathname}`);
   if (!seen.has('.opencode/routing/routing-config-loader.mjs')) fail('Manifest must own the shared routing config loader');
   if (!seen.has('.opencode/portable.manifest.json')) fail('Source manifest must own the portable profile manifest without conflating profiles');
 }
@@ -609,6 +620,36 @@ function assertPortableValidator() {
   }
 }
 
+function assertDarwinNativeAssets() {
+  const portable = json('.opencode/portable.manifest.json');
+  const helper = portable.writeCapabilities?.backends?.darwin?.helper;
+  const binaryPath = '.opencode/bootstrap/native/darwin-portable-fs.universal';
+  if (helper?.path !== binaryPath || helper.protocol !== 1 || helper.minimumMacOS !== '11.0' || helper.signing !== 'adhoc-all-slices-no-team-id-materialized-private-copy') {
+    fail('Portable manifest Darwin native helper contract is incomplete');
+  }
+  sameSet(helper.architectures ?? [], ['arm64', 'x86_64'], 'Darwin helper architectures');
+  const bytes = fs.readFileSync(file(binaryPath));
+  const hash = createHash('sha256').update(bytes).digest('hex');
+  if (hash !== helper.sha256) fail('Source QA Darwin helper SHA-256 differs from portable manifest');
+  if (bytes.readUInt32BE(0) !== 0xcafebabe || bytes.readUInt32BE(4) !== 2) fail('Source QA expected a two-slice FAT32 Darwin helper');
+  const cpuTypes = [bytes.readUInt32BE(8), bytes.readUInt32BE(28)];
+  sameSet(cpuTypes, [0x01000007, 0x0100000c], 'Darwin helper FAT CPU types');
+  const portableManaged = new Set(portable.managedFiles ?? []);
+  for (const pathname of ['.opencode/bootstrap/native/darwin-portable-fs.c', binaryPath]) if (!portableManaged.has(pathname)) fail(`Portable native runtime dependency is not managed: ${pathname}`);
+  for (const pathname of ['.opencode/scripts/build-darwin-portable-fs.mjs', '.opencode/scripts/darwin-portable-fs.test.mjs']) if (portableManaged.has(pathname)) fail(`Source-only native tooling leaked into portable profile: ${pathname}`);
+  if (process.platform === 'darwin') {
+    const signature = spawnSync('/usr/bin/codesign', ['--verify', '--strict', '--all-architectures', binaryPath], { cwd: ROOT, encoding: 'utf8' });
+    if (signature.status !== 0) fail(`Committed Darwin helper failed all-architecture signature verification: ${(signature.stderr || signature.stdout).trim()}`);
+    for (const [script, args] of [
+      ['.opencode/scripts/build-darwin-portable-fs.mjs', ['--check']],
+      ['.opencode/scripts/darwin-portable-fs.test.mjs', []],
+    ]) {
+      const result = spawnSync(process.execPath, [script, ...args], { cwd: ROOT, encoding: 'utf8' });
+      if (result.status !== 0) fail(`Darwin native QA failed for ${script}: ${(result.stderr || result.stdout).trim()}`);
+    }
+  } else process.stdout.write('Darwin native activation/build checks not run on this non-Darwin host\n');
+}
+
 function assertRecursiveOrchestrationDocs() {
   const command = read('.opencode/commands/delegate-orchestration.md');
   for (const snippet of [
@@ -805,6 +846,7 @@ async function main() {
   assertPriorProjectionReferences();
   await assertPluginAdapter();
   assertGuardrailOnlyDocs();
+  assertDarwinNativeAssets();
   assertPortableValidator();
 
   process.stdout.write('OpenCode harness validation passed\n');

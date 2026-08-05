@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { lstat, readFile, realpath } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -14,6 +15,8 @@ const COMMAND_ROLES = new Map([
   ['delegate-artifact-verify.md', 'artifact-verifier'],
 ]);
 const REQUIRED_TRACE_FIELDS = ['orchestrationId', 'role', 'artifactId', 'createdAt', 'inputContract', 'workPerformed', 'outputContract', 'handoff'];
+const DARWIN_HELPER_PATH = '.opencode/bootstrap/native/darwin-portable-fs.universal';
+const DARWIN_HELPER_SHA256 = '931f981849fdd209fc8fa066dd194eb33075ff9c88dc936dd0792695896918a9';
 const EXPECTED_MANAGED_FILES = [
   ...ROLES.map((role) => `.opencode/agents/${role}.md`),
   '.opencode/commands/delegate-artifact-verify.md',
@@ -43,6 +46,8 @@ const EXPECTED_MANAGED_FILES = [
   '.opencode/plugins/index.js',
   '.opencode/plugin-modules/harness-lifecycle.js',
   '.opencode/plugin-modules/role-model-routing-enforcement.js',
+  '.opencode/bootstrap/native/darwin-portable-fs.c',
+  DARWIN_HELPER_PATH,
   '.opencode/portable.manifest.json',
   '.opencode/scripts/bootstrap-portable-harness.mjs',
   '.opencode/scripts/portable-harness.test.mjs',
@@ -60,9 +65,24 @@ const EXPECTED_MEMORY_SEEDS = [
 ];
 const EXPECTED_WRITE_CAPABILITIES = {
   publication: 'descriptor-relative-same-directory-hard-link',
-  descriptorDirectoryAliases: ['/proc/self/fd', '/dev/fd'],
   destinationPreflight: 'all-parent-directories-before-publication',
   unavailableBehavior: 'fail-before-file-publication',
+  parentRelocationLimit: 'pinned-parent-relocation-is-detected-before-and-after-publication-but-is-not-atomically-confined-beneath-root',
+  backends: {
+    linux: { platform: 'linux', descriptorDirectoryAliases: ['/proc/self/fd', '/dev/fd'], safety: 'linux-descriptor-relative-race-detecting' },
+    darwin: {
+      platform: 'darwin',
+      safety: 'darwin-native-race-detecting',
+      helper: {
+        path: DARWIN_HELPER_PATH,
+        sha256: DARWIN_HELPER_SHA256,
+        protocol: 1,
+        architectures: ['arm64', 'x86_64'],
+        minimumMacOS: '11.0',
+        signing: 'adhoc-all-slices-no-team-id-materialized-private-copy',
+      },
+    },
+  },
 };
 
 function fail(message) {
@@ -108,7 +128,7 @@ function validateManifest(manifest) {
   const keys = Object.keys(manifest).sort();
   const expected = ['forbiddenReferences', 'managedFiles', 'memorySeeds', 'profile', 'schemaVersion', 'writeCapabilities'].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) fail('manifest shape is not closed');
-  if (manifest.schemaVersion !== '1.0.0' || manifest.profile !== 'portable-core') fail('unsupported manifest version/profile');
+  if (manifest.schemaVersion !== '2.0.0' || manifest.profile !== 'portable-core') fail('unsupported manifest version/profile');
   if (!Array.isArray(manifest.managedFiles) || !Array.isArray(manifest.memorySeeds) || !Array.isArray(manifest.forbiddenReferences)) fail('manifest inventories must be arrays');
   const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, '.opencode/'));
   if (new Set(managed).size !== managed.length || !managed.includes('.opencode/portable.manifest.json')) fail('managed inventory must be unique and self-containing');
@@ -128,6 +148,33 @@ function validateManifest(manifest) {
   if (JSON.stringify(actualSeeds) !== JSON.stringify(expectedSeeds)) fail('memory seeds differ from the installed validator exact portable-core contract');
   if (JSON.stringify(manifest.writeCapabilities) !== JSON.stringify(EXPECTED_WRITE_CAPABILITIES)) fail('write capability contract is missing or unsupported');
   if (manifest.forbiddenReferences.length === 0 || new Set(manifest.forbiddenReferences).size !== manifest.forbiddenReferences.length || manifest.forbiddenReferences.some((item) => typeof item !== 'string' || !item)) fail('forbidden reference tokens must be unique nonempty strings');
+}
+
+async function validateDarwinHelper(root, manifest) {
+  const helper = manifest.writeCapabilities.backends.darwin.helper;
+  if (helper.path !== DARWIN_HELPER_PATH || helper.sha256 !== DARWIN_HELPER_SHA256) fail('Darwin helper manifest linkage differs from the installed contract');
+  const bytes = await readFile(await regularFile(root, DARWIN_HELPER_PATH));
+  if (createHash('sha256').update(bytes).digest('hex') !== helper.sha256) fail('Darwin helper SHA-256 mismatch');
+  if (bytes.length < 48 || ![0xcafebabe, 0xcafebabf].includes(bytes.readUInt32BE(0))) fail('Darwin helper is not a supported universal Mach-O');
+  const is64 = bytes.readUInt32BE(0) === 0xcafebabf;
+  const count = bytes.readUInt32BE(4);
+  if (count !== 2) fail('Darwin helper must contain exactly two slices');
+  const entrySize = is64 ? 32 : 20;
+  const names = new Map([[0x01000007, 'x86_64'], [0x0100000c, 'arm64']]);
+  const slices = [];
+  for (let index = 0; index < count; index += 1) {
+    const entry = 8 + index * entrySize;
+    if (entry + entrySize > bytes.length) fail('Darwin helper has a truncated FAT table');
+    const cpu = bytes.readUInt32BE(entry);
+    const name = names.get(cpu);
+    if (!name) fail(`Darwin helper has unexpected CPU type 0x${cpu.toString(16)}`);
+    const offset = is64 ? Number(bytes.readBigUInt64BE(entry + 8)) : bytes.readUInt32BE(entry + 8);
+    const size = is64 ? Number(bytes.readBigUInt64BE(entry + 16)) : bytes.readUInt32BE(entry + 12);
+    if (!Number.isSafeInteger(offset) || !Number.isSafeInteger(size) || size <= 0 || offset < 8 + count * entrySize || offset + size > bytes.length) fail('Darwin helper has invalid slice bounds');
+    slices.push({ name, offset, size });
+  }
+  if (slices[0].offset + slices[0].size > slices[1].offset && slices[1].offset + slices[1].size > slices[0].offset) fail('Darwin helper slices overlap');
+  if (JSON.stringify(slices.map(({ name }) => name).sort()) !== JSON.stringify([...helper.architectures].sort())) fail('Darwin helper architectures differ from manifest');
 }
 
 function frontmatter(text, relative) {
@@ -220,6 +267,7 @@ async function validateRoutingAndPlugin(root) {
 async function validateForbiddenReferences(root, manifest) {
   const findings = [];
   for (const relative of manifest.managedFiles) {
+    if (relative === DARWIN_HELPER_PATH) continue;
     const text = await readFile(await regularFile(root, relative), 'utf8');
     if (relative !== '.opencode/portable.manifest.json') for (const token of manifest.forbiddenReferences) if (text.includes(token)) findings.push(`${relative}: ${JSON.stringify(token)}`);
     const scanInputs = [text];
@@ -251,6 +299,7 @@ async function main() {
   const manifest = JSON.parse(await readFile(await regularFile(rootReal, '.opencode/portable.manifest.json'), 'utf8'));
   validateManifest(manifest);
   for (const relative of manifest.managedFiles) await regularFile(rootReal, relative);
+  await validateDarwinHelper(rootReal, manifest);
   await validateRolesAndCommands(rootReal);
   await validateMemory(rootReal, manifest);
   await validateTraceAlignment(rootReal);

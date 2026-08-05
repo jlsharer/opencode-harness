@@ -1,12 +1,17 @@
 #!/usr/bin/env node
 
 import { constants } from 'node:fs';
-import { access, link, lstat, mkdir, open, readFile, realpath, rename, rm, rmdir, symlink, unlink, writeFile } from 'node:fs/promises';
+import { access, link, lstat, mkdir, mkdtemp, open, readFile, realpath, rename, rm, rmdir, symlink, unlink, writeFile } from 'node:fs/promises';
+import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const MANIFEST_PATH = '.opencode/portable.manifest.json';
+const DARWIN_HELPER_PATH = '.opencode/bootstrap/native/darwin-portable-fs.universal';
+const DARWIN_PROTOCOL = 1;
+const DARWIN_ACTIVATION_PARENT = '/private/var/tmp';
 let descriptorAlias = null;
 
 function fail(message) {
@@ -25,7 +30,7 @@ function validateManifest(value) {
   const keys = Object.keys(value).sort();
   const expected = ['forbiddenReferences', 'managedFiles', 'memorySeeds', 'profile', 'schemaVersion', 'writeCapabilities'].sort();
   if (keys.length !== expected.length || keys.some((key, index) => key !== expected[index])) fail('manifest has an unexpected shape');
-  if (value.schemaVersion !== '1.0.0' || value.profile !== 'portable-core') fail('manifest version/profile is unsupported');
+  if (value.schemaVersion !== '2.0.0' || value.profile !== 'portable-core') fail('manifest version/profile is unsupported');
   if (!Array.isArray(value.managedFiles) || !Array.isArray(value.memorySeeds) || !Array.isArray(value.forbiddenReferences)) fail('manifest inventories must be arrays');
   const managed = value.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, '.opencode/'));
   if (new Set(managed).size !== managed.length || !managed.includes(MANIFEST_PATH)) fail('managedFiles must be unique and include the portable manifest');
@@ -41,8 +46,245 @@ function validateManifest(value) {
   if (new Set(targets).size !== targets.length) fail('memory seed targets must be unique');
   if (new Set(value.forbiddenReferences).size !== value.forbiddenReferences.length || value.forbiddenReferences.some((token) => typeof token !== 'string' || token.length === 0)) fail('forbiddenReferences must contain unique nonempty strings');
   const capabilities = value.writeCapabilities;
-  if (!capabilities || JSON.stringify(capabilities) !== JSON.stringify({ publication: 'descriptor-relative-same-directory-hard-link', descriptorDirectoryAliases: ['/proc/self/fd', '/dev/fd'], destinationPreflight: 'all-parent-directories-before-publication', unavailableBehavior: 'fail-before-file-publication' })) fail('manifest write capability contract is unsupported');
+  const expectedCapabilities = {
+    publication: 'descriptor-relative-same-directory-hard-link',
+    destinationPreflight: 'all-parent-directories-before-publication',
+    unavailableBehavior: 'fail-before-file-publication',
+    parentRelocationLimit: 'pinned-parent-relocation-is-detected-before-and-after-publication-but-is-not-atomically-confined-beneath-root',
+    backends: {
+      linux: { platform: 'linux', descriptorDirectoryAliases: ['/proc/self/fd', '/dev/fd'], safety: 'linux-descriptor-relative-race-detecting' },
+      darwin: {
+        platform: 'darwin',
+        safety: 'darwin-native-race-detecting',
+        helper: {
+          path: DARWIN_HELPER_PATH,
+          sha256: '931f981849fdd209fc8fa066dd194eb33075ff9c88dc936dd0792695896918a9',
+          protocol: DARWIN_PROTOCOL,
+          architectures: ['arm64', 'x86_64'],
+          minimumMacOS: '11.0',
+          signing: 'adhoc-all-slices-no-team-id-materialized-private-copy',
+        },
+      },
+    },
+  };
+  if (!capabilities || JSON.stringify(capabilities) !== JSON.stringify(expectedCapabilities)) fail('manifest write capability contract is unsupported');
+  if (!managed.includes(DARWIN_HELPER_PATH) || !managed.includes('.opencode/bootstrap/native/darwin-portable-fs.c')) fail('Darwin helper source and binary must be portable managed files');
   return value;
+}
+
+function sha256(bytes) {
+  return createHash('sha256').update(bytes).digest('hex');
+}
+
+function parentSignalError(signal) {
+  const error = new Error(`parent received ${signal}; native helper was terminated and reaped and activation cleanup completed where possible`);
+  error.parentSignal = signal;
+  return error;
+}
+
+function createDarwinSignalCoordinator() {
+  let activeChild = null;
+  let escalationTimer = null;
+  let receivedSignal = null;
+  let notifySignal;
+  const signalPromise = new Promise((resolve) => { notifySignal = resolve; });
+  const lifecycleKeepAlive = setInterval(() => {}, 60000);
+  const handlers = new Map();
+  const terminateActiveChild = () => {
+    if (!activeChild || activeChild.exitCode !== null || activeChild.signalCode !== null) return;
+    activeChild.kill('SIGTERM');
+    if (!escalationTimer) {
+      escalationTimer = setTimeout(() => activeChild?.kill('SIGKILL'), 2000);
+      escalationTimer.unref();
+    }
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    const handler = () => {
+      if (receivedSignal) return;
+      receivedSignal = signal;
+      notifySignal(signal);
+      terminateActiveChild();
+    };
+    handlers.set(signal, handler);
+    process.on(signal, handler);
+  }
+  const exitHandler = () => activeChild?.kill('SIGKILL');
+  process.on('exit', exitHandler);
+  return {
+    attachChild(child) {
+      if (activeChild) throw new Error('Darwin signal coordinator already has an active child');
+      activeChild = child;
+      if (receivedSignal) terminateActiveChild();
+    },
+    detachChild(child) {
+      if (activeChild === child) activeChild = null;
+      if (escalationTimer) clearTimeout(escalationTimer);
+      escalationTimer = null;
+    },
+    throwIfSignaled() {
+      if (receivedSignal) throw parentSignalError(receivedSignal);
+    },
+    signalError() {
+      return receivedSignal ? parentSignalError(receivedSignal) : null;
+    },
+    waitForSignal() {
+      return signalPromise;
+    },
+    dispose() {
+      if (activeChild) throw new Error('cannot dispose Darwin signal coordinator with an active child');
+      if (escalationTimer) clearTimeout(escalationTimer);
+      clearInterval(lifecycleKeepAlive);
+      for (const [signal, handler] of handlers) process.removeListener(signal, handler);
+      process.removeListener('exit', exitHandler);
+    },
+  };
+}
+
+function runChild(executable, args, input, maxOutput, timeoutMs, coordination) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(executable, args, {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      windowsHide: true,
+      env: Object.create(null),
+    });
+    const stdout = [];
+    const stderr = [];
+    let stdoutLength = 0;
+    let stderrLength = 0;
+    let outputError = null;
+    let timer = null;
+    const cleanupChild = () => {
+      if (timer) clearTimeout(timer);
+      coordination.detachChild(child);
+    };
+    coordination.attachChild(child);
+    timer = setTimeout(() => {
+      outputError = new Error(`native helper exceeded ${timeoutMs}ms timeout`);
+      child.kill('SIGKILL');
+    }, timeoutMs);
+    const collect = (chunks, key) => (chunk) => {
+      if (key === 'stdout') stdoutLength += chunk.length;
+      else stderrLength += chunk.length;
+      if (stdoutLength > maxOutput || stderrLength > maxOutput) {
+        outputError = new Error('native helper output exceeded the bounded protocol limit');
+        child.kill('SIGKILL');
+      } else chunks.push(chunk);
+    };
+    child.stdout.on('data', collect(stdout, 'stdout'));
+    child.stderr.on('data', collect(stderr, 'stderr'));
+    child.stdin.on('error', (error) => {
+      if (error.code === 'EPIPE') return;
+      child.kill('SIGKILL');
+      cleanupChild();
+      reject(error);
+    });
+    child.on('error', (error) => { cleanupChild(); reject(error); });
+    child.on('close', (code, signal) => {
+      cleanupChild();
+      const signalError = coordination.signalError();
+      if (signalError) { reject(signalError); return; }
+      resolve({ code, signal, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), outputError });
+    });
+    if (input) child.stdin.end(input);
+    else child.stdin.end();
+  });
+}
+
+function encodeDarwinRequest(targetReal, identity, operations, race) {
+  const target = Buffer.from(targetReal, 'utf8');
+  const encoded = operations.map((operation) => ({ ...operation, pathBytes: Buffer.from(operation.relative, 'utf8') }));
+  const total = 48 + target.length + encoded.reduce((sum, operation) => sum + 16 + operation.pathBytes.length + operation.bytes.length, 0);
+  if (total >= 256 * 1024 * 1024) fail('native helper request must be smaller than the exclusive 256 MiB protocol limit');
+  const frame = Buffer.allocUnsafe(total);
+  frame.write('OPDFREQ1', 0, 'ascii');
+  frame.writeUInt32LE(DARWIN_PROTOCOL, 8);
+  let flags = 0;
+  if (race?.action === 'fail-probe') flags |= 1;
+  if (race?.action === 'create-destination') flags |= 2;
+  if (race?.action === 'helper-timeout' || race?.action === 'parent-signal') flags |= 4;
+  if (race?.action === 'helper-output-overflow') flags |= 8;
+  if (race?.action === 'helper-environment-check') flags |= 16;
+  frame.writeUInt32LE(flags, 12);
+  frame.writeBigUInt64LE(BigInt(identity.dev), 16);
+  frame.writeBigUInt64LE(BigInt(identity.ino), 24);
+  frame.writeUInt32LE(target.length, 32);
+  frame.writeUInt32LE(encoded.length, 36);
+  frame.writeBigUInt64LE(BigInt(total), 40);
+  target.copy(frame, 48);
+  let offset = 48 + target.length;
+  for (const operation of encoded) {
+    frame.fill(0, offset, offset + 16);
+    frame[offset] = operation.allowOverwrite ? 1 : 0;
+    frame.writeUInt32LE(operation.pathBytes.length, offset + 4);
+    frame.writeBigUInt64LE(BigInt(operation.bytes.length), offset + 8);
+    offset += 16;
+    operation.pathBytes.copy(frame, offset); offset += operation.pathBytes.length;
+    operation.bytes.copy(frame, offset); offset += operation.bytes.length;
+  }
+  return frame;
+}
+
+function parseDarwinResponse(result, operations) {
+  if (result.outputError) throw result.outputError;
+  if (result.signal) fail(`Darwin native helper terminated by signal ${result.signal} before completing publication`);
+  if (result.stdout.length !== 32 || result.stdout.subarray(0, 8).toString('ascii') !== 'OPDFRES1' || result.stdout.readUInt32LE(8) !== DARWIN_PROTOCOL) {
+    fail('Darwin native helper returned a malformed protocol response');
+  }
+  const status = result.stdout.readUInt32LE(12);
+  if (status !== 0 || result.code !== 0) {
+    const phases = ['unknown', 'activation', 'root-open', 'parent-preflight', 'publication', 'cleanup'];
+    const phase = phases[result.stdout.readUInt32LE(16)] ?? 'unknown';
+    const index = result.stdout.readUInt32LE(20);
+    const relative = index < operations.length ? ` for ${operations[index].relative}` : '';
+    const diagnostic = result.stderr.toString('utf8').trim().replace(/[\r\n]+/g, ' ').slice(0, 300);
+    fail(`Darwin native helper failed during ${phase}${relative}${diagnostic ? ` (${diagnostic})` : ''}`);
+  }
+}
+
+async function pauseForTestSignal(coordination, race, action) {
+  if (race?.action !== action) return;
+  const marker = process.env.OPENCODE_PORTABLE_TEST_SIGNAL_MARKER;
+  if (process.env.NODE_ENV !== 'test' || typeof marker !== 'string' || !path.isAbsolute(marker)) fail('test signal marker must be an absolute path');
+  await writeFile(marker, `${action}\n`, { flag: 'wx', mode: 0o600 });
+  await coordination.waitForSignal();
+}
+
+function activationPrefix() {
+  if (process.env.NODE_ENV !== 'test' || !process.env.OPENCODE_PORTABLE_TEST_INVOCATION_ID) return 'opencode-portable-helper-';
+  const id = process.env.OPENCODE_PORTABLE_TEST_INVOCATION_ID;
+  if (!/^[a-z0-9-]{1,64}$/.test(id)) fail('test invocation id must contain only lowercase ASCII letters, digits, and hyphens');
+  return `opencode-portable-helper-${id}-`;
+}
+
+async function activateDarwinHelper(manifest, helperBytes, coordination, race) {
+  const contract = manifest.writeCapabilities.backends.darwin.helper;
+  if (process.env.NODE_ENV === 'test' && process.env.OPENCODE_PORTABLE_FORCE_NATIVE_UNAVAILABLE === '1') fail('Darwin native helper activation was test-forced unavailable');
+  if (sha256(helperBytes) !== contract.sha256) fail('Darwin native helper SHA-256 does not match the portable manifest');
+  const activationParentReal = await realpath(DARWIN_ACTIVATION_PARENT);
+  if (activationParentReal !== DARWIN_ACTIVATION_PARENT) fail('trusted Darwin activation parent resolved unexpectedly');
+  const activationParentStat = await lstat(activationParentReal);
+  if (!activationParentStat.isDirectory() || activationParentStat.isSymbolicLink() || activationParentStat.uid !== 0 || (activationParentStat.mode & 0o1000) === 0) fail('trusted Darwin activation parent must be a root-owned sticky directory');
+  const directory = await mkdtemp(path.join(activationParentReal, activationPrefix()));
+  const executable = path.join(directory, 'darwin-portable-fs');
+  try {
+    await pauseForTestSignal(coordination, race, 'signal-after-activation-directory');
+    coordination.throwIfSignaled();
+    await writeFile(executable, helperBytes, { flag: 'wx', mode: 0o700 });
+    coordination.throwIfSignaled();
+    if (sha256(await readFile(executable)) !== contract.sha256) fail('materialized Darwin native helper failed integrity verification');
+    coordination.throwIfSignaled();
+    const selfTest = await runChild(executable, ['--self-test'], null, 65536, 5000, coordination);
+    const expected = new RegExp(`^OPDFSELF1 protocol=${DARWIN_PROTOCOL} platform=darwin arch=${process.arch === 'x64' ? 'x86_64' : process.arch}\\n$`);
+    if (selfTest.code !== 0 || selfTest.signal || !expected.test(selfTest.stdout.toString('utf8')) || selfTest.stderr.length) fail('Darwin native helper self-test/protocol/architecture check failed');
+    await pauseForTestSignal(coordination, race, 'signal-between-helper-runs');
+    coordination.throwIfSignaled();
+    return { directory, executable };
+  } catch (error) {
+    let cleanupError = null;
+    try { await rm(directory, { recursive: true, force: true }); } catch (candidate) { cleanupError = candidate; }
+    coordination.throwIfSignaled();
+    throw cleanupError ?? error;
+  }
 }
 
 function parseArgs(argv) {
@@ -237,7 +479,7 @@ async function prepareDestinationParents(rootHandle, operations, race, targetRea
 function testRaceOptions() {
   if (process.env.NODE_ENV !== 'test' || !process.env.OPENCODE_PORTABLE_TEST_RACE) return null;
   const value = JSON.parse(process.env.OPENCODE_PORTABLE_TEST_RACE);
-  if (!value || !['create-destination', 'insert-symlink', 'replace-root', 'replace-intermediate', 'replace-root-after-open', 'replace-parent-before-probe', 'fail-probe'].includes(value.action)) fail('invalid test race action');
+  if (!value || !['create-destination', 'insert-symlink', 'replace-root', 'replace-intermediate', 'replace-root-after-open', 'replace-root-between-snapshots', 'replace-parent-before-probe', 'fail-probe', 'helper-timeout', 'helper-output-overflow', 'helper-environment-check', 'parent-signal', 'signal-after-activation-directory', 'signal-between-helper-runs', 'signal-during-final-cleanup'].includes(value.action)) fail('invalid test race action');
   if (['create-destination', 'insert-symlink', 'replace-parent-before-probe', 'fail-probe'].includes(value.action)) safeRelative(value.relative, 'test race relative');
   return value;
 }
@@ -270,11 +512,20 @@ async function applyRootRace(race, targetReal) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
+  const race = testRaceOptions();
   const targetStat = await statOrNull(options.target);
   if (!targetStat?.isDirectory() || targetStat.isSymbolicLink()) fail(`target must be an existing real directory: ${options.target}`);
+  const targetPreflightIdentity = await lstat(options.target, { bigint: true });
+  if (race?.action === 'replace-root-between-snapshots') {
+    if (typeof race.replacement !== 'string' || !path.isAbsolute(race.replacement)) fail('test replacement path must be absolute');
+    await rename(options.target, race.replacement);
+    await mkdir(options.target);
+  }
   await access(options.target, constants.R_OK | constants.W_OK);
   const sourceReal = await realpath(SOURCE_ROOT);
   const targetReal = await realpath(options.target);
+  const canonicalTargetIdentity = await lstat(targetReal, { bigint: true });
+  if (!sameIdentity(targetPreflightIdentity, canonicalTargetIdentity)) fail('canonical target differs from the exact preflight identity snapshot');
   const targetIdentity = await lstat(targetReal);
   if (!sameIdentity(targetStat, targetIdentity)) fail('canonical target differs from the preflight-inspected target');
   const manifest = validateManifest(JSON.parse(await readFile(path.join(SOURCE_ROOT, MANIFEST_PATH), 'utf8')));
@@ -305,35 +556,75 @@ async function main() {
   }
 
   if (collisions.length) fail(`managed collisions (${collisions.length}): ${collisions.join(', ')}; rerun with --overwrite-managed only after review`);
-  const race = testRaceOptions();
   let writeSafety = 'not-exercised';
   if (!options.dryRun) {
-    await applyRootRace(race, targetReal);
-    if (race?.action === 'insert-symlink') {
-      if (typeof race.target !== 'string' || !path.isAbsolute(race.target)) fail('test symlink target must be absolute');
-      await symlink(race.target, path.join(targetReal, ...race.relative.split('/')), 'dir');
-    }
-    await assertRootPathIdentity(targetReal, targetIdentity);
-    const rootHandle = await open(targetReal, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
-    let prepared;
-    try {
-      const handleIdentity = await rootHandle.stat();
-      if (!sameIdentity(targetIdentity, handleIdentity)) fail('opened target differs from the preflight-inspected target');
-      descriptorAlias = await discoverDescriptorAlias(rootHandle, targetIdentity, manifest.writeCapabilities.descriptorDirectoryAliases);
-      if (!descriptorAlias) fail(`no usable descriptor-directory alias; tried ${manifest.writeCapabilities.descriptorDirectoryAliases.join(', ')}; capability contract requires fail-before-file-publication`);
-      await applyAfterOpenRootRace(race, targetReal);
-      await assertRootPathIdentity(targetReal, targetIdentity);
-      prepared = await prepareDestinationParents(rootHandle, operations, race, targetReal);
-      for (const operation of operations) {
-        const parent = prepared.parents.get(path.posix.dirname(operation.relative));
-        await atomicWrite(rootHandle, parent.handle, operation, race);
+    if (process.platform === 'darwin') {
+      const helperBytes = await sourceBytes(DARWIN_HELPER_PATH, sourceReal);
+      const coordination = createDarwinSignalCoordinator();
+      let activation = null;
+      let operationError = null;
+      try {
+        activation = await activateDarwinHelper(manifest, helperBytes, coordination, race);
+        coordination.throwIfSignaled();
+        await applyRootRace(race, targetReal);
+        if (race?.action === 'replace-root-after-open') await applyAfterOpenRootRace(race, targetReal);
+        if (race?.action === 'insert-symlink') {
+          if (typeof race.target !== 'string' || !path.isAbsolute(race.target)) fail('test symlink target must be absolute');
+          await symlink(race.target, path.join(targetReal, ...race.relative.split('/')), 'dir');
+        }
+        const nativeOperations = race?.action === 'create-destination'
+          ? [...operations].sort((left, right) => Number(right.relative === race.relative) - Number(left.relative === race.relative))
+          : operations;
+        const request = encodeDarwinRequest(targetReal, targetPreflightIdentity, nativeOperations, race);
+        const helperTimeout = race?.action === 'helper-timeout' ? 200 : 30000;
+        coordination.throwIfSignaled();
+        const result = await runChild(activation.executable, [], request, 65536, helperTimeout, coordination);
+        parseDarwinResponse(result, nativeOperations);
+        writeSafety = manifest.writeCapabilities.backends.darwin.safety;
+      } catch (error) {
+        operationError = error;
       }
-      writeSafety = `descriptor-anchored-hard-link:${descriptorAlias}`;
-    } finally {
-      if (prepared) for (const parent of prepared.parents.values()) if (parent.owned) await parent.handle.close();
-      await rootHandle.close();
-      descriptorAlias = null;
-    }
+      if (activation) {
+        try {
+          await pauseForTestSignal(coordination, race, 'signal-during-final-cleanup');
+          await rm(activation.directory, { recursive: true, force: true });
+        } catch (error) {
+          operationError ??= error;
+        }
+      }
+      const signalError = coordination.signalError();
+      coordination.dispose();
+      if (signalError) throw signalError;
+      if (operationError) throw operationError;
+    } else if (process.platform === 'linux') {
+      await applyRootRace(race, targetReal);
+      if (race?.action === 'insert-symlink') {
+        if (typeof race.target !== 'string' || !path.isAbsolute(race.target)) fail('test symlink target must be absolute');
+        await symlink(race.target, path.join(targetReal, ...race.relative.split('/')), 'dir');
+      }
+      await assertRootPathIdentity(targetReal, targetIdentity);
+      const rootHandle = await open(targetReal, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      let prepared;
+      try {
+        const handleIdentity = await rootHandle.stat();
+        if (!sameIdentity(targetIdentity, handleIdentity)) fail('opened target differs from the preflight-inspected target');
+        const aliases = manifest.writeCapabilities.backends.linux.descriptorDirectoryAliases;
+        descriptorAlias = await discoverDescriptorAlias(rootHandle, targetIdentity, aliases);
+        if (!descriptorAlias) fail(`no usable descriptor-directory alias; tried ${aliases.join(', ')}; capability contract requires fail-before-file-publication`);
+        await applyAfterOpenRootRace(race, targetReal);
+        await assertRootPathIdentity(targetReal, targetIdentity);
+        prepared = await prepareDestinationParents(rootHandle, operations, race, targetReal);
+        for (const operation of operations) {
+          const parent = prepared.parents.get(path.posix.dirname(operation.relative));
+          await atomicWrite(rootHandle, parent.handle, operation, race);
+        }
+        writeSafety = `${manifest.writeCapabilities.backends.linux.safety}:${descriptorAlias}`;
+      } finally {
+        if (prepared) for (const parent of prepared.parents.values()) if (parent.owned) await parent.handle.close();
+        await rootHandle.close();
+        descriptorAlias = null;
+      }
+    } else fail(`unsupported platform ${process.platform}; portable publication is available only on linux and darwin`);
   }
   const managedCount = operations.filter((item) => item.kind === 'managed').length;
   const memoryCount = operations.filter((item) => item.kind === 'memory').length;
@@ -342,5 +633,11 @@ async function main() {
 
 main().catch((error) => {
   console.error(error?.message ?? String(error));
+  if (error?.parentSignal) {
+    process.removeAllListeners(error.parentSignal);
+    setTimeout(() => process.exit(1), 1000);
+    process.kill(process.pid, error.parentSignal);
+    return;
+  }
   process.exitCode = 1;
 });
