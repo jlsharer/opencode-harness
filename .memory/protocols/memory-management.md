@@ -68,6 +68,19 @@ Use this path convention:
 
 `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`
 
+In external-runtime mode, `.memory` above means the absolute directory in
+`OPENCODE_HARNESS_TRACE_ROOT`; runtime contracts and schemas are beneath
+`OPENCODE_HARNESS_RUNTIME_ROOT`, and workspace operations are rooted at
+`OPENCODE_HARNESS_WORKSPACE_ROOT`. Record `workspaceRoot` and `traceRoot` in
+trace input context when supplied. When these variables are absent, retain the
+project-relative portable paths in this protocol.
+
+The launcher seeds this protocol, `INDEX.md`, and both templates into a fresh
+external trace root with owner-only modes and never overwrites a mismatch.
+Those seeded files are compatibility copies. External roles read the immutable
+protocol source at `OPENCODE_HARNESS_RUNTIME_ROOT/bootstrap/memory/protocols/memory-management.md`
+and write generated orchestration artifacts beneath `OPENCODE_HARNESS_TRACE_ROOT`.
+
 `<role>` must be one of: `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, or `artifact-verifier`.
 
 ## Content Rules

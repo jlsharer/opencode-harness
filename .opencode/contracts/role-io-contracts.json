@@ -8,7 +8,7 @@
     "researcher": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "scopedQuestion", "sourceConstraints", "freshnessRequirements", "downstreamNeeds", "routingMetadataStatus"],
-        "optional": ["relevantPaths", "documentationTargets"]
+        "optional": ["relevantPaths", "documentationTargets", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["citedFindings", "sourceList", "implementationImplications", "risks", "recommendedNextRole", "traceArtifactPath"],
@@ -23,7 +23,7 @@
     "planner": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "approvedGoal", "scopeBoundaries", "researchEvidence", "deliverablePaths", "acceptanceCriteria", "routingMetadataStatus"],
-        "optional": ["dependencies", "assumptions"]
+        "optional": ["dependencies", "assumptions", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["orderedPlan", "fileContracts", "dependencies", "verificationGates", "handoffNotes", "traceArtifactPath"],
@@ -38,7 +38,7 @@
     "implementer": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "approvedPlan", "targetPaths", "allowedEditScope", "schemaRequirements", "preservationRequirements", "verificationCommands", "routingMetadataStatus"],
-        "optional": ["styleConstraints", "handoffRequirements"]
+        "optional": ["styleConstraints", "handoffRequirements", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["changedFiles", "rationale", "schemaOrBoundaryChoices", "commandsRun", "handoffNotes", "traceArtifactPath"],
@@ -53,7 +53,7 @@
     "integrator": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "changedArtifacts", "pathRelationships", "manifestExpectations", "workflowContracts", "knownRisks", "routingMetadataStatus"],
-        "optional": ["commandContracts", "schemaContracts"]
+        "optional": ["commandContracts", "schemaContracts", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["pathConsistencyNotes", "manifestCoverageNotes", "crossFileIssues", "fixesAppliedOrRequested", "residualRisks", "traceArtifactPath"],
@@ -68,7 +68,7 @@
     "validator": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "changedFiles", "verificationCriteria", "commandsToRun", "schemaContracts", "acceptanceStandard", "routingMetadataStatus"],
-        "optional": ["expectedWarnings", "skippedCheckPolicy"]
+        "optional": ["expectedWarnings", "skippedCheckPolicy", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["passFailMatrix", "commandOutputs", "schemaResults", "securityAndActivationFindings", "remediationList", "traceArtifactPath"],
@@ -83,7 +83,7 @@
     "reviewer": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "diffOrChangedPaths", "intendedBehavior", "riskAreas", "testExpectations", "routingMetadataStatus"],
-        "optional": ["reviewScope", "knownTradeoffs"]
+        "optional": ["reviewScope", "knownTradeoffs", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["findings", "openQuestions", "residualRisk", "changeSummary", "traceArtifactPath"],
@@ -98,7 +98,7 @@
     "synthesizer": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "roleOutputs", "conflictsOrDecisions", "assumptions", "routingMetadataStatus"],
-        "optional": ["tradeoffInputs", "requestedDecision"]
+        "optional": ["tradeoffInputs", "requestedDecision", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["resolvedConclusions", "tradeoffs", "assumptions", "recommendedDecision", "remainingQuestions", "traceArtifactPath"],
@@ -113,7 +113,7 @@
     "artifact-verifier": {
       "inputContract": {
         "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "artifactPaths", "expectedGeneratedTree", "parseOrRenderChecks", "tempDirectoryRequirements", "cleanupDecisionCriteria", "routingMetadataStatus"],
-        "optional": ["inspectionNotes", "formatSpecificChecks"]
+        "optional": ["inspectionNotes", "formatSpecificChecks", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["tempPath", "fileListing", "commandOutputsOrRenderEvidence", "cleanupDecision", "limitations", "traceArtifactPath"],

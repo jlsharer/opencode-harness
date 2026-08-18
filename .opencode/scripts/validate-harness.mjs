@@ -39,6 +39,7 @@ const COMMAND_ROLE_MAP = {
 const STATIC_MANIFEST_PATHS = [
   'opencode.json',
   'AGENTS.md',
+  'README.md',
   'opencode-harness.design.md',
   '.memory/INDEX.md',
   '.memory/protocols/memory-management.md',
@@ -62,7 +63,10 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/contracts/role-io-contracts.json',
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/harness-endpoint-catalog.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
+  '.opencode/schemas/harness-routing-profile.schema.json',
+  '.opencode/schemas/opencode-provider-projection.schema.json',
   '.opencode/routing/harness-model-routing.example.json',
   '.opencode/routing/harness-model-routing.local.example.json',
   '.opencode/routing/routing-config-loader.mjs',
@@ -75,6 +79,8 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/plugin-modules/task-thread-policy.js',
   '.opencode/plugin-modules/task-thread-policy.test.mjs',
   '.opencode/plugin-modules/role-model-routing-enforcement.js',
+  '.opencode/plugin-modules/trace-root-permissions.js',
+  '.opencode/plugin-modules/trace-root-permissions.test.mjs',
   '.opencode/bootstrap/memory/INDEX.md',
   '.opencode/bootstrap/memory/protocols/memory-management.md',
   '.opencode/bootstrap/memory/templates/orchestration-index.md',
@@ -88,6 +94,11 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/scripts/portable-harness.test.mjs',
   '.opencode/scripts/validate-portable-harness.mjs',
   '.opencode/scripts/validate-harness.mjs',
+  '.opencode/scripts/runtime-harness.test.mjs',
+  '.opencode/scripts/runtime-foreign-repo.test.mjs',
+  '.opencode/runtime.manifest.json',
+  'bin/opencode-harness.mjs',
+  'package.json',
   '.opencode/harness.manifest.json',
 ];
 const STATIC_MEMORY_PATHS = [
@@ -100,7 +111,10 @@ const STATIC_MEMORY_PATHS = [
 const SCHEMA_PATHS = [
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/harness-endpoint-catalog.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
+  '.opencode/schemas/harness-routing-profile.schema.json',
+  '.opencode/schemas/opencode-provider-projection.schema.json',
 ];
 const ROLE_CONTRACT_PATH = '.opencode/contracts/role-io-contracts.json';
 const TRACE_SCHEMA_PATH = '.opencode/schemas/memory-trace-artifact.schema.json';
@@ -250,9 +264,10 @@ function assertCompleteSourceInventory() {
 }
 
 function assertManifest(manifest) {
-  const rootOwned = new Set(['opencode.json', 'AGENTS.md', 'opencode-harness.design.md']);
+  const rootOwned = new Set(['opencode.json', 'AGENTS.md', 'README.md', 'opencode-harness.design.md', 'package.json', 'bin/opencode-harness.mjs']);
   const staticMemoryOwned = new Set(STATIC_MEMORY_PATHS);
   const paths = manifest.artifacts.map((artifact) => artifact.path);
+  if (paths.length !== 79) fail(`Source manifest must contain exactly 79 artifacts; got ${paths.length}`);
   sameSet(paths, expectedManifestPaths(), 'manifest artifact paths');
 
   const seen = new Set();
@@ -316,10 +331,13 @@ function assertRoutingSchema(schema) {
   if (!Array.isArray(schema.oneOf) || schema.$defs?.routing?.additionalProperties !== false) {
     fail('Harness routing schema must cover wrapped/unwrapped documents with a closed routing object');
   }
-  for (const boundary of ['roleOverride', 'commandOverride', 'modelVariant', 'catalogEntry']) {
+  for (const boundary of ['roleOverride', 'commandOverride', 'modelVariant']) {
     if (schema.$defs?.[boundary]?.additionalProperties !== false) {
       fail(`Harness routing schema boundary must reject unknown keys: ${boundary}`);
     }
+  }
+  if (schema.$defs?.catalogEntry?.$ref !== 'harness-endpoint-catalog.schema.json#/$defs/catalogEntry') {
+    fail('Harness routing schema must reference the canonical endpoint catalog entry');
   }
   const localRouting = schema.$defs?.routing?.properties?.localRouting;
   const forceDependency = localRouting?.allOf?.some((constraint) =>
@@ -337,6 +355,91 @@ function assertRoutingSchema(schema) {
   const policySource = read('.opencode/routing/routing-policy.mjs');
   if (/\bajv\b|from\s+['"][^'"]+['"]/.test(policySource)) {
     fail('Routing policy must remain dependency-free and must not import Ajv or other modules');
+  }
+}
+
+function assertRuntimeManifest(runtimeManifest) {
+  if (!Array.isArray(runtimeManifest.generatedEntries) || Object.hasOwn(runtimeManifest, 'generatedFiles')) fail('Runtime manifest must use the typed generatedEntries allowlist');
+  const expected = ['.gitignore', '.harness-runtime.json', 'bun.lock', 'bun.lockb', 'node_modules', 'package-lock.json', 'package.json'];
+  sameSet(runtimeManifest.generatedEntries.map((entry) => entry.path), expected, 'runtime generated-entry allowlist');
+  for (const entry of runtimeManifest.generatedEntries) {
+    if (!['file', 'directory'].includes(entry.kind) || typeof entry.recursive !== 'boolean' || typeof entry.required !== 'boolean' || !/^0[67]00$|^0644$/.test(entry.mode)) fail(`Invalid typed generated-entry rule: ${entry.path}`);
+    if (entry.recursive !== (entry.path === 'node_modules')) fail(`Only node_modules may be recursive in generated entries: ${entry.path}`);
+  }
+  const destinations = runtimeManifest.files.map((entry) => entry.destination);
+  if (!destinations.includes('schemas/opencode-provider-projection.schema.json')) fail('Runtime manifest must include the provider projection schema');
+  if (runtimeManifest.files.length !== 43 || !destinations.includes('plugin-modules/task-thread-policy.js') || !destinations.includes('plugin-modules/trace-root-permissions.js')) fail('Runtime manifest must contain the exact 43-file external runtime including trace permissions');
+  const packageManifest = json('package.json');
+  if (packageManifest.version !== '0.1.8' || runtimeManifest.packageVersion !== packageManifest.version) fail('Package and runtime manifest versions must both equal 0.1.8');
+  if (!Array.isArray(packageManifest.files) || packageManifest.files.filter((pathname) => pathname === 'README.md').length !== 1) fail('Package files must include README.md exactly once');
+  for (const pathname of ['.opencode/bootstrap', '.opencode/plugin-modules']) {
+    if (packageManifest.files.includes(pathname)) fail(`Package files must not include broad source-only directory: ${pathname}`);
+  }
+  for (const pathname of ['.opencode/bootstrap/native/darwin-portable-fs.c', '.opencode/bootstrap/native/darwin-portable-fs.universal', '.opencode/plugin-modules/task-thread-policy.test.mjs']) {
+    if (packageManifest.files.includes(pathname)) fail(`Package files must exclude source-only payload: ${pathname}`);
+  }
+  const launcher = read('bin/opencode-harness.mjs');
+  if (!launcher.includes("value.packageVersion !== '0.1.8'")) fail('Runtime launcher must reject package versions other than 0.1.8');
+  for (const snippet of ["'OPENCODE_DB'", 'OPENCODE_DB: snapshot.database', "'opencode.db-wal'", "'opencode.db-shm'", 'parentIdentity', 'directoryIdentity', '.quarantine-', 'removeContainedEntry', 'retained launch:', 'retained quarantine:', 'quarantine dev/ino', 'quarantine path still exists after recursive unlink']) {
+    if (!launcher.includes(snippet)) fail(`Runtime launcher database isolation is missing: ${snippet}`);
+  }
+  const design = read('opencode-harness.design.md');
+  for (const snippet of ['opencode-harness-runtime` 0.1.8', '/0.1.8/opencode-1.18.18/runtime', '0.1.7']) {
+    if (!design.includes(snippet)) fail(`Runtime release documentation is missing: ${snippet}`);
+  }
+}
+
+function assertExactPackagePayload(runtimeManifest) {
+  const packageManifest = json('package.json');
+  if (packageManifest.files.length !== 29 || new Set(packageManifest.files).size !== 29) fail('Package files selector allowlist must contain exactly 29 unique entries');
+  const selectors = [
+    'README.md', 'bin/opencode-harness.mjs', '.opencode/runtime.manifest.json', '.opencode/agents', '.opencode/agents/researcher.md',
+    '.opencode/commands/delegate-*.md', '.opencode/skills/delegation-orchestrator/SKILL.md',
+    '.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md', '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
+    '.opencode/skills/delegation-orchestrator/references/validation-checklist.md', '.opencode/workflows/delegation-workflow.md', '.opencode/workflows/validation-workflow.md',
+    '.opencode/contracts', '.opencode/schemas', '.opencode/routing/harness-model-routing.example.json', '.opencode/routing/harness-model-routing.local.example.json',
+    '.opencode/routing/model-routing-helper.mjs', '.opencode/routing/resolve-model-routing.mjs', '.opencode/routing/routing-config-loader.mjs', '.opencode/routing/routing-policy.mjs',
+    '.opencode/plugins', '.opencode/plugin-modules/harness-lifecycle.js', '.opencode/plugin-modules/task-thread-policy.js',
+    '.opencode/plugin-modules/role-model-routing-enforcement.js', '.opencode/plugin-modules/trace-root-permissions.js',
+    '.opencode/bootstrap/memory/INDEX.md', '.opencode/bootstrap/memory/protocols/memory-management.md',
+    '.opencode/bootstrap/memory/templates/orchestration-index.md', '.opencode/bootstrap/memory/templates/role-trace-artifact.md',
+  ];
+  sameSet(packageManifest.files, selectors, 'exact package selector allowlist');
+  const result = spawnSync('npm', ['pack', '--dry-run', '--json'], { cwd: ROOT, encoding: 'utf8' });
+  if (result.status !== 0) fail(`npm pack dry-run failed: ${(result.stderr || result.stdout).trim()}`);
+  let reports;
+  try { reports = JSON.parse(result.stdout); } catch (error) { fail(`npm pack dry-run returned malformed JSON: ${error.message}`); }
+  if (!Array.isArray(reports) || reports.length !== 1) fail('npm pack dry-run must return one package report');
+  const report = reports[0];
+  if (report.name !== 'opencode-harness-runtime' || report.version !== '0.1.8' || !Array.isArray(report.files)) fail('npm pack report identity is invalid');
+  const actual = report.files.map((entry) => entry.path);
+  const expected = ['package.json', 'README.md', 'bin/opencode-harness.mjs', '.opencode/runtime.manifest.json', ...runtimeManifest.files.map((entry) => entry.source)];
+  if (actual.length !== 47 || new Set(actual).size !== 47) fail(`npm payload must contain exactly 47 unique paths; got ${actual.length}`);
+  sameSet(actual, expected, 'exact npm payload allowlist');
+  const launcher = report.files.find((entry) => entry.path === 'bin/opencode-harness.mjs');
+  if (!launcher || launcher.mode !== 0o755) fail('npm payload launcher must retain mode 0755');
+  for (const forbidden of ['.opencode/plugin-modules/trace-root-permissions.test.mjs', '.opencode/bootstrap/native/darwin-portable-fs.c', '.opencode/bootstrap/native/darwin-portable-fs.universal']) if (actual.includes(forbidden)) fail(`npm payload includes forbidden source-only path: ${forbidden}`);
+}
+
+function assertProviderProjectionSchema(schema) {
+  const model = schema.properties?.provider?.patternProperties?.['^ai-infra-[a-z][a-z0-9-]{0,31}$']
+    ?.properties?.models?.patternProperties?.['^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$'];
+  sameSet(model?.required ?? [], ['name', 'limit', 'options'], 'provider projection model required fields');
+  if (model?.additionalProperties !== false) fail('Provider projection model must reject unknown fields');
+  const options = model?.properties?.options;
+  sameSet(options?.required ?? [], ['chat_template_kwargs'], 'provider projection model options required fields');
+  if (options?.additionalProperties !== false) fail('Provider projection model options must reject unknown fields');
+  const chatTemplate = options?.properties?.chat_template_kwargs;
+  sameSet(chatTemplate?.required ?? [], ['enable_thinking'], 'provider projection chat template required fields');
+  if (chatTemplate?.additionalProperties !== false || chatTemplate?.properties?.enable_thinking?.type !== 'boolean') {
+    fail('Provider projection enable_thinking must be an exact boolean in a closed chat_template_kwargs object');
+  }
+}
+
+function assertLoop2TrustDocs() {
+  const combined = `${read('AGENTS.md')}\n${read('opencode-harness.design.md')}`;
+  for (const phrase of ['lexical-canonical', 'already-existing current-user mode-0700', 'group/world-writable worktrees', 'rechecked after the version probe', 'Custom `skills.paths`', '`OPENCODE_BIN` is explicit operator selection', 'first executable `opencode` candidate', 'stream file content through fixed-size buffers']) {
+    if (!combined.includes(phrase)) fail(`Runtime trust documentation is missing: ${phrase}`);
   }
 }
 
@@ -455,6 +558,7 @@ function assertMemorySeeds() {
   }
   const portableManifest = json('.opencode/portable.manifest.json');
   const mappings = portableManifest.memorySeeds ?? [];
+  if (portableManifest.managedFiles?.length !== 50 || mappings.length !== 4) fail('Portable manifest must contain exactly 50 managed files plus four memory seeds');
   const expectedTargets = [
     '.memory/INDEX.md',
     '.memory/protocols/memory-management.md',
@@ -717,6 +821,7 @@ async function assertPluginAdapter() {
   if (!adapter.includes("from '../plugin-modules/role-model-routing-enforcement.js'")) {
     fail('Plugin adapter must import role model routing enforcement plugin');
   }
+  if (!adapter.includes("from '../plugin-modules/trace-root-permissions.js'")) fail('Plugin adapter must import trace-root permissions');
   if (!/export\s+default\s+async\s+function|export\s+default\s+function|export\s+default\s+\w+/.test(adapter)) {
     fail('Plugin adapter must have a default export');
   }
@@ -753,6 +858,8 @@ async function assertPluginAdapter() {
   }
   const hooks = await pluginModule.default({});
   for (const hook of ['config', 'tool.execute.before', 'tool.execute.after', 'command.execute.before']) if (typeof hooks[hook] !== 'function') fail(`Plugin adapter must expose reachable ${hook} hook`);
+  const traceResult = spawnSync(process.execPath, ['--test', '.opencode/plugin-modules/trace-root-permissions.test.mjs'], { cwd: ROOT, encoding: 'utf8' });
+  if (traceResult.status !== 0) fail(`Trace-root permission tests failed: ${(traceResult.stderr || traceResult.stdout).trim()}`);
 }
 
 async function assertTaskThreadPolicy() {
@@ -843,9 +950,17 @@ async function main() {
     json(schemaPath);
   }
   assertRoutingSchema(json('.opencode/schemas/harness-model-routing.schema.json'));
+  assertProviderProjectionSchema(json('.opencode/schemas/opencode-provider-projection.schema.json'));
+  const runtimeManifest = json('.opencode/runtime.manifest.json');
+  assertRuntimeManifest(runtimeManifest);
+  assertExactPackagePayload(runtimeManifest);
+  assertLoop2TrustDocs();
+  const traceSchema = json('.opencode/schemas/memory-trace-artifact.schema.json');
+  for (const rootField of ['workspaceRoot', 'runtimeRoot', 'traceRoot']) if (!traceSchema.properties?.inputContract?.properties?.[rootField]) fail(`Trace schema must allow external root context: ${rootField}`);
   for (const memoryPath of STATIC_MEMORY_PATHS) {
     file(memoryPath);
   }
+  file('README.md');
   assertMemoryIndex();
   assertMemorySeeds();
   assertOpenCodeReferences();

@@ -28,6 +28,8 @@ Every delegated packet must include:
 - trace schema `.opencode/schemas/memory-trace-artifact.schema.json`
 - required trace artifact path `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`
 
+External runtime resolution takes precedence when set: harness assets are beneath `OPENCODE_HARNESS_RUNTIME_ROOT`, workspace operations beneath `OPENCODE_HARNESS_WORKSPACE_ROOT`, and the `.memory` path beneath `OPENCODE_HARNESS_TRACE_ROOT`. Portable installations retain the relative paths above.
+
 Use scoped artifact IDs for repeatable role instances:
 
 `<scope>-<role>-<sequence>-<slug>`
@@ -57,6 +59,7 @@ Do not rename the labels, change casing, or supply placeholder values when the c
 ## Model Routing Semantics
 
 - The tracked source is `.opencode/routing/harness-model-routing.example.json`; `.opencode/routing/harness-model-routing.json` is an optional ignored operator override. Implicit loading is custom-first with example fallback and no merge. A present unreadable, malformed, or invalid custom file fails closed; explicit paths are exact. If both are absent, copy the example to the custom path. Validation explicitly uses the example.
+- External runtime catalog/profile inputs are both required or both absent. They merge only by injecting the catalog's models into a force-false advisory profile; unknown references and provider/credential fields fail validation.
 - The routing resolver is a deterministic advisory policy surface outside force mode. The committed catalog is enabled but force-local activation is false, so illustrative local selections do not become native agent configuration.
 - Native provider transport is external merged OpenCode config. A native provider id, model suffix, and `baseURL` must cohere with the selected catalog entry; harness policy does not create transport or credentials.
 - `OPENCODE_CONFIG` merges before project config and is not a final project override. `OPENCODE_CONFIG_CONTENT` is later, but inline or committed secrets are prohibited.

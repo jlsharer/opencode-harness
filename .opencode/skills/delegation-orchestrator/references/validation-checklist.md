@@ -13,6 +13,8 @@ Use this checklist before accepting delegated OpenCode harness work.
 - [ ] `.opencode/routing/harness-model-routing.example.json` is a neutral disabled acceptance input, and the explicit enabled-local example is valid but never selected implicitly.
 - [ ] The shared loader selects custom before example without merging, never falls back from a present bad custom file, reads explicit paths exactly, and reports both paths plus the copy command when both implicit files are absent.
 - [ ] `.opencode/schemas/harness-model-routing.schema.json` parses as draft 2020-12, and dependency-free runtime normalization rejects structural and semantic defects.
+- [ ] External runtime manifest, endpoint-catalog schema, and advisory-profile schema are closed; catalog/profile merge is all-or-none and force-local remains false.
+- [ ] External runtime roots direct assets, workspace work, and traces independently; portable fallback still passes without those variables.
 - [ ] `.opencode/routing/routing-policy.mjs` and its tests are in the portable inventory and pass deterministic, non-mutating policy checks.
 - [ ] Minimal memory exists: `.memory/INDEX.md`, `.memory/protocols/memory-management.md`, `.memory/templates/orchestration-index.md`, and `.memory/templates/role-trace-artifact.md`; generated orchestration history is not required.
 - [ ] `.opencode/contracts/role-io-contracts.json` parses and includes all eight roles.
@@ -57,6 +59,7 @@ Use this checklist before accepting delegated OpenCode harness work.
 - [ ] `node --test .opencode/plugin-modules/task-thread-policy.test.mjs` passes and lifecycle hooks read Task/Bash arguments from the second hook parameter `output.args`.
 - [ ] Reference-only prior projection directories are not listed as OpenCode runtime dependencies.
 - [ ] Portable files depend only on the managed `.opencode/` inventory and minimal `.memory/` surface.
+- [ ] No real provider, auth, global config, network, publish, or installation action was inferred from fixture evidence.
 
 ## Acceptance Decision
 

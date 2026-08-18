@@ -19,6 +19,8 @@ Dispatch boundary: accept managed work only from a contract-complete Task packet
 
 ## Memory and Contract Requirements
 
+Path resolution: in external mode, read immutable contracts, schemas, commands, skills, workflows, and the protocol at `bootstrap/memory/protocols/memory-management.md` beneath `OPENCODE_HARNESS_RUNTIME_ROOT`; perform workspace work beneath `OPENCODE_HARNESS_WORKSPACE_ROOT`; and write indexes/traces beneath `OPENCODE_HARNESS_TRACE_ROOT`. Seeded trace-root protocol/templates are byte-identical convenience copies, not the immutable source. Otherwise use project-relative portable paths. Never bake concrete roots into prompts.
+
 - Use `.memory/protocols/memory-management.md` for orchestration memory rules.
 - Follow `.opencode/contracts/role-io-contracts.json` for the `implementer` input contract, output contract, verification expectations, and handoff fields.
 - Shape trace artifacts according to `.opencode/schemas/memory-trace-artifact.schema.json`.

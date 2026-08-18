@@ -34,6 +34,7 @@ const EXPECTED_MANAGED_FILES = [
   '.opencode/workflows/delegation-workflow.md',
   '.opencode/workflows/validation-workflow.md',
   '.opencode/contracts/role-io-contracts.json',
+  '.opencode/schemas/harness-endpoint-catalog.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
   '.opencode/schemas/role-io-contracts.schema.json',
@@ -49,6 +50,8 @@ const EXPECTED_MANAGED_FILES = [
   '.opencode/plugin-modules/task-thread-policy.js',
   '.opencode/plugin-modules/task-thread-policy.test.mjs',
   '.opencode/plugin-modules/role-model-routing-enforcement.js',
+  '.opencode/plugin-modules/trace-root-permissions.js',
+  '.opencode/plugin-modules/trace-root-permissions.test.mjs',
   '.opencode/bootstrap/native/darwin-portable-fs.c',
   DARWIN_HELPER_PATH,
   '.opencode/portable.manifest.json',
@@ -134,6 +137,7 @@ function validateManifest(manifest) {
   if (manifest.schemaVersion !== '2.0.0' || manifest.profile !== 'portable-core') fail('unsupported manifest version/profile');
   if (!Array.isArray(manifest.managedFiles) || !Array.isArray(manifest.memorySeeds) || !Array.isArray(manifest.forbiddenReferences)) fail('manifest inventories must be arrays');
   const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, '.opencode/'));
+  if (managed.length !== 50) fail(`managed inventory must contain exactly 50 files; got ${managed.length}`);
   if (new Set(managed).size !== managed.length || !managed.includes('.opencode/portable.manifest.json')) fail('managed inventory must be unique and self-containing');
   if (JSON.stringify([...managed].sort()) !== JSON.stringify(EXPECTED_MANAGED_FILES)) fail('managed inventory differs from the installed validator exact portable-core contract');
   for (const candidate of managed) if (managed.some((other) => other !== candidate && candidate.startsWith(`${other}/`))) fail(`managed file paths overlap: ${candidate}`);
@@ -256,7 +260,7 @@ async function validateRoutingAndPlugin(root) {
 
   const pluginRelative = '.opencode/plugins/index.js';
   const pluginText = await readFile(await regularFile(root, pluginRelative), 'utf8');
-  for (const imported of ['../plugin-modules/harness-lifecycle.js', '../plugin-modules/role-model-routing-enforcement.js']) if (!pluginText.includes(imported)) fail(`plugin entry is missing import: ${imported}`);
+  for (const imported of ['../plugin-modules/harness-lifecycle.js', '../plugin-modules/role-model-routing-enforcement.js', '../plugin-modules/trace-root-permissions.js']) if (!pluginText.includes(imported)) fail(`plugin entry is missing import: ${imported}`);
   const plugin = await import(`${pathToFileURL(path.join(root, pluginRelative)).href}?portable-validation=${Date.now()}`);
   if (typeof plugin.default !== 'function') fail('plugin entry has no default function export');
   const hooks = await plugin.default({ routingPath: neutralPath, project: { root } });
@@ -268,6 +272,9 @@ async function validateRoutingAndPlugin(root) {
   const localNativeConfig = {};
   await localHooks.config(localNativeConfig);
   if (JSON.stringify(localNativeConfig) !== '{}') fail('advisory local no-provider config hook must be a no-op');
+  const traceTest = await regularFile(root, '.opencode/plugin-modules/trace-root-permissions.test.mjs');
+  const traceResult = spawnSync(process.execPath, ['--test', traceTest], { cwd: root, encoding: 'utf8' });
+  if (traceResult.status !== 0) fail(`trace-root permission tests failed: ${(traceResult.stderr || traceResult.stdout).trim()}`);
 }
 
 async function validateTaskThreadPolicy(root) {

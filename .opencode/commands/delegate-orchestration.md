@@ -11,6 +11,8 @@ This command belongs to the orchestrator. It must not be routed to a fixed subag
 
 Collect or confirm:
 
+In external mode, read immutable assets, routing commands, and `bootstrap/memory/protocols/memory-management.md` beneath `OPENCODE_HARNESS_RUNTIME_ROOT`; operate beneath `OPENCODE_HARNESS_WORKSPACE_ROOT`; and write generated indexes/traces beneath `OPENCODE_HARNESS_TRACE_ROOT`. Seeded trace-root protocol/templates are matching convenience copies. Otherwise retain portable project-relative resolution. Do not embed concrete roots in reusable prompts.
+
 - `orchestration-id`, or create a stable date-prefixed slug.
 - User goal, scope boundaries, non-goals, acceptance criteria, allowed paths, and write permissions.
 - Memory root `.memory/orchestrations/<orchestration-id>/`.
@@ -33,7 +35,7 @@ Ask questions before delegation only when required context is missing or ambiguo
 1. Create or update `.memory/orchestrations/<orchestration-id>/INDEX.md`.
 2. Decompose the workflow into a dependency graph of scoped work units and sub-workflows.
 3. Use a DAG for dependencies. Run independent role instances in parallel whenever their inputs do not conflict.
-4. Resolve model routing for each role before delegation. Run `node .opencode/routing/resolve-model-routing.mjs --metadata-json '{"command":"/delegate-<role>"}'` and include the resolved decision in delegation context. With the committed force-local setting false, local catalog selections are advisory and are not native agent configuration. Lifecycle hooks provide telemetry only.
+4. Resolve model routing for each role before delegation. Run the resolver at `$OPENCODE_HARNESS_RUNTIME_ROOT/routing/resolve-model-routing.mjs` in external-runtime mode, or `node .opencode/routing/resolve-model-routing.mjs` in portable mode, with `--metadata-json '{"command":"/delegate-<role>"}'`, and include the resolved decision in delegation context. With force-local false, catalog selections are advisory and are not native agent configuration. Lifecycle hooks provide telemetry only.
 5. Require research before planning so plans are grounded in accurate and sourced information.
 6. Require planning for non-trivial workflows and validation before acceptance.
 7. Spawn as many role instances as the DAG requires. Role names stay fixed, but instances are repeatable:

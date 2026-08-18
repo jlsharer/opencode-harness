@@ -22,7 +22,10 @@
       "properties": {
         "inputsReceived": { "type": "string" },
         "requiredContextPresent": { "type": "string" },
-        "routingMetadataStatus": { "type": "string", "enum": ["present", "absent"] }
+        "routingMetadataStatus": { "type": "string", "enum": ["present", "absent"] },
+        "workspaceRoot": { "type": "string", "minLength": 1 },
+        "runtimeRoot": { "type": "string", "minLength": 1 },
+        "traceRoot": { "type": "string", "minLength": 1 }
       }
     },
     "workPerformed": {

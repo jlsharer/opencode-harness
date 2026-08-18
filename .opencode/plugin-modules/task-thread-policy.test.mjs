@@ -38,6 +38,7 @@ test('fresh packets exactly carry every role input contract', () => {
   assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'missing', args: freshArgs({ prompt: fresh('implementer', { orchestrationId: undefined }) }) }), /role packet|invalid orchestrationId/);
   assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'extra', args: freshArgs({ prompt: fresh('implementer', { ambiguousExtra: 'no' }) }) }), /role packet/);
   assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'routing', args: freshArgs({ prompt: fresh('implementer', { routingMetadataStatus: 'invented' }) }) }), /routingMetadataStatus/);
+  createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'external-roots', args: freshArgs({ prompt: fresh('implementer', { workspaceRoot: '/workspace', runtimeRoot: '/runtime', traceRoot: '/trace' }) }) });
 });
 
 test('fresh dispatch requires a valid envelope and omission of task_id', () => {

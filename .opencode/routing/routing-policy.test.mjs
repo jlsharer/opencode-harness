@@ -14,7 +14,7 @@ import {
   validateNativeProviderCoherence,
 } from './routing-policy.mjs';
 import { resolveModelForRole } from './model-routing-helper.mjs';
-import { loadRoutingConfigSelection, selectImplicitRoutingConfig } from './routing-config-loader.mjs';
+import { loadRoutingConfigSelection, mergeExternalRoutingDocuments, selectImplicitRoutingConfig } from './routing-config-loader.mjs';
 import { loadRoutingConfig, parseArgs } from './resolve-model-routing.mjs';
 import { applyHarnessRoleModelOverrides, resolveHarnessRoutingPath } from '../plugin-modules/role-model-routing-enforcement.js';
 
@@ -26,6 +26,19 @@ const localCommitted = JSON.parse(fs.readFileSync(LOCAL_EXAMPLE_PATH, 'utf8'));
 const clone = (value) => JSON.parse(JSON.stringify(value));
 const neutralRouting = () => clone(committed.harnessModelRouting);
 const routing = () => clone(localCommitted.harnessModelRouting);
+function externalPair() {
+  const profile = neutralRouting();
+  const models = {
+    'ai-infra-research': { model: 'ai-infra-research/research-model', routingServiceUrl: 'http://127.0.0.1:8080/v1', maxInFlight: 1 },
+    'ai-infra-coder': { model: 'ai-infra-coder/coder-model', routingServiceUrl: 'http://127.0.0.1:8081/v1', maxInFlight: 2 },
+  };
+  delete profile.localRouting.models;
+  profile.localRouting.enabled = true;
+  profile.localRouting.forceLocalForHarnessSubagents = false;
+  profile.localRouting.defaultLocalModel = 'ai-infra-coder';
+  for (const [role, value] of Object.entries(profile.roleOverrides)) value.localModel = role === 'researcher' ? 'ai-infra-research' : 'ai-infra-coder';
+  return { catalog: { schemaVersion: '1.0.0', models }, profile };
+}
 const execFileAsync = promisify(execFile);
 
 function deepFreeze(value) {
@@ -98,6 +111,38 @@ test('separate local example is a valid enabled advisory fixture', () => {
   assert.equal(normalized.localRouting.forceLocalForHarnessSubagents, false);
   assert.equal(normalized.localRouting.defaultLocalModel, 'qwen-coder');
   assert.equal(Object.keys(normalized.localRouting.models).length, 2);
+});
+
+test('external catalog and profile merge deterministically without mutating inputs', () => {
+  const fixture = externalPair();
+  const catalog = deepFreeze(fixture.catalog);
+  const profile = fixture.profile;
+  deepFreeze(profile);
+  const merged = mergeExternalRoutingDocuments(catalog, profile);
+  const normalized = normalizeAndValidateRoutingConfig(merged);
+  assert.deepEqual(normalized.localRouting.models, catalog.models);
+  assert.equal(normalized.localRouting.forceLocalForHarnessSubagents, false);
+  assert.equal(Object.hasOwn(profile.localRouting, 'models'), false);
+});
+
+test('external profile rejects embedded models, force mode, provider fields, and unknown references', () => {
+  const { catalog, profile } = externalPair();
+  assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, provider: {} }), /provider is forbidden/);
+  assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, localRouting: { ...profile.localRouting, models: {} } }), /models is forbidden/);
+  assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, localRouting: { ...profile.localRouting, forceLocalForHarnessSubagents: true } }), /must be false/);
+  const unknown = clone(profile);
+  unknown.localRouting.defaultLocalModel = 'missing';
+  assert.throws(() => normalizeAndValidateRoutingConfig(mergeExternalRoutingDocuments(catalog, unknown)), /must reference/);
+});
+
+test('external catalog rejects non-ai-infra keys, prefix mismatch, non-loopback URLs, bad ports, and budget overflow', () => {
+  const { catalog, profile } = externalPair();
+  const mutate = (fn) => { const value = clone(catalog); fn(value); return value; };
+  assert.throws(() => mergeExternalRoutingDocuments(mutate((value) => { value.models.bad = value.models['ai-infra-coder']; delete value.models['ai-infra-coder']; }), profile), /invalid key/);
+  assert.throws(() => mergeExternalRoutingDocuments(mutate((value) => { value.models['ai-infra-coder'].model = 'ai-infra-other/model'; }), profile), /provider prefix/);
+  assert.throws(() => mergeExternalRoutingDocuments(mutate((value) => { value.models['ai-infra-coder'].routingServiceUrl = 'http://localhost:8081/v1'; }), profile), /loopback/);
+  assert.throws(() => mergeExternalRoutingDocuments(mutate((value) => { value.models['ai-infra-coder'].routingServiceUrl = 'http://127.0.0.1:65536/v1'; }), profile), /invalid|range/);
+  assert.throws(() => mergeExternalRoutingDocuments(mutate((value) => { value.models['ai-infra-coder'].maxInFlight = 2147483648; }), profile), /out of range/);
 });
 
 test('neutral routing resolves fixed command and variant without local identity', () => {

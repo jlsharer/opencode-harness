@@ -2,6 +2,8 @@
 
 Use this workflow with `.opencode/skills/delegation-orchestrator/SKILL.md` when work spans design interpretation, implementation, integration, validation, review, synthesis, or artifact proof.
 
+Path contract: external-runtime mode reads harness assets beneath `OPENCODE_HARNESS_RUNTIME_ROOT`, operates on `OPENCODE_HARNESS_WORKSPACE_ROOT`, and writes `.memory` beneath `OPENCODE_HARNESS_TRACE_ROOT`. Portable mode uses the project-relative paths below.
+
 Use `/delegate-orchestration` for parent orchestration across complete workflows. It is orchestrator-owned, omits command `agent` frontmatter, and coordinates repeatable role instances rather than routing to a single subagent.
 
 ## Boundaries

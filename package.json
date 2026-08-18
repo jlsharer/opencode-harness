@@ -1,0 +1,47 @@
+{
+  "name": "opencode-harness-runtime",
+  "version": "0.1.8",
+  "description": "No-copy external runtime launcher for the OpenCode delegation harness",
+  "type": "module",
+  "private": false,
+  "bin": {
+    "opencode-harness": "bin/opencode-harness.mjs"
+  },
+  "files": [
+    "README.md",
+    "bin/opencode-harness.mjs",
+    ".opencode/runtime.manifest.json",
+    ".opencode/agents",
+    ".opencode/agents/researcher.md",
+    ".opencode/commands/delegate-*.md",
+    ".opencode/skills/delegation-orchestrator/SKILL.md",
+    ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
+    ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
+    ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
+    ".opencode/workflows/delegation-workflow.md",
+    ".opencode/workflows/validation-workflow.md",
+    ".opencode/contracts",
+    ".opencode/schemas",
+    ".opencode/routing/harness-model-routing.example.json",
+    ".opencode/routing/harness-model-routing.local.example.json",
+    ".opencode/routing/model-routing-helper.mjs",
+    ".opencode/routing/resolve-model-routing.mjs",
+    ".opencode/routing/routing-config-loader.mjs",
+    ".opencode/routing/routing-policy.mjs",
+    ".opencode/plugins",
+    ".opencode/plugin-modules/harness-lifecycle.js",
+    ".opencode/plugin-modules/task-thread-policy.js",
+    ".opencode/plugin-modules/role-model-routing-enforcement.js",
+    ".opencode/plugin-modules/trace-root-permissions.js",
+    ".opencode/bootstrap/memory/INDEX.md",
+    ".opencode/bootstrap/memory/protocols/memory-management.md",
+    ".opencode/bootstrap/memory/templates/orchestration-index.md",
+    ".opencode/bootstrap/memory/templates/role-trace-artifact.md"
+  ],
+  "os": [
+    "linux"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  }
+}

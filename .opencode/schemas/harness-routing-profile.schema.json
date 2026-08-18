@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencode-harness.local/schemas/harness-routing-profile.schema.json",
+  "title": "OpenCode Harness Advisory Routing Profile",
+  "type": "object",
+  "required": ["schemaVersion", "defaultMode", "defaultModel", "singleModel", "localRouting", "roleOverrides", "commandOverrides", "orchestratorCommands", "complexityTiers"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": { "const": "2.0.0" },
+    "defaultMode": { "type": "string", "minLength": 1 },
+    "defaultModel": { "$ref": "harness-model-routing.schema.json#/$defs/nullableModel" },
+    "singleModel": {
+      "type": "object",
+      "required": ["enabled", "model"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "model": { "$ref": "harness-model-routing.schema.json#/$defs/nullableModel" }
+      }
+    },
+    "localRouting": {
+      "type": "object",
+      "required": ["enabled", "forceLocalForHarnessSubagents", "defaultLocalModel"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "forceLocalForHarnessSubagents": { "const": false },
+        "defaultLocalModel": { "$ref": "harness-model-routing.schema.json#/$defs/nullableString" }
+      }
+    },
+    "roleOverrides": {
+      "type": "object",
+      "required": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"],
+      "additionalProperties": false,
+      "properties": {
+        "researcher": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "planner": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "implementer": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "integrator": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "validator": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "reviewer": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "synthesizer": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
+        "artifact-verifier": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" }
+      }
+    },
+    "commandOverrides": {
+      "type": "object",
+      "propertyNames": { "pattern": "^/" },
+      "additionalProperties": { "$ref": "harness-model-routing.schema.json#/$defs/commandOverride" }
+    },
+    "orchestratorCommands": {
+      "type": "object",
+      "propertyNames": { "pattern": "^/" },
+      "additionalProperties": { "$ref": "harness-model-routing.schema.json#/$defs/routing/properties/orchestratorCommands/additionalProperties" }
+    },
+    "complexityTiers": {
+      "type": "object",
+      "additionalProperties": { "$ref": "harness-model-routing.schema.json#/$defs/modelVariant" }
+    }
+  }
+}

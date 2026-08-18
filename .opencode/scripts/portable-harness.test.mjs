@@ -65,7 +65,7 @@ test.after(async () => rm(tempParent, { recursive: true, force: true }));
 test('fresh foreign repository installs and validates without source-owned roots or history', async () => {
   const repo = await makeRepo(tempParent, 'fresh');
   const installed = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(installed.stdout, /created\/updated=47, memory-created=4, unchanged=0, collisions=0/);
+  assert.match(installed.stdout, /created\/updated=50, memory-created=4, unchanged=0, collisions=0/);
   assert.match(installed.stdout, process.platform === 'darwin' ? /write-safety=darwin-native-race-detecting/ : /write-safety=linux-descriptor-relative-race-detecting:\/proc\/self\/fd/);
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
   const validated = await runNode([validator, '--root', '.'], { cwd: repo });
@@ -78,17 +78,18 @@ test('fresh foreign repository installs and validates without source-owned roots
     'templates/orchestration-index.md',
     'templates/role-trace-artifact.md',
   ]);
-  for (const relative of ['task-thread-policy.js', 'task-thread-policy.test.mjs']) await readFile(path.join(repo, '.opencode/plugin-modules', relative), 'utf8');
+  for (const relative of ['task-thread-policy.js', 'task-thread-policy.test.mjs', 'trace-root-permissions.js', 'trace-root-permissions.test.mjs']) await readFile(path.join(repo, '.opencode/plugin-modules', relative), 'utf8');
   await runNode(['--test', path.join(repo, '.opencode/plugin-modules/task-thread-policy.test.mjs')], { cwd: repo });
+  await runNode(['--test', path.join(repo, '.opencode/plugin-modules/trace-root-permissions.test.mjs')], { cwd: repo });
 });
 
 test('bootstrap is idempotent and dry-run performs no writes', async () => {
   const repo = path.join(tempParent, 'fresh');
   const second = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=51, collisions=0/);
+  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=54, collisions=0/);
   const dryRepo = await makeRepo(tempParent, 'dry-run');
   const dry = await runNode([BOOTSTRAP, '--target', dryRepo, '--dry-run']);
-  assert.match(dry.stdout, /dry-run complete: created\/updated=47, memory-created=4/);
+  assert.match(dry.stdout, /dry-run complete: created\/updated=50, memory-created=4/);
   assert.deepEqual(await readdir(dryRepo), []);
 });
 
@@ -350,7 +351,7 @@ test('installed validator independently rejects removed inventory entries', asyn
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   await rm(path.join(repo, removed));
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
-  assert.match(await expectFailure([validator, '--root', repo]), /exact portable-core contract/);
+  assert.match(await expectFailure([validator, '--root', repo]), /exact portable-core contract|exactly 50 files/);
 });
 
 test('installed validator rejects missing task-thread policy assets and stale policy wording', async () => {
@@ -372,6 +373,19 @@ test('installed validator rejects missing task-thread policy assets and stale po
   await writeFile(protocol, staleProtocol);
   await writeFile(path.join(repo, '.opencode/bootstrap/memory/protocols/memory-management.md'), staleProtocol);
   assert.match(await expectFailure([validator, '--root', repo]), /task-thread policy wording/);
+});
+
+test('installed validator rejects missing or corrupted trace-permission assets', async () => {
+  const repo = await makeRepo(tempParent, 'trace-permission-corruption');
+  await runNode([BOOTSTRAP, '--target', repo]);
+  const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
+  const modulePath = path.join(repo, '.opencode/plugin-modules/trace-root-permissions.js');
+  await rm(modulePath);
+  assert.match(await expectFailure([validator, '--root', repo]), /missing file: \.opencode\/plugin-modules\/trace-root-permissions\.js/);
+  await runNode([BOOTSTRAP, '--target', repo, '--overwrite-managed']);
+  const testPath = path.join(repo, '.opencode/plugin-modules/trace-root-permissions.test.mjs');
+  await writeFile(testPath, 'throw new Error("corrupt trace test")\n');
+  assert.match(await expectFailure([validator, '--root', repo]), /trace-root permission tests failed/);
 });
 
 test('installed validator independently rejects a corrupted Darwin helper binary', async () => {

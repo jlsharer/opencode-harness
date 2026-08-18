@@ -21,6 +21,7 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 - Require concrete validator evidence before accepting any delegated task as complete.
 - Enforce one separately scoped delegated task per fresh child session/thread. Fresh Task calls omit the `task_id` property. Use `/delegate-orchestration`; direct `@subagent` is prohibited and the lifecycle guard rejects direct subagent-targeted `/delegate-*` role commands.
 - Permit `task_id` reuse only for one parent answer to a machine-recorded, child-originated clarification while the exact task remains unresolved. Consume authorization before execution and deny replay or reuse after restart.
+- In external-runtime mode, use `OPENCODE_HARNESS_RUNTIME_ROOT` for harness assets, `OPENCODE_HARNESS_WORKSPACE_ROOT` for workspace operations, and `OPENCODE_HARNESS_TRACE_ROOT` for `.memory` output. When absent, retain portable project-relative paths. Never bake concrete installation paths into prompts.
 - Treat lifecycle hooks and plugins as guardrails and telemetry, not acceptance proof.
 - Require an `orchestration-id`, `.memory/orchestrations/<orchestration-id>/` index, role I/O contract reference `.opencode/contracts/role-io-contracts.json`, trace schema reference `.opencode/schemas/memory-trace-artifact.schema.json`, and role trace artifact path `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md` for every delegated role output.
 
@@ -28,7 +29,7 @@ Use this skill when OpenCode harness work spans research, planning, implementati
 
 1. Classify the request into scoped work units and sub-workflows.
 2. Build a DAG of dependencies, parallelizable branches, required role instances, and acceptance gates.
-3. Resolve model routing for each role instance before delegation. Run `node .opencode/routing/resolve-model-routing.mjs --metadata-json '{"command":"/delegate-<role>"}'` to get the deterministic decision. Include the resolved role/model/variant/source in delegation context. Outside force mode, local catalog choices are advisory rather than native agent assignments.
+3. Resolve model routing for each role instance before delegation. Use `$OPENCODE_HARNESS_RUNTIME_ROOT/routing/resolve-model-routing.mjs` in external mode or `.opencode/routing/resolve-model-routing.mjs` in portable mode with `--metadata-json '{"command":"/delegate-<role>"}'`. Include the resolved role/model/variant/source in delegation context. Outside force mode, local catalog choices are advisory rather than native agent assignments.
 4. Delegate research before planning, then delegate each remaining category to the matching OpenCode subagent instance.
 5. Pass full context, constraints, allowed paths, artifact expectations, verification commands, orchestration memory paths, role I/O contracts, trace schema, resolved model metadata, and caller-supplied routing metadata.
 6. Inspect returned evidence for completeness.
@@ -49,6 +50,7 @@ Every fresh delegated packet requires a nonempty `orchestrationId`, `delegationT
 
 - The committed routing example is neutral: local routing and force mode are disabled, so it makes no local-model selection or native agent mutation.
 - The explicit enabled-local example is an operator starting point only. Implicit loading still selects a present custom file first, otherwise the neutral example, never merges files, and fails closed when a present custom file is unreadable, malformed, or invalid.
+- Launcher-provided endpoint catalog and advisory profile paths are an explicit all-or-none exception: the runtime validates both closed documents and injects catalog models into the profile without modifying either input. Profiles cannot contain provider options, credentials, model catalogs, or force-local policy.
 - Outside force mode, enabled local catalog choices are advisory. Provider ids, model aliases, endpoints, and capacities are illustrative, not installed-model claims.
 - Native OpenCode provider transport remains in approved external merged config. Harness policy never creates providers, baseURLs, credentials, or model maps and must not be copied into `opencode.json`.
 - When deliberately enabled, force mode statically configures exactly the eight fixed harness subagents during startup. Complete native coherence is checked atomically; any missing or mismatched agent/provider/model/baseURL rejects startup without partial mutation or cloud fallback.

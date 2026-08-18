@@ -1,5 +1,7 @@
 # OpenCode Harness Validation Workflow
 
+In external-runtime mode validate the prepared root, workspace root, and trace root independently from their launcher-set environment variables. In portable mode retain project-relative validation. Fixture evidence must not be reported as real provider activation.
+
 Use this workflow before accepting an installed portable OpenCode harness.
 
 ## Required Checks

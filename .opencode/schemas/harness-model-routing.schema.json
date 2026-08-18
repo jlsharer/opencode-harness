@@ -53,16 +53,7 @@
         "variant": { "$ref": "#/$defs/nullableString" }
       }
     },
-    "catalogEntry": {
-      "type": "object",
-      "required": ["model", "routingServiceUrl", "maxInFlight"],
-      "additionalProperties": false,
-      "properties": {
-        "model": { "$ref": "#/$defs/model" },
-        "routingServiceUrl": { "type": "string", "format": "uri", "pattern": "^https?://" },
-        "maxInFlight": { "type": "integer", "minimum": 1 }
-      }
-    },
+    "catalogEntry": { "$ref": "harness-endpoint-catalog.schema.json#/$defs/catalogEntry" },
     "routing": {
       "type": "object",
       "required": ["schemaVersion", "defaultMode", "defaultModel", "singleModel", "localRouting", "roleOverrides", "commandOverrides", "orchestratorCommands", "complexityTiers"],

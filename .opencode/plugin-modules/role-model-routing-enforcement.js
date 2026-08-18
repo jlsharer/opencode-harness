@@ -13,9 +13,17 @@ function projectPathFromContext(options) {
     .find((candidate) => typeof candidate === 'string' && candidate.trim() !== '');
 }
 
+function runtimeRoot() {
+  const value = process.env.OPENCODE_HARNESS_RUNTIME_ROOT;
+  return typeof value === 'string' && value.trim() !== '' ? path.resolve(value) : null;
+}
+
 export function resolveHarnessRoutingPath(options = {}) {
   if (options.routingPath !== undefined) return path.resolve(options.routingPath);
-  return selectImplicitRoutingConfig({ startPath: projectPathFromContext(options) }).path;
+  const runtime = runtimeRoot();
+  return selectImplicitRoutingConfig(runtime
+    ? { fallbackDirectory: path.join(runtime, 'routing') }
+    : { startPath: projectPathFromContext(options) }).path;
 }
 
 export function applyHarnessRoleModelOverrides(cfg, options = {}) {
@@ -23,10 +31,9 @@ export function applyHarnessRoleModelOverrides(cfg, options = {}) {
   try {
     const document = options.routingDocument !== undefined
       ? options.routingDocument
-      : loadRoutingConfigSelection({
-        configPath: options.routingPath,
-        startPath: projectPathFromContext(options),
-      }).document;
+      : loadRoutingConfigSelection(runtimeRoot()
+        ? { configPath: options.routingPath, fallbackDirectory: path.join(runtimeRoot(), 'routing') }
+        : { configPath: options.routingPath, startPath: projectPathFromContext(options) }).document;
     plan = resolveAllHarnessRoleAssignments(document);
     // Outside force mode the shared plan intentionally contains only non-null
     // native roleOverrides models. Local selectors, singleModel, and defaultModel

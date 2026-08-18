@@ -1,9 +1,18 @@
 import { HarnessLifecyclePlugin } from '../plugin-modules/harness-lifecycle.js';
 import { HarnessRoleModelRoutingEnforcementPlugin } from '../plugin-modules/role-model-routing-enforcement.js';
+import { TraceRootPermissionsPlugin } from '../plugin-modules/trace-root-permissions.js';
 
 export default async function HarnessPlugin(context) {
+  const lifecycle = await HarnessLifecyclePlugin(context);
+  const routing = await HarnessRoleModelRoutingEnforcementPlugin(context);
+  const tracePermissions = await TraceRootPermissionsPlugin(context);
   return {
-    ...(await HarnessLifecyclePlugin(context)),
-    ...(await HarnessRoleModelRoutingEnforcementPlugin(context)),
+    ...lifecycle,
+    ...routing,
+    ...tracePermissions,
+    config: async (cfg) => {
+      await routing.config?.(cfg);
+      await tracePermissions.config?.(cfg);
+    },
   };
 }
