@@ -4,22 +4,20 @@
 
 This source-only document defines a standalone OpenCode projection of the Universal Agentic Harness and its release process. `.opencode/harness.manifest.json` inventories the complete source/release surface, including source roots and optional assets. The narrower installable surface is the `portable-core` profile in `.opencode/portable.manifest.json`; portable files do not depend on this document or other source-only roots.
 
-The harness preserves these eight role names exactly:
+The harness preserves exactly four active role names:
 
 - `researcher`
 - `planner`
 - `implementer`
-- `integrator`
 - `validator`
-- `reviewer`
-- `synthesizer`
-- `artifact-verifier`
 
-The baseline projection covers role agents, command prompts, delegation and validation workflows, a harness-owned model routing resolver, lifecycle guardrails, and validation tooling. It does not define provider credentials, durable task state, external routing services, or canonical durable orchestration ledgers. Its task-thread guard retains only process-local, non-durable authorization state and fails closed after restart.
+Specialized behavior is expressed by explicit bounded packet modes: researcher `research`; planner `plan|synthesis`; implementer `implementation|integration`; validator `validation|review|artifact-proof|integration-check`.
+
+The baseline projection covers role agents, command prompts, the authoritative `delegation-orchestrator` skill, explicit validator task modes, a harness-owned model routing resolver, lifecycle guardrails, and validation tooling. It does not define provider credentials, durable task state, external routing services, or canonical durable orchestration ledgers. Its task-thread guard retains only process-local, non-durable authorization state and fails closed after restart.
 
 ## Packaged External Runtime
 
-The root package (`opencode-harness-runtime` 0.1.8) adds a no-copy launch mode for Linux, Node `>=24 <25`, and exact OpenCode 1.18.18. `prepare` copies only `.opencode/runtime.manifest.json` mappings from the immutable package into `${XDG_CACHE_HOME:-$HOME/.cache}/opencode-harness/0.1.8/opencode-1.18.18/runtime`. The concrete runtime is owner-only, managed files are byte-verified, and only OpenCode's declared package support files may be added. Existing collisions, symlinks, unsafe modes/ownership, and managed drift fail rather than being repaired. Prior version directories, including 0.1.7, are retained unchanged for rollback and are never repaired or selected as 0.1.8.
+The root package (`opencode-harness-runtime` 0.1.9) adds a no-copy launch mode for Linux, Node `>=24 <25`, and exact OpenCode 1.18.18. `prepare` copies only `.opencode/runtime.manifest.json` mappings from the immutable package into `${XDG_CACHE_HOME:-$HOME/.cache}/opencode-harness/0.1.9/opencode-1.18.18/runtime`. The concrete runtime is owner-only, managed files are byte-verified, and only OpenCode's declared package support files may be added. Existing collisions, symlinks, unsafe modes/ownership, and managed drift fail rather than being repaired. Prior version directories, including 0.1.8, are retained unchanged for rollback and are never repaired or selected as 0.1.9.
 
 `run` requires an absolute canonical Git worktree root. It sets `OPENCODE_CONFIG_DIR` and `OPENCODE_HARNESS_RUNTIME_ROOT` to the prepared mutable runtime, `OPENCODE_HARNESS_WORKSPACE_ROOT` to the foreign worktree, `OPENCODE_DB` to a unique absolute path in an owner-only per-launch snapshot, and passes `XDG_DATA_HOME` through unchanged. The database, WAL, and SHM paths are independently absent when the child starts. `OPENCODE_HARNESS_TRACE_ROOT` points to either an explicit safe root, an already-ignored workspace `.memory`, or owner-only XDG state keyed by the canonical workspace. It never creates a workspace `.opencode`, edits `.gitignore`, reads auth data, installs globally, or changes user config. Pre-set activation variables, including ambient `OPENCODE_DB`, project harness-name collisions, routing shadows, unsafe roots, and unacknowledged project plugins fail before OpenCode spawn. The launcher records canonical path plus device/inode identities for the snapshots parent and launch directory at creation and accepts only owner-mode-0600 database, WAL, and SHM companions at its exact launch paths. Before any post-child inventory or `readdir`, and again before destructive cleanup, it revalidates parent and launch identities, owner/mode, immediate-child containment, canonical paths, and root exclusions. It then atomically renames the launch directory to a random quarantine name in the same verified parent, requires unchanged parent identity and matching launch/quarantine device/inode, and only then recursively unlinks entries using `lstat` without following symlinks. Successful cleanup explicitly revalidates parent identity and quarantine-path absence. Any guard, rename, post-check, or unlink failure preserves the original child/inventory rejection as the primary message and appends cleanup failure detail; pre-rename mismatch reports an exact absolute retained launch path, while renamed retained quarantine is reported by exact absolute path. Identity or containment mismatch causes no deletion attempt. Node lacks descriptor-relative recursive unlink primitives, so same-UID replacement between nested path operations remains a documented race limit. `OPENCODE_CONFIG` provider fragments still precede project config, so project provider declarations are refused rather than described as overridden.
 
@@ -29,7 +27,7 @@ The runtime tree is recursively closed. Every manifest-managed file and intermed
 
 Generated `package.json`, `package-lock.json`, and `node_modules` are accepted only as a complete set. The root package's sole production dependency, the lock root, the installed plugin package, and its lock entry must all bind exactly to `@opencode-ai/plugin` 1.18.18, and the outer lock must use lockfile version 3. Alternate direct dependency sections, conflicting bin providers, malformed metadata, lock link entries, wrong link names/text, and package-version mismatches fail without repair. Validation is dependency-free and needs neither network access nor a reference installation. It establishes a narrow structural and metadata relationship only: it does not authenticate installed bytes, registry responses, or package artifacts. The launcher reads managed and metadata leaves with `O_NOFOLLOW` where Linux exposes it and checks identities before/after validation. Node does not provide a complete descriptor-relative `openat` traversal API, so these controls target accidental or other-UID drift and are not advertised as protection against a malicious process with the same UID, a compromised registry, or a compromised package artifact.
 
-Each selected trace root is recursively owner-only and seeded, without overwrite, from immutable `runtimeRoot/bootstrap/memory` protocol/index/template files. External prompts read immutable contracts and protocol from runtimeRoot and write only generated indexes/traces beneath traceRoot; portable mode retains project-relative behavior. Unsafe ignored project memory falls back to XDG state, while an unsafe explicit trace root fails. For an external root, the separate trace-permission config hook independently revalidates canonical owner-only roots and appends eight role-specific absolute `external_directory` rules plus six role-specific workspace-relative Markdown-only edit rules. Implementer and integrator edit objects are unchanged. Workspace `.memory` is an exact no-op fallback. Because OpenCode 1.18.18 swallows config-hook errors, the launcher first runs `agent list` under a distinct owner-only launch database and requires an exclusive mode-0600 marker containing the exact permission-plan digest; mismatch stops before the requested process. This lexical permission boundary does not prevent malicious same-UID replacement, and the marker is an activation guardrail rather than acceptance proof.
+Each selected trace root is recursively owner-only and seeded, without overwrite, from immutable `runtimeRoot/bootstrap/memory` protocol/index/template files. External prompts read immutable contracts and protocol from runtimeRoot and write only generated indexes/traces beneath traceRoot; portable mode retains project-relative behavior. Unsafe ignored project memory falls back to XDG state, while an unsafe explicit trace root fails. For an external root, the separate trace-permission config hook independently revalidates canonical owner-only roots and appends four role-specific absolute `external_directory` rules plus three role-specific workspace-relative Markdown-only edit rules. The implementer edit object is unchanged. Workspace `.memory` is an exact no-op fallback. Because OpenCode 1.18.18 swallows config-hook errors, the launcher first runs `agent list` under a distinct owner-only launch database and requires an exclusive mode-0600 marker containing the exact permission-plan digest; mismatch stops before the requested process. This lexical permission boundary does not prevent malicious same-UID replacement, and the marker is an activation guardrail rather than acceptance proof.
 
 Before spawn, root and project `.opencode` JSON/JSONC files are bounded and parsed. JSONC support is deliberately limited to quoted-string-aware line comments, block comments, and trailing commas, followed by `JSON.parse`; malformed or ambiguous input fails closed. Agent, command, delegation skill, routing shadow, and harness plugin collisions are rejected. Config-declared and recursively discovered project plugins require `--allow-project-plugins`, which is acknowledgment of same-user code execution rather than isolation.
 
@@ -53,8 +51,8 @@ The OpenCode harness owns these files:
 - Role agents: `.opencode/agents/*.md`.
 - Commands: `.opencode/commands/delegate-*.md`, including the central orchestrator-owned `.opencode/commands/delegate-orchestration.md`.
 - Skills and references: `.opencode/skills/delegation-orchestrator/SKILL.md` and `.opencode/skills/delegation-orchestrator/references/*.md`.
-- Workflows: `.opencode/workflows/delegation-workflow.md` and `.opencode/workflows/validation-workflow.md`.
-- Role contracts and schemas: `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/role-io-contracts.schema.json`, `.opencode/schemas/memory-trace-artifact.schema.json`, and `.opencode/schemas/harness-model-routing.schema.json`.
+- Authoritative delegation protocol: `.opencode/skills/delegation-orchestrator/SKILL.md`; redundant workflow documents are intentionally absent.
+- Role contracts and schemas: `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/role-io-contracts.schema.json`, `.opencode/schemas/memory-trace-artifact.schema.json`, `.opencode/schemas/orchestration-input.schema.json`, and `.opencode/schemas/harness-model-routing.schema.json`.
 - Harness routing: committed `.opencode/routing/harness-model-routing.example.json`, optional ignored operator override `.opencode/routing/harness-model-routing.json`, shared loader `.opencode/routing/routing-config-loader.mjs`, the pure `.opencode/routing/routing-policy.mjs`, its dependency-free tests, and thin CLI/helper entry points.
 - Local deployment examples: `.opencode/deployments/llama-server/`, containing a reusable Compose service, tracked sanitized env templates, and operator guidance. Private `instances/*.env` copies are not harness artifacts.
 - Lifecycle plugin adapter and guardrails: `.opencode/plugins/index.js` as the only auto-loaded plugin entry point, with segmented guardrail modules under `.opencode/plugin-modules/`.
@@ -62,7 +60,7 @@ The OpenCode harness owns these files:
 - Portable distribution: `.opencode/portable.manifest.json`, dependency-free bootstrap and portable validation/E2E scripts under `.opencode/scripts/`, and canonical fresh-memory seeds under `.opencode/bootstrap/memory/`.
 - Darwin portable publication: audited `.opencode/bootstrap/native/darwin-portable-fs.c` and its checked-in universal helper are portable-managed runtime assets; the reproducible build and focused native test scripts remain source/release-only.
 
-The source manifest and validator are release-QA mechanisms, not portable dependencies. The source inventory also includes optional/source-only deployment guidance, the `implement-feature` command/workflow, maintainer meta-skills, root guidance/configuration, static reference memory, and history. None is promoted merely because it is source-owned.
+The source manifest and validator are release-QA mechanisms, not portable dependencies. The source inventory also includes optional/source-only deployment guidance, maintainer meta-skills, root guidance/configuration, static reference memory, and history. None is promoted merely because it is source-owned.
 
 The portable manifest is the closed installation contract. Bootstrap copies only its managed `.opencode` files, seeds only missing minimal `.memory` files, never copies orchestration history, and does not create or merge destination `AGENTS.md`, this design document, `opencode.json`, or root `.gitignore`. Managed-file collisions fail unless overwrite is explicit; destination memory is never overwritten.
 
@@ -106,14 +104,10 @@ Role prompt bodies must preserve boundaries:
 
 - `researcher`: source-backed evidence and citations; no implementation or acceptance decisions.
 - `planner`: task sequencing, file contracts, and acceptance gates; no file edits.
-- `implementer`: exact scoped file creation or modification; no broad planning, integration, or final validation.
-- `integrator`: cross-artifact consistency and path coherence; no hidden scope expansion.
-- `validator`: parse, file, schema, command, and acceptance evidence; no implementation fixes.
-- `reviewer`: code-review findings ordered by severity; no rewrites unless separately assigned.
-- `synthesizer`: conflict resolution and recommendation consolidation; no source-free invention.
-- `artifact-verifier`: generated artifact proof, temp-directory checks, and render/parse evidence where applicable.
+- `implementer`: `implementation` for scoped changes or `integration` for assigned stitching; no planning or final validation.
+- `validator`: independent `validation`, adversarial `review`, reproducible `artifact-proof`, or `integration-check`; no implementation fixes.
 
-Each role must also follow `.opencode/contracts/role-io-contracts.json`. The catalog defines required inputs, required outputs, trace artifact path templates, and verification expectations for all eight roles. Trace artifacts are shaped by `.opencode/schemas/memory-trace-artifact.schema.json` and indexed from `.memory/orchestrations/<orchestration-id>/INDEX.md`.
+Each role must also follow `.opencode/contracts/role-io-contracts.json`. The catalog defines task modes, required inputs, required outputs, trace artifact path templates, and verification expectations for all four roles. Trace artifacts are shaped by `.opencode/schemas/memory-trace-artifact.schema.json` and indexed from `.memory/orchestrations/<orchestration-id>/INDEX.md`.
 
 ## Delegation Protocol
 
@@ -121,12 +115,12 @@ The harness uses delegation-only orchestration. Parent orchestration coordinates
 
 The workflow is:
 
-1. Classify the request into research, planning, implementation, integration, validation, review, synthesis, or artifact verification work.
-2. Dispatch each work category to the matching role.
+1. Validate the complete explicit request against `.opencode/schemas/orchestration-input.schema.json` without inference.
+2. Classify each work unit into one of the four roles and an allowed explicit task mode.
 3. Pass complete task context, allowed paths, file contracts, verification gates, `orchestration-id`, memory root, role contract catalog, trace schema, trace artifact requirement, and any caller-supplied routing metadata.
 4. Inspect role outputs for required evidence and trace artifact references.
 5. When evidence is incomplete, create a fresh remediation role task and child thread linked to the predecessor.
-6. Accept only after validator evidence, and artifact-verifier evidence when generated artifacts are involved, is present.
+6. Accept only after independent validator evidence covers every acceptance gate.
 
 Delegated prompts that originate from enriched orchestration input must preserve caller-supplied labels exactly:
 
@@ -142,26 +136,24 @@ If those labels are absent from the original request, the OpenCode harness does 
 
 ## Commands, Skills, and Workflows
 
-`/delegate-orchestration` is the parent orchestration command for arbitrary workflows. It is orchestrator-owned, so it intentionally omits `agent` frontmatter and sets `subtask: false`. It decomposes the requested workflow into a DAG of scoped work units and sub-workflows, runs independent role instances in parallel whenever dependencies allow, requires research before planning, and requires validation before acceptance.
+`/delegate-orchestration` is a thin orchestrator-owned `$ARGUMENTS` wrapper around the sole authoritative protocol in `.opencode/skills/delegation-orchestrator/SKILL.md`. It rejects incomplete input. When invoked, the parent delegates and synthesizes only. Local-model DAG execution is serial by default; parallelism requires explicit authorization or recorded distinct-capacity evidence.
 
-Role names are fixed, but role instances are repeatable. A workflow can use many `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, or `artifact-verifier` instances as long as each instance has a scoped artifact ID and trace artifact under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
+Role names are fixed, but bounded role instances are repeatable within declared agent budgets. Every instance has an explicit task mode, scoped artifact ID, and trace artifact under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
 
-Remediation is capped at 3 loops per scoped work unit. After the third failed loop, the orchestrator delegates blocker synthesis and asks the user for direction.
+Remediation defaults to one cycle per scoped work unit and never exceeds the declared loop budget. Exhaustion stops the unit unless its explicit scope-expansion policy authorizes escalation.
 
 Managed orchestration enforces one separately scoped delegated task per fresh child session/thread. Every new role task has a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; Task calls omit the `task_id` property. The sole reuse is one `clarification-response` to a recorded child-originated request while the exact task remains unresolved. New deliverables, changed scope or role, retries, remediation, corrections, follow-ups, terminal work, replay, and post-restart responses start fresh. `/delegate-orchestration` is the managed surface; direct `@subagent` dispatch is prohibited and the lifecycle guard rejects direct subagent-targeted role commands.
 
-OpenCode command files are thin wrappers around role-specific prompts:
+Four direct role commands remain only as fail-closed compatibility entry points. Their frontmatter names the role, but lifecycle policy rejects them and directs operators to the complete orchestration-input surface:
 
-- `/delegate-research` routes to `researcher`.
-- `/delegate-plan` routes to `planner`.
-- `/delegate-implement` routes to `implementer`.
-- `/delegate-integrate` routes to `integrator`.
-- `/delegate-validate` routes to `validator`.
-- `/delegate-artifact-verify` routes to `artifact-verifier`.
+- `/delegate-research` identifies `researcher`.
+- `/delegate-plan` identifies `planner`.
+- `/delegate-implement` identifies `implementer`.
+- `/delegate-validate` identifies `validator`.
 
 Role-specific command frontmatter uses `description` and `agent` only. The central `/delegate-orchestration` command omits `agent` so it belongs to the current parent orchestrator rather than a subagent role. Model selection is omitted from command frontmatter so the harness-owned resolver can decide model routing before dispatch without mixing non-native routing policy into command definitions.
 
-The reusable delegation rules live in `.opencode/skills/delegation-orchestrator/SKILL.md`. Longer routing, validation, and trust/restart guidance lives under its `references/` directory. Workflow files under `.opencode/workflows/` define the design-to-implementation and acceptance-validation gates.
+The reusable delegation rules live only in `.opencode/skills/delegation-orchestrator/SKILL.md`. Routing, validation, and trust/restart references are subordinate aids and do not duplicate the protocol. No redundant delegation, implementation, or validation workflow documents are retained.
 
 ## Model Routing
 
@@ -173,7 +165,7 @@ The committed neutral example is the deterministic default and validation input:
 
 When local routing is disabled, catalog and selector data is inert and resolution emits no local identity, URL, or budget. A coherent dormant catalog remains valid, while an enabled configuration requires a nonempty coherent catalog. In an enabled advisory configuration, model precedence is explicit request, orchestrator command, command, role local selector, role native override, complexity, enabled single model, then default model. Catalog metadata and local selectors remain resolver-only advisory choices outside force mode and do not mutate native agents. Non-null native role overrides are different: outside force mode the startup config hook applies those selected overrides only after their agent/provider/model relationships pass coherence preflight. The resolver itself makes no network calls and does not prove native enforcement.
 
-Force mode applies only to the exact eight fixed harness roles. A role local selector precedes the catalog default, and an explicit request model becomes an exact-match constraint rather than an escape route. At startup, the async config hook computes all eight assignments and preflights every existing subagent, native provider prefix, provider model declaration when present, and catalog-backed canonical `baseURL`. Only after the complete plan passes does it set agent models. Any mismatch deliberately rejects startup with no partial agent or provider mutation and no cloud/default fallback.
+Force mode applies only to the exact four fixed harness roles. A role local selector precedes the catalog default, and an explicit request model becomes an exact-match constraint rather than an escape route. At startup, the async config hook computes all four assignments and preflights every existing subagent, native provider prefix, provider model declaration when present, and catalog-backed canonical `baseURL`. Only after the complete plan passes does it set agent models. Any mismatch deliberately rejects startup with no partial agent or provider mutation and no cloud/default fallback.
 
 Actual provider transport remains native OpenCode configuration outside committed project defaults. Approved user/global config or a non-conflicting `OPENCODE_CONFIG` can define native provider options, credentials or environment references, model maps, and `provider/model` identities. `OPENCODE_CONFIG` merges before project config and is not a final override; `OPENCODE_CONFIG_CONTENT` is merged later but must not be used to commit or expose secrets. Harness routing never creates or mutates providers, baseURLs, credentials, or model maps.
 
@@ -197,11 +189,11 @@ The checked-in env templates align with the illustrative routing identities but 
 
 Do not list `.opencode/plugins/index.js` or `.opencode/plugin-modules/harness-lifecycle.js` as local paths in `opencode.json`; the documented `plugin` array is for npm packages, while local project plugins live under `.opencode/plugins/`.
 
-Lifecycle hooks are not acceptance proof. Source acceptance uses `node .opencode/scripts/validate-harness.mjs`; installed-profile acceptance uses `node .opencode/scripts/validate-portable-harness.mjs --root .`. Validator or artifact-verifier evidence remains required.
+Lifecycle hooks are not acceptance proof. Source acceptance uses `node .opencode/scripts/validate-harness.mjs`; installed-profile acceptance uses `node .opencode/scripts/validate-portable-harness.mjs --root .`. Independent validator evidence remains required.
 
 ## Agentic Protocol Hooks
 
-The accepted agentic protocol hook design is a future harness extension for low-noise, deterministic reminders around high-value agent actions. It does not add runtime hook files in this document change. The design keeps hooks as guardrails and telemetry only; validator or artifact-verifier evidence remains the acceptance boundary.
+The accepted agentic protocol hook design is a future harness extension for low-noise, deterministic reminders around high-value agent actions. It does not add runtime hook files in this document change. The design keeps hooks as guardrails and telemetry only; independent validator evidence remains the acceptance boundary.
 
 ### Architecture and Boundaries
 
@@ -281,15 +273,15 @@ Required validation includes:
 - Static `.memory` protocol, reference, and template files exist.
 - Every `.opencode/agents/*.md` role file has YAML frontmatter with `description`, `mode: subagent`, and `permission`.
 - Every role references `.memory/protocols/memory-management.md`, `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/memory-trace-artifact.schema.json`, and the `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md` path convention.
-- The eight required role files exist exactly.
+- The four required role files exist exactly.
 - Every role-specific `.opencode/commands/*.md` command has frontmatter with `description` and `agent`, and omits `model`.
 - `.opencode/commands/delegate-orchestration.md` has frontmatter with `description`, omits `agent`, sets `subtask: false`, and documents recursive DAG orchestration.
 - `opencode.json` parses and does not contain harness-owned routing keys.
 - `opencode.json` instructions include `AGENTS.md` and `.memory/protocols/memory-management.md`, and it does not list local plugin paths.
 - `.opencode/routing/harness-model-routing.example.json` and `.opencode/schemas/harness-model-routing.schema.json` parse; the pure dependency-free normalizer provides executable semantic validation. Validation does not consume the optional ignored custom override.
-- `.opencode/contracts/role-io-contracts.json` parses and contains all eight roles.
+- `.opencode/contracts/role-io-contracts.json` parses and contains all four roles and their allowed modes.
 - `.opencode/schemas/role-io-contracts.schema.json` and `.opencode/schemas/memory-trace-artifact.schema.json` parse.
-- Routing policy tests cover strict v2 structure and semantics, deterministic non-mutating decisions, fixed-command conflict rejection, force-false advisory behavior, all-eight force assignment, native provider/model/baseURL coherence, and failure without partial or provider mutation.
+- Routing policy tests cover strict v2 structure and semantics, deterministic non-mutating decisions, fixed-command conflict rejection, force-false advisory behavior, all-four force assignment, native provider/model/baseURL coherence, and failure without partial or provider mutation.
 - CLI and helper outputs match the pure policy without network calls.
 - Native local transport remains outside committed project defaults and uses native OpenCode provider/model settings instead of harness metadata in `opencode.json`.
 - `.opencode/plugins/index.js` imports segmented modules and exports a default plugin function; segmented plugin logic remains separate and is not auto-loaded independently. Lifecycle behavior is telemetry only.

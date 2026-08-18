@@ -19,9 +19,9 @@ test('absent and exact workspace memory are no-ops', () => {
   assert.equal(applyTraceRootPermissions(value, { ...opt, traceRoot: path.join(opt.workspaceRoot, '.memory') }), null); assert.deepEqual(value, before);
 });
 
-test('eight external allows and only six trailing md edit allows are role-isolated', () => {
-  const value = cfg(); const opt = options('positive'); const implementerEdit = structuredClone(value.agent.implementer.permission.edit); const integratorEdit = structuredClone(value.agent.integrator.permission.edit);
-  const plan = applyTraceRootPermissions(value, opt); assert.equal(plan.permissions.length, 8);
+test('four external allows and only three trailing md edit allows are role-isolated', () => {
+  const value = cfg(); const opt = options('positive'); const implementerEdit = structuredClone(value.agent.implementer.permission.edit);
+  const plan = applyTraceRootPermissions(value, opt); assert.equal(plan.permissions.length, 4);
   for (const role of TRACE_PERMISSION_ROLES) {
     const external = value.agent[role].permission.external_directory; const last = Object.entries(external).at(-1);
     assert.deepEqual(last, [`${opt.traceRoot}/orchestrations/*/roles/${role}/*`, 'allow']);
@@ -32,7 +32,7 @@ test('eight external allows and only six trailing md edit allows are role-isolat
   assert.equal(matches(plannerEdit, `${path.relative(opt.workspaceRoot, opt.traceRoot)}/orchestrations/run/roles/planner/trace.md`), true);
   assert.equal(matches(plannerEdit, `${path.relative(opt.workspaceRoot, opt.traceRoot)}/orchestrations/run/roles/validator/trace.md`), false, 'sibling role denied');
   assert.equal(matches(plannerEdit, `${path.relative(opt.workspaceRoot, opt.traceRoot)}/orchestrations/run/roles/planner/trace.txt`), false, 'non-md denied');
-  assert.deepEqual(value.agent.implementer.permission.edit, implementerEdit); assert.deepEqual(value.agent.integrator.permission.edit, integratorEdit);
+  assert.deepEqual(value.agent.implementer.permission.edit, implementerEdit);
   assert.ok(!JSON.stringify(value).includes('/*.txt'));
 });
 

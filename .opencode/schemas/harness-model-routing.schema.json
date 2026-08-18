@@ -22,7 +22,7 @@
     "model": { "type": "string", "pattern": "^[^/\\s]+/[^\\s]+$" },
     "role": {
       "type": "string",
-      "enum": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"]
+      "enum": ["researcher", "planner", "implementer", "validator"]
     },
     "roleOverride": {
       "type": "object",
@@ -109,17 +109,13 @@
         },
         "roleOverrides": {
           "type": "object",
-          "required": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"],
+          "required": ["researcher", "planner", "implementer", "validator"],
           "additionalProperties": false,
           "properties": {
             "researcher": { "$ref": "#/$defs/roleOverride" },
             "planner": { "$ref": "#/$defs/roleOverride" },
             "implementer": { "$ref": "#/$defs/roleOverride" },
-            "integrator": { "$ref": "#/$defs/roleOverride" },
-            "validator": { "$ref": "#/$defs/roleOverride" },
-            "reviewer": { "$ref": "#/$defs/roleOverride" },
-            "synthesizer": { "$ref": "#/$defs/roleOverride" },
-            "artifact-verifier": { "$ref": "#/$defs/roleOverride" }
+            "validator": { "$ref": "#/$defs/roleOverride" }
           }
         },
         "commandOverrides": {

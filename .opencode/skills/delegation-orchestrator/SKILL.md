@@ -1,76 +1,60 @@
 ---
 name: delegation-orchestrator
-description: Coordinate OpenCode harness delegation, preserve caller routing metadata, and require validation evidence before acceptance.
+description: Use when an explicit orchestration specification requires bounded delegation across the four OpenCode harness roles with independent validation.
 ---
 
 # Delegation Orchestrator
 
-Use this skill when OpenCode harness work spans research, planning, implementation, integration, validation, review, synthesis, or artifact verification.
+This skill is the sole authoritative harness delegation protocol. When this skill or `/delegate-orchestration` is invoked, the parent performs delegation and evidence synthesis only: it does not research, plan, edit, integrate, review, artifact-check, or validate directly.
 
-## Non-Negotiable Constraints
+## Input Gate
 
-- Parent orchestration is delegation-only.
-- Do not perform role work directly in the parent thread.
-- Use `/delegate-orchestration` for recursive parent orchestration across full workflows.
-- Decompose workflows into a DAG of scoped work units and run independent role instances in parallel whenever dependencies allow.
-- Treat role names as fixed but role instances as repeatable; use as many scoped instances as the DAG requires.
-- Require research before planning and validation before acceptance for every workflow or sub-workflow.
-- Limit remediation to 3 loops per scoped work unit before synthesizing blockers and asking the user.
-- Preserve caller-supplied routing labels exactly when present: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`.
-- Do not invent routing metadata values when the original request does not include them.
-- Require concrete validator evidence before accepting any delegated task as complete.
-- Enforce one separately scoped delegated task per fresh child session/thread. Fresh Task calls omit the `task_id` property. Use `/delegate-orchestration`; direct `@subagent` is prohibited and the lifecycle guard rejects direct subagent-targeted `/delegate-*` role commands.
-- Permit `task_id` reuse only for one parent answer to a machine-recorded, child-originated clarification while the exact task remains unresolved. Consume authorization before execution and deny replay or reuse after restart.
-- In external-runtime mode, use `OPENCODE_HARNESS_RUNTIME_ROOT` for harness assets, `OPENCODE_HARNESS_WORKSPACE_ROOT` for workspace operations, and `OPENCODE_HARNESS_TRACE_ROOT` for `.memory` output. When absent, retain portable project-relative paths. Never bake concrete installation paths into prompts.
-- Treat lifecycle hooks and plugins as guardrails and telemetry, not acceptance proof.
-- Require an `orchestration-id`, `.memory/orchestrations/<orchestration-id>/` index, role I/O contract reference `.opencode/contracts/role-io-contracts.json`, trace schema reference `.opencode/schemas/memory-trace-artifact.schema.json`, and role trace artifact path `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md` for every delegated role output.
+1. Require one complete explicit JSON orchestration specification conforming to `.opencode/schemas/orchestration-input.schema.json`.
+2. Require explicit goal, deliverables, non-goals, scoped work units, allowed paths, acceptance gates, role/task-mode mapping, DAG dependencies and parallelization decision, loop and agent budgets, scope-expansion policy, live/Git authorization, and routing metadata status.
+3. Reject or clarify missing, ambiguous, unknown, or contradictory fields. Never infer an orchestration ID, authorization, scope, mode, budget, route, path, gate, or default work unit.
+4. Preserve caller routing labels and values exactly when `routingMetadataStatus` is `present`: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`. When status is `absent`, do not invent values.
 
-## Required Flow
+## Four Roles and Task Modes
 
-1. Classify the request into scoped work units and sub-workflows.
-2. Build a DAG of dependencies, parallelizable branches, required role instances, and acceptance gates.
-3. Resolve model routing for each role instance before delegation. Use `$OPENCODE_HARNESS_RUNTIME_ROOT/routing/resolve-model-routing.mjs` in external mode or `.opencode/routing/resolve-model-routing.mjs` in portable mode with `--metadata-json '{"command":"/delegate-<role>"}'`. Include the resolved role/model/variant/source in delegation context. Outside force mode, local catalog choices are advisory rather than native agent assignments.
-4. Delegate research before planning, then delegate each remaining category to the matching OpenCode subagent instance.
-5. Pass full context, constraints, allowed paths, artifact expectations, verification commands, orchestration memory paths, role I/O contracts, trace schema, resolved model metadata, and caller-supplied routing metadata.
-6. Inspect returned evidence for completeness.
-7. When evidence is incomplete, create a fresh remediation task/role instance with a new `delegationTaskId`, artifact ID, and child thread linked to its predecessor, up to the original scoped work unit's loop limit.
-8. Consolidate only after required validation evidence is present.
+Only these active role/mode pairs may be dispatched:
 
-## Task/Thread Decision Table
+- `researcher`: `research`
+- `planner`: `plan`, `synthesis`
+- `implementer`: `implementation`, `integration`
+- `validator`: `validation`, `review`, `artifact-proof`, `integration-check`
 
-| Parent intent | `task_id` rule |
-| --- | --- |
-| New task or deliverable, changed scope, role reassignment, follow-up, retry, remediation, post-result correction, or completed/failed/cancelled work | Start a fresh child task with `dispatchKind: fresh` and omit `task_id`. |
-| One answer to a recorded child-originated clarification while the exact task is unresolved | Reuse that child's `task_id` once with `dispatchKind: clarification-response` and the matching version-1 envelope. |
-| Missing, malformed, stale, mismatched, replayed, or post-restart authorization | Deny reuse; do not fall back to fresh creation with a supplied `task_id`. |
+Every leaf packet must name exactly one `taskMode`, one work-unit ID/scope key, and one bounded deliverable. Former specialties are modes, never role aliases. All leaf agents act only on supplied packets, deny Task delegation, and cannot load this skill.
 
-Every fresh delegated packet requires a nonempty `orchestrationId`, `delegationTaskId`, stable `scopeKey`, `dispatchKind: fresh`, `routingMetadataStatus`, and every role-specific required input. Use the exact envelope/packet grammar in `.memory/protocols/memory-management.md`; a clarification response carries only the answer and necessary context and cannot change the immutable role packet.
+## Execution Protocol
 
-## Local Model Routing Boundary
+1. Validate the complete input before creating `.memory/orchestrations/<orchestrationId>/INDEX.md` or dispatching work.
+2. Build the declared DAG. Research precedes dependent planning; planning precedes implementation; independent validator evidence precedes acceptance. Planner `synthesis` may resolve supplied pre-implementation conflicts. Implementer `integration` applies assigned stitching fixes. Validator `integration-check` independently checks them.
+3. Default local-model execution is serial with no intra-node parallelism. Parallel dispatch requires explicit input authorization or recorded evidence of distinct capacity; otherwise serialize even independent DAG nodes.
+4. Resolve routing before each dispatch using the runtime resolver and include the decision as packet context only when the role contract permits it. Routing remains subject to the documented provider boundary.
+5. Use one fresh child thread per scoped task. The exact Task envelope and clarification grammar are normative in `.memory/protocols/memory-management.md`. Fresh tasks omit `task_id`; the only reuse is an authorized matching clarification response.
+6. Require each packet to match `.opencode/contracts/role-io-contracts.json` exactly, including explicit `taskMode`, `orchestrationId`, `delegationTaskId`, `scopeKey`, `dispatchKind: fresh`, and `routingMetadataStatus`.
+7. Default to one remediation cycle per scoped work unit. Each remediation is a fresh task charged to that work unit's declared loop budget. When exhausted, stop and report the blocker or follow the explicit scope-expansion policy; do not create an endless loop.
+8. Enforce the declared total and per-role agent budgets. Do not spawn extra agents to compensate for incomplete input or weak evidence.
+9. Scope expansion requires the input's explicit policy and any required user approval. Live providers, user-global mutation, commit, amend, push, publication, or other Git mutation require matching explicit authorization.
+10. Synthesize returned evidence only after checking packet outputs and trace links. Progress artifacts and lifecycle telemetry never independently block or prove acceptance.
 
-- The committed routing example is neutral: local routing and force mode are disabled, so it makes no local-model selection or native agent mutation.
-- The explicit enabled-local example is an operator starting point only. Implicit loading still selects a present custom file first, otherwise the neutral example, never merges files, and fails closed when a present custom file is unreadable, malformed, or invalid.
-- Launcher-provided endpoint catalog and advisory profile paths are an explicit all-or-none exception: the runtime validates both closed documents and injects catalog models into the profile without modifying either input. Profiles cannot contain provider options, credentials, model catalogs, or force-local policy.
-- Outside force mode, enabled local catalog choices are advisory. Provider ids, model aliases, endpoints, and capacities are illustrative, not installed-model claims.
-- Native OpenCode provider transport remains in approved external merged config. Harness policy never creates providers, baseURLs, credentials, or model maps and must not be copied into `opencode.json`.
-- When deliberately enabled, force mode statically configures exactly the eight fixed harness subagents during startup. Complete native coherence is checked atomically; any missing or mismatched agent/provider/model/baseURL rejects startup without partial mutation or cloud fallback.
-- Endpoint `maxInFlight` values are cooperative dispatch budgets grouped by canonical URL, not enforced runtime semaphores. Measure backend slots before raising them.
-- Lifecycle hooks are telemetry/guardrails only. The pure resolver performs no network calls, and resolver output does not prove endpoint health, model identity, tool use, or capacity.
-- `OPENCODE_CONFIG` is merged before project config and is not a final override. `OPENCODE_CONFIG_CONTENT` is later, but secrets must remain outside committed or inline configuration. Quit and restart OpenCode after config or plugin changes.
+## Findings and Acceptance
 
-## Role Routing Quick Map
+- A validator remains independent from implementation and may run adversarial `review`, reproducible `artifact-proof`, or `integration-check` modes before final `validation` acceptance.
+- A finding blocks only when command-backed evidence ties it to the stated goal, an acceptance gate, or changed behavior. Unsupported preferences and trace/index progress alone do not block.
+- Hooks and plugins are guardrails/telemetry, not acceptance evidence.
+- Acceptance requires concrete validator evidence for every declared acceptance gate, honest skipped-check rationale, and a parent synthesis of outputs, limitations, and residual risks.
 
-- Research facts and compatibility evidence -> `researcher`.
-- Task sequencing and file contracts -> `planner`.
-- File creation or modification -> `implementer`.
-- Cross-artifact consistency -> `integrator`.
-- Acceptance checks -> `validator`.
-- Defect-focused review -> `reviewer`.
-- Conflict resolution -> `synthesizer`.
-- Generated artifact proof -> `artifact-verifier`.
+## Routing and Runtime Boundary
+
+- In external mode use `OPENCODE_HARNESS_RUNTIME_ROOT` for immutable assets, `OPENCODE_HARNESS_WORKSPACE_ROOT` for workspace operations, and `OPENCODE_HARNESS_TRACE_ROOT` for generated memory. Otherwise use project-relative paths.
+- The committed routing default is neutral. Local selections outside force mode are advisory. Native provider transport and credentials remain operator-owned OpenCode configuration.
+- Force-local activation covers exactly the four active roles and must preflight all assignments atomically. Endpoint `maxInFlight` values are cooperative budgets, not semaphores or proof of capacity.
+- Fully quit and restart OpenCode after config-time asset changes.
 
 ## References
 
 - `references/role-routing-matrix.md`
 - `references/validation-checklist.md`
 - `references/trust-and-restart-guide.md`
+- `references/llama-cpp-integration-guide.md`

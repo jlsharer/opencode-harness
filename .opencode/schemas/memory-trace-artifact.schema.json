@@ -9,7 +9,7 @@
     "orchestrationId": { "type": "string", "minLength": 1 },
     "role": {
       "type": "string",
-      "enum": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"]
+      "enum": ["researcher", "planner", "implementer", "validator"]
     },
     "artifactId": { "type": "string", "minLength": 1 },
     "createdAt": { "type": "string", "minLength": 1 },

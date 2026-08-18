@@ -7,15 +7,13 @@ const roleValues = {
   researcher: ['question', ['sources'], 'current', 'plan'],
   planner: ['goal', ['scope'], ['research'], ['paths'], ['criteria']],
   implementer: ['plan', ['paths'], ['scope'], ['schema'], ['preserve'], ['test']],
-  integrator: [['artifacts'], ['relations'], ['manifest'], ['workflow'], ['risks']],
   validator: [['files'], ['criteria'], ['commands'], ['schemas'], 'pass'],
-  reviewer: [['paths'], 'behavior', ['risks'], ['tests']],
-  synthesizer: [['outputs'], ['decisions'], ['assumptions']],
-  'artifact-verifier': [['artifacts'], ['tree'], ['parse'], ['temp'], ['cleanup']],
 };
 
+const taskModes = { researcher: 'research', planner: 'plan', implementer: 'implementation', validator: 'validation' };
+
 function packet(role = 'implementer', overrides = {}) {
-  const common = { orchestrationId: '2026-08-04-test', delegationTaskId: 'task-1', scopeKey: 'root', dispatchKind: 'fresh', routingMetadataStatus: 'absent' };
+  const common = { orchestrationId: '2026-08-04-test', delegationTaskId: 'task-1', scopeKey: 'root', dispatchKind: 'fresh', taskMode: taskModes[role], routingMetadataStatus: 'absent' };
   const fields = TASK_THREAD_ROLE_PACKET_FIELDS[role].required.filter((field) => !Object.hasOwn(common, field));
   return { ...common, ...Object.fromEntries(fields.map((field, index) => [field, roleValues[role][index]])), ...overrides };
 }
@@ -38,6 +36,7 @@ test('fresh packets exactly carry every role input contract', () => {
   assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'missing', args: freshArgs({ prompt: fresh('implementer', { orchestrationId: undefined }) }) }), /role packet|invalid orchestrationId/);
   assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'extra', args: freshArgs({ prompt: fresh('implementer', { ambiguousExtra: 'no' }) }) }), /role packet/);
   assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'routing', args: freshArgs({ prompt: fresh('implementer', { routingMetadataStatus: 'invented' }) }) }), /routingMetadataStatus/);
+  assert.throws(() => createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'mode', args: freshArgs({ prompt: fresh('implementer', { taskMode: 'review' }) }) }), /taskMode/);
   createTaskThreadPolicy().beforeTask({ sessionID: 'p', callID: 'external-roots', args: freshArgs({ prompt: fresh('implementer', { workspaceRoot: '/workspace', runtimeRoot: '/runtime', traceRoot: '/trace' }) }) });
 });
 

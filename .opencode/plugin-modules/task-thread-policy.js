@@ -1,17 +1,19 @@
 const ENVELOPE_START = '<<<HARNESS_TASK_THREAD_POLICY_V1>>>';
 const ENVELOPE_END = '<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>';
-const ROLES = ['researcher', 'planner', 'implementer', 'integrator', 'validator', 'reviewer', 'synthesizer', 'artifact-verifier'];
+const ROLES = ['researcher', 'planner', 'implementer', 'validator'];
+const TASK_MODES = Object.freeze({
+  researcher: ['research'],
+  planner: ['plan', 'synthesis'],
+  implementer: ['implementation', 'integration'],
+  validator: ['validation', 'review', 'artifact-proof', 'integration-check'],
+});
 const LIMITS = { prompt: 16384, id: 160, text: 4096, packetEntries: 256, packetDepth: 8, calls: 64, tasks: 256, delegationIds: 1024, noncesPerTask: 32 };
 
 export const TASK_THREAD_ROLE_PACKET_FIELDS = Object.freeze({
-  researcher: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'scopedQuestion', 'sourceConstraints', 'freshnessRequirements', 'downstreamNeeds', 'routingMetadataStatus'], optional: ['relevantPaths', 'documentationTargets', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  planner: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'approvedGoal', 'scopeBoundaries', 'researchEvidence', 'deliverablePaths', 'acceptanceCriteria', 'routingMetadataStatus'], optional: ['dependencies', 'assumptions', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  implementer: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'approvedPlan', 'targetPaths', 'allowedEditScope', 'schemaRequirements', 'preservationRequirements', 'verificationCommands', 'routingMetadataStatus'], optional: ['styleConstraints', 'handoffRequirements', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  integrator: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'changedArtifacts', 'pathRelationships', 'manifestExpectations', 'workflowContracts', 'knownRisks', 'routingMetadataStatus'], optional: ['commandContracts', 'schemaContracts', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  validator: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'changedFiles', 'verificationCriteria', 'commandsToRun', 'schemaContracts', 'acceptanceStandard', 'routingMetadataStatus'], optional: ['expectedWarnings', 'skippedCheckPolicy', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  reviewer: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'diffOrChangedPaths', 'intendedBehavior', 'riskAreas', 'testExpectations', 'routingMetadataStatus'], optional: ['reviewScope', 'knownTradeoffs', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  synthesizer: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'roleOutputs', 'conflictsOrDecisions', 'assumptions', 'routingMetadataStatus'], optional: ['tradeoffInputs', 'requestedDecision', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
-  'artifact-verifier': { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'artifactPaths', 'expectedGeneratedTree', 'parseOrRenderChecks', 'tempDirectoryRequirements', 'cleanupDecisionCriteria', 'routingMetadataStatus'], optional: ['inspectionNotes', 'formatSpecificChecks', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
+  researcher: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode', 'scopedQuestion', 'sourceConstraints', 'freshnessRequirements', 'downstreamNeeds', 'routingMetadataStatus'], optional: ['relevantPaths', 'documentationTargets', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
+  planner: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode', 'approvedGoal', 'scopeBoundaries', 'researchEvidence', 'deliverablePaths', 'acceptanceCriteria', 'routingMetadataStatus'], optional: ['dependencies', 'assumptions', 'conflictsOrDecisions', 'roleOutputs', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
+  implementer: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode', 'approvedPlan', 'targetPaths', 'allowedEditScope', 'schemaRequirements', 'preservationRequirements', 'verificationCommands', 'routingMetadataStatus'], optional: ['styleConstraints', 'handoffRequirements', 'pathRelationships', 'manifestExpectations', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
+  validator: { required: ['orchestrationId', 'delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode', 'changedFiles', 'verificationCriteria', 'commandsToRun', 'schemaContracts', 'acceptanceStandard', 'routingMetadataStatus'], optional: ['expectedWarnings', 'skippedCheckPolicy', 'riskAreas', 'artifactExpectations', 'pathRelationships', 'workspaceRoot', 'runtimeRoot', 'traceRoot'] },
 });
 
 const SHAPES = {
@@ -77,6 +79,7 @@ function parseEnvelope(value, expectedKind) {
     boundedString(packet.delegationTaskId, 'delegationTaskId', LIMITS.id);
     boundedString(packet.scopeKey, 'scopeKey', LIMITS.id);
     if (packet.dispatchKind !== 'fresh') throw policyError('invalid dispatchKind');
+    if (!TASK_MODES[envelope.role].includes(packet.taskMode)) throw policyError('invalid taskMode');
     if (!['present', 'absent'].includes(packet.routingMetadataStatus)) throw policyError('invalid routingMetadataStatus');
   } else {
     boundedString(envelope.delegationTaskId, 'delegationTaskId', LIMITS.id);

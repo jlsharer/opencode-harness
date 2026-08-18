@@ -15,7 +15,7 @@ Use `.memory/orchestrations/<orchestration-id>/` for generated orchestration mem
 - `INDEX.md` - scope, inputs, routing metadata status, role artifact links, validation evidence links, and final decisions.
 - `delegation-packets/` - delegated prompts or packet summaries when retained.
 - `roles/<role>/<artifact-id>.md` - trace artifacts for role work.
-- `validation/` - validator or artifact-verifier command evidence.
-- `decisions/` - synthesis outputs and accepted final decisions.
+- `validation/` - independent validator command evidence.
+- `decisions/` - parent synthesis outputs and accepted final decisions.
 
 Generated orchestration memory is created during use and is not included in this fresh seed.

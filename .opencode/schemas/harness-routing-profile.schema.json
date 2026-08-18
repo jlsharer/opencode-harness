@@ -30,17 +30,13 @@
     },
     "roleOverrides": {
       "type": "object",
-      "required": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"],
+      "required": ["researcher", "planner", "implementer", "validator"],
       "additionalProperties": false,
       "properties": {
         "researcher": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
         "planner": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
         "implementer": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
-        "integrator": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
-        "validator": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
-        "reviewer": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
-        "synthesizer": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" },
-        "artifact-verifier": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" }
+        "validator": { "$ref": "harness-model-routing.schema.json#/$defs/roleOverride" }
       }
     },
     "commandOverrides": {

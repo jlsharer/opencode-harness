@@ -12,7 +12,7 @@ Use this skill when creating or updating workflow guidance, workflow-like proces
 ## Standards Boundary
 
 - No official native OpenCode workflow schema was found for `.opencode/workflows/*.md`.
-- In this harness, `.opencode/workflows/*.md` is project-local guidance, not an OpenCode runtime configuration surface.
+- `.opencode/workflows/*.md` would be project-local guidance, not an OpenCode runtime configuration surface. This harness intentionally keeps no redundant workflow documents; `delegation-orchestrator/SKILL.md` is authoritative.
 - Official OpenCode-native assets include config, agents, commands, skills, plugins, MCP servers, permissions, and references as documented by OpenCode.
 - Do not invent workflow frontmatter or config keys and present them as official OpenCode standards.
 
@@ -20,7 +20,7 @@ Use this skill when creating or updating workflow guidance, workflow-like proces
 
 - Use `.opencode/commands/*.md` for user-invoked slash commands or reusable prompt templates.
 - Use `.opencode/skills/<name>/SKILL.md` for triggerable guidance that should be available when relevant user intent appears.
-- Use project-local workflow documents only for process guidance that is not meant to be a native OpenCode command or skill.
+- Use project-local workflow documents only for genuinely distinct nonduplicative process guidance. Do not create delegation, implementation, or validation workflow documents that restate the authoritative delegation skill.
 - For command files, the Markdown body is the command template. Frontmatter may include `description`, `agent`, `model`, and `subtask` when relevant.
 - Omit `agent` for orchestrator-owned commands that must route dynamically rather than bind to a single role agent.
 
@@ -29,7 +29,7 @@ Use this skill when creating or updating workflow guidance, workflow-like proces
 1. Define whether the requested artifact is an invocable command, triggerable skill, or project-local workflow document.
 2. For commands, create a command Markdown file under `.opencode/commands/` and keep the executable prompt in the body.
 3. For skills, create `.opencode/skills/<name>/SKILL.md` with official skill frontmatter and trigger guidance.
-4. For project-local workflow docs, state their non-native boundary and document steps, DAGs, roles, and acceptance criteria as project guidance.
+4. For project-local workflow docs, first prove distinct value; state their non-native boundary and avoid duplicating skill-owned protocol.
 5. Avoid runtime dependency on reference-only prior projection directories.
 
 ## Update Checklist
@@ -37,7 +37,7 @@ Use this skill when creating or updating workflow guidance, workflow-like proces
 1. Preserve the distinction between native OpenCode commands/skills and project-local workflow documentation.
 2. Keep command frontmatter limited to documented command fields when editing slash-command prompts.
 3. Keep workflow guidance synchronized with any commands, skills, or harness conventions it references.
-4. For harness delegation workflows, preserve research-before-planning and validation-before-acceptance requirements.
+4. For harness delegation guidance, update the authoritative skill rather than a parallel workflow document; preserve research-before-planning and validation-before-acceptance.
 5. Remove claims that `.opencode/workflows/*.md` is an official native OpenCode schema unless official documentation later establishes that standard.
 
 ## Validation Checklist

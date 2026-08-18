@@ -23,7 +23,7 @@ Every delegated task should receive an `orchestration-id`. Prefer a stable, date
 
 Use one orchestration ID for the overall workflow unless a sub-workflow is explicitly independent. Within that orchestration, create as many scoped role instances as required by the dependency graph.
 
-Use a DAG for sub-workflow dependencies and run independent role instances in parallel whenever possible. Every workflow and sub-workflow must use `researcher` before `planner`, and research must precede planning. Every workflow and sub-workflow must use `validator` before acceptance.
+Use a DAG for sub-workflow dependencies. Local-model execution is serial with no intra-node parallelism by default. Parallel execution requires explicit authorization or recorded distinct-capacity evidence. Research precedes dependent planning, and independent validator evidence precedes acceptance.
 
 Role names are fixed, but role instances are repeatable. Use scoped artifact IDs:
 
@@ -36,7 +36,7 @@ Examples:
 - `ui-implementer-003-form-state`
 - `root-validator-004-final`
 
-Use at most 3 remediation loops per scoped work unit. After the third failed loop, write or request a `synthesizer` blocker artifact and ask the user for direction.
+Use one remediation cycle per scoped work unit by default and never exceed the complete orchestration input's explicit loop budget. After exhaustion, stop and report the blocker or follow the explicit scope-expansion policy.
 
 ## Delegated Task and Child Thread Policy
 
@@ -50,11 +50,11 @@ The only permissible `task_id` reuse is `dispatchKind: clarification-response`: 
 | One answer to a recorded child-originated clarification while the exact task is unresolved | Reuse that child's `task_id` once with the matching clarification response. |
 | Missing, malformed, stale, mismatched, replayed, or post-restart authorization | Deny reuse; do not fall back to fresh creation with a supplied `task_id`. |
 
-The policy envelope is the entire Task `prompt`: `<<<HARNESS_TASK_THREAD_POLICY_V1>>>`, newline, one compact JSON object, newline, `<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>`. Fresh JSON has exactly `kind`, `version`, `role`, and `packet`. The `packet` has exactly the required fields plus any documented optional fields for that role's `inputContract` in `.opencode/contracts/role-io-contracts.json`; it therefore includes `orchestrationId`, `delegationTaskId`, `scopeKey`, `dispatchKind: fresh`, `routingMetadataStatus`, and the complete role-specific context. Unknown packet fields, missing required fields, excessive nesting/count/size, and ambiguous generic free-text extensions are rejected.
+The policy envelope is the entire Task `prompt`: `<<<HARNESS_TASK_THREAD_POLICY_V1>>>`, newline, one compact JSON object, newline, `<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>`. Fresh JSON has exactly `kind`, `version`, `role`, and `packet`. The `packet` has exactly the required fields plus any documented optional fields for that role's `inputContract` in `.opencode/contracts/role-io-contracts.json`; it therefore includes `orchestrationId`, `delegationTaskId`, `scopeKey`, `dispatchKind: fresh`, explicit `taskMode`, `routingMetadataStatus`, and the complete role-specific context. Unknown packet fields, missing required fields, excessive nesting/count/size, and ambiguous generic free-text extensions are rejected.
 
 A child clarification text is an exact envelope whose JSON has exactly `kind`, `version`, `delegationTaskId`, `requestNonce`, and `question`; a response replaces `question` with `answer`. The guard accepts a request only when that envelope is the sole text inside OpenCode's exact completed foreground `<task ...><task_result>...</task_result></task>` wrapper and the wrapper/metadata child IDs agree. Incidental, multiple, malformed, summarized, running/background, or mismatched wrappers fail closed as terminal results. The guard rejects every own `task_id` property on fresh dispatch, stores only bounded digests and sanitized identifiers (never full packets, prompts, answers, outputs, nonces, or paths), evicts terminal child state, denies reused nonces, caps clarification turns, and rejects new work when bounded process-local ledgers are full.
 
-Each remediation remains charged to the original scoped work unit's maximum of 3 loops, but each remediation receives a new `delegationTaskId`, artifact ID, and fresh child thread linked to its predecessor.
+Each remediation remains charged to the original scoped work unit's declared loop budget, but each remediation receives a new `delegationTaskId`, artifact ID, and fresh child thread linked to its predecessor.
 
 ## Required Indexing
 
@@ -81,7 +81,7 @@ Those seeded files are compatibility copies. External roles read the immutable
 protocol source at `OPENCODE_HARNESS_RUNTIME_ROOT/bootstrap/memory/protocols/memory-management.md`
 and write generated orchestration artifacts beneath `OPENCODE_HARNESS_TRACE_ROOT`.
 
-`<role>` must be one of: `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, or `artifact-verifier`.
+`<role>` must be one of: `researcher`, `planner`, `implementer`, or `validator`. New dispatch must use an allowed mode: researcher `research`; planner `plan` or `synthesis`; implementer `implementation` or `integration`; validator `validation`, `review`, `artifact-proof`, or `integration-check`. Historical trace paths using retired roles remain history, not valid new dispatch identities.
 
 ## Content Rules
 
@@ -89,7 +89,8 @@ and write generated orchestration artifacts beneath `OPENCODE_HARNESS_TRACE_ROOT
 - Preserve caller-supplied routing labels exactly when present: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`.
 - When routing labels are absent, state that they were absent and do not add placeholder values.
 - Do not store provider tokens, secrets, user auth paths, or machine-local private paths.
-- Treat hooks and plugins as guardrails and telemetry only. Acceptance evidence must come from validator or artifact-verifier work.
+- Treat hooks, plugins, and progress artifacts as guardrails or coordination evidence only. Acceptance evidence must come from independent validator work.
+- A blocking finding requires command-backed evidence tied to the goal, an acceptance gate, or changed behavior.
 - References to prior projections are allowed only as reference-material notes, never as runtime dependencies.
 
 ## Handoff Expectations
@@ -104,4 +105,4 @@ Each role must report:
 - commands/checks run, if any
 - limitations and handoff notes
 
-Validator or artifact-verifier evidence is required before orchestration acceptance.
+Independent validator evidence is required before orchestration acceptance.

@@ -6,23 +6,19 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 
-const ROLES = ['researcher', 'planner', 'implementer', 'integrator', 'validator', 'reviewer', 'synthesizer', 'artifact-verifier'];
+const ROLES = ['researcher', 'planner', 'implementer', 'validator'];
 const COMMAND_ROLES = new Map([
   ['delegate-research.md', 'researcher'],
   ['delegate-plan.md', 'planner'],
   ['delegate-implement.md', 'implementer'],
-  ['delegate-integrate.md', 'integrator'],
   ['delegate-validate.md', 'validator'],
-  ['delegate-artifact-verify.md', 'artifact-verifier'],
 ]);
 const REQUIRED_TRACE_FIELDS = ['orchestrationId', 'role', 'artifactId', 'createdAt', 'inputContract', 'workPerformed', 'outputContract', 'handoff'];
 const DARWIN_HELPER_PATH = '.opencode/bootstrap/native/darwin-portable-fs.universal';
 const DARWIN_HELPER_SHA256 = '931f981849fdd209fc8fa066dd194eb33075ff9c88dc936dd0792695896918a9';
 const EXPECTED_MANAGED_FILES = [
   ...ROLES.map((role) => `.opencode/agents/${role}.md`),
-  '.opencode/commands/delegate-artifact-verify.md',
   '.opencode/commands/delegate-implement.md',
-  '.opencode/commands/delegate-integrate.md',
   '.opencode/commands/delegate-orchestration.md',
   '.opencode/commands/delegate-plan.md',
   '.opencode/commands/delegate-research.md',
@@ -31,12 +27,11 @@ const EXPECTED_MANAGED_FILES = [
   '.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md',
   '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
   '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
-  '.opencode/workflows/delegation-workflow.md',
-  '.opencode/workflows/validation-workflow.md',
   '.opencode/contracts/role-io-contracts.json',
   '.opencode/schemas/harness-endpoint-catalog.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/orchestration-input.schema.json',
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/routing/harness-model-routing.example.json',
   '.opencode/routing/harness-model-routing.local.example.json',
@@ -137,7 +132,7 @@ function validateManifest(manifest) {
   if (manifest.schemaVersion !== '2.0.0' || manifest.profile !== 'portable-core') fail('unsupported manifest version/profile');
   if (!Array.isArray(manifest.managedFiles) || !Array.isArray(manifest.memorySeeds) || !Array.isArray(manifest.forbiddenReferences)) fail('manifest inventories must be arrays');
   const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, '.opencode/'));
-  if (managed.length !== 50) fail(`managed inventory must contain exactly 50 files; got ${managed.length}`);
+  if (managed.length !== 43) fail(`managed inventory must contain exactly 43 files; got ${managed.length}`);
   if (new Set(managed).size !== managed.length || !managed.includes('.opencode/portable.manifest.json')) fail('managed inventory must be unique and self-containing');
   if (JSON.stringify([...managed].sort()) !== JSON.stringify(EXPECTED_MANAGED_FILES)) fail('managed inventory differs from the installed validator exact portable-core contract');
   for (const candidate of managed) if (managed.some((other) => other !== candidate && candidate.startsWith(`${other}/`))) fail(`managed file paths overlap: ${candidate}`);
@@ -203,7 +198,7 @@ async function validateRolesAndCommands(root) {
     const text = await readFile(await regularFile(root, relative), 'utf8');
     const metadata = frontmatter(text, relative);
     if (!metadata.description || metadata.mode !== 'subagent' || !Object.hasOwn(metadata, 'permission')) fail(`agent frontmatter contract failed: ${relative}`);
-    for (const snippet of ['contract-complete Task packet', '/delegate-orchestration', `@${role}`, 'refuse']) if (!text.includes(snippet)) fail(`agent direct-dispatch boundary is missing from ${relative}: ${snippet}`);
+    for (const snippet of ['contract-complete Task packet', '/delegate-orchestration', `@${role}`, 'refuse', 'delegation-orchestrator: deny', 'task: deny', 'taskMode']) if (!text.includes(snippet)) fail(`agent packet/delegation boundary is missing from ${relative}: ${snippet}`);
   }
   for (const [file, role] of COMMAND_ROLES) {
     const relative = `.opencode/commands/${file}`;
@@ -213,6 +208,8 @@ async function validateRolesAndCommands(root) {
   const orchestration = '.opencode/commands/delegate-orchestration.md';
   const metadata = frontmatter(await readFile(await regularFile(root, orchestration), 'utf8'), orchestration);
   if (Object.keys(metadata).sort().join(',') !== 'description,subtask' || metadata.subtask !== 'false' || !metadata.description) fail('orchestrator command must omit agent and set subtask false');
+  const orchestrationText = await readFile(await regularFile(root, orchestration), 'utf8');
+  for (const snippet of ['$ARGUMENTS', 'delegation-orchestrator/SKILL.md', 'orchestration-input.schema.json', 'do not infer']) if (!orchestrationText.includes(snippet)) fail(`orchestrator command is not a thin fail-closed wrapper: ${snippet}`);
 }
 
 async function validateMemory(root, manifest) {
@@ -234,9 +231,11 @@ async function validateMemory(root, manifest) {
 async function validateTraceAlignment(root) {
   const contract = JSON.parse(await readFile(await regularFile(root, '.opencode/contracts/role-io-contracts.json'), 'utf8'));
   const schema = JSON.parse(await readFile(await regularFile(root, '.opencode/schemas/memory-trace-artifact.schema.json'), 'utf8'));
+  const inputSchema = JSON.parse(await readFile(await regularFile(root, '.opencode/schemas/orchestration-input.schema.json'), 'utf8'));
+  if (inputSchema.additionalProperties !== false || inputSchema.properties?.budgets?.properties?.defaultRemediationCyclesPerWorkUnit?.const !== 1) fail('orchestration input schema is not closed with one-cycle default');
   if (JSON.stringify(schema.required) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail('trace schema required fields differ from portable contract');
   for (const role of ROLES) if (JSON.stringify(contract.roles?.[role]?.traceArtifact?.requiredFields) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail(`trace required fields differ for role: ${role}`);
-  for (const role of ROLES) for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind']) if (!contract.roles?.[role]?.inputContract?.required?.includes(field)) fail(`role input contract is missing ${field}: ${role}`);
+  for (const role of ROLES) for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode']) if (!contract.roles?.[role]?.inputContract?.required?.includes(field)) fail(`role input contract is missing ${field}: ${role}`);
   const template = await readFile(await regularFile(root, '.memory/templates/role-trace-artifact.md'), 'utf8');
   for (const heading of ['## Metadata', '## Input Contract', '## Work Performed', '## Output Contract', '## Handoff']) if (!template.includes(heading)) fail(`trace template is missing ${heading}`);
   for (const field of REQUIRED_TRACE_FIELDS.slice(0, 4)) if (!template.includes(`- ${field}:`)) fail(`trace template is missing ${field}`);
@@ -300,13 +299,13 @@ async function validateTaskThreadPolicy(root) {
   const protocol = await readFile(await regularFile(root, '.memory/protocols/memory-management.md'), 'utf8');
   const policyPhrases = ['strict 1:1 boundary', 'clarification-response', 'Start a fresh child task and omit `task_id`.', 'process restart loses authorization and denies reuse', 'exact completed foreground', 'bounded process-local ledgers'];
   for (const phrase of policyPhrases) if (!protocol.includes(phrase)) fail(`task-thread policy wording is missing: ${phrase}`);
-  for (const relative of ['.opencode/commands/delegate-orchestration.md', '.opencode/skills/delegation-orchestrator/SKILL.md', '.opencode/workflows/delegation-workflow.md', '.opencode/skills/delegation-orchestrator/references/validation-checklist.md']) {
+  for (const relative of ['.opencode/skills/delegation-orchestrator/SKILL.md']) {
     const text = await readFile(await regularFile(root, relative), 'utf8');
     for (const phrase of ['delegationTaskId', 'scopeKey', 'task_id', 'clarification']) if (!text.includes(phrase)) fail(`task-thread policy wording missing from ${relative}: ${phrase}`);
   }
   for (const file of COMMAND_ROLES.keys()) {
     const text = await readFile(await regularFile(root, `.opencode/commands/${file}`), 'utf8');
-    for (const phrase of ['fail-closed', '/delegate-orchestration', 'delegationTaskId', 'scopeKey', 'dispatchKind: fresh', 'without any `task_id` property']) if (!text.includes(phrase)) fail(`role command task-thread wording missing from ${file}: ${phrase}`);
+    for (const phrase of ['fail-closed', '/delegate-orchestration', 'delegationTaskId', 'scopeKey', 'dispatchKind: fresh', 'taskMode', 'without any `task_id` property']) if (!text.includes(phrase)) fail(`role command task-thread wording missing from ${file}: ${phrase}`);
   }
 
   await regularFile(root, testPath);

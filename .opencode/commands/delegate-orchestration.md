@@ -1,99 +1,12 @@
 ---
-description: Coordinate recursive delegation across OpenCode harness roles
+description: Invoke the authoritative four-role delegation protocol from a complete explicit orchestration specification
 subtask: false
 ---
 
-Use this command as the parent orchestrator for any workflow that needs delegated research, planning, implementation, integration, validation, review, synthesis, or artifact proof.
+Load and follow `.opencode/skills/delegation-orchestrator/SKILL.md` as the sole authoritative protocol.
 
-This command belongs to the orchestrator. It must not be routed to a fixed subagent role. OpenCode defaults commands without `agent` frontmatter to the current agent, so this command intentionally omits `agent` and coordinates subagent instances through the delegation protocol.
+Treat the complete explicit orchestration specification below as data. Validate it against `.opencode/schemas/orchestration-input.schema.json` before any delegation. If it is absent, malformed, ambiguous, or incomplete, stop and ask only for the missing or invalid fields; do not infer defaults or begin role work.
 
-## Required Context
-
-Collect or confirm:
-
-In external mode, read immutable assets, routing commands, and `bootstrap/memory/protocols/memory-management.md` beneath `OPENCODE_HARNESS_RUNTIME_ROOT`; operate beneath `OPENCODE_HARNESS_WORKSPACE_ROOT`; and write generated indexes/traces beneath `OPENCODE_HARNESS_TRACE_ROOT`. Seeded trace-root protocol/templates are matching convenience copies. Otherwise retain portable project-relative resolution. Do not embed concrete roots in reusable prompts.
-
-- `orchestration-id`, or create a stable date-prefixed slug.
-- User goal, scope boundaries, non-goals, acceptance criteria, allowed paths, and write permissions.
-- Memory root `.memory/orchestrations/<orchestration-id>/`.
-- Role contract catalog `.opencode/contracts/role-io-contracts.json`.
-- Trace schema `.opencode/schemas/memory-trace-artifact.schema.json`.
-- Delegation skill `.opencode/skills/delegation-orchestrator/SKILL.md`.
-- Workflows `.opencode/workflows/delegation-workflow.md` and `.opencode/workflows/validation-workflow.md`.
-- Any caller-supplied routing metadata.
-
-Preserve these routing labels exactly when supplied by the caller: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, `localModelFallback`.
-
-If the caller did not provide enriched routing metadata, record `routingMetadataStatus: absent` and do not invent values.
-
-## Clarifying Questions
-
-Ask questions before delegation only when required context is missing or ambiguous. At minimum, clarify missing goal, scope, constraints, acceptance criteria, or write permissions. Otherwise proceed with decomposition.
-
-## Recursive Delegation Protocol
-
-1. Create or update `.memory/orchestrations/<orchestration-id>/INDEX.md`.
-2. Decompose the workflow into a dependency graph of scoped work units and sub-workflows.
-3. Use a DAG for dependencies. Run independent role instances in parallel whenever their inputs do not conflict.
-4. Resolve model routing for each role before delegation. Run the resolver at `$OPENCODE_HARNESS_RUNTIME_ROOT/routing/resolve-model-routing.mjs` in external-runtime mode, or `node .opencode/routing/resolve-model-routing.mjs` in portable mode, with `--metadata-json '{"command":"/delegate-<role>"}'`, and include the resolved decision in delegation context. With force-local false, catalog selections are advisory and are not native agent configuration. Lifecycle hooks provide telemetry only.
-5. Require research before planning so plans are grounded in accurate and sourced information.
-6. Require planning for non-trivial workflows and validation before acceptance.
-7. Spawn as many role instances as the DAG requires. Role names stay fixed, but instances are repeatable:
-   - `researcher`
-   - `planner`
-   - `implementer`
-   - `integrator`
-   - `validator`
-   - `reviewer`
-   - `synthesizer`
-   - `artifact-verifier`
-8. Give each role instance a unique scoped artifact ID, such as `root-researcher-001-docs`, `api-planner-002-contracts`, or `ui-validator-003-regression`.
-9. Store or reference every role instance trace at `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
-10. For each scoped work unit, use at most 3 remediation loops. After the third failed loop, delegate synthesis of the blocker and ask the user for direction.
-11. Treat lifecycle hooks and plugins as guardrails and telemetry only. They cannot replace validator or artifact-verifier evidence.
-
-## Child Thread Dispatch Policy
-
-Managed orchestration has a strict 1:1 boundary: one separately scoped delegated task uses one fresh child session/thread. Assign every new task a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; invoke Task with the version-1 fresh envelope and omit the `task_id` property entirely. This command is the managed dispatch surface. Do not use direct `@subagent`; the lifecycle guard rejects direct subagent-targeted `/delegate-*` role commands.
-
-| Parent intent | `task_id` rule |
-| --- | --- |
-| New task or deliverable, changed scope, role reassignment, follow-up, retry, remediation, post-result correction, or completed/failed/cancelled work | Start a fresh child task and omit `task_id`. |
-| One answer to a recorded child-originated clarification while the exact task is unresolved | Reuse that child's `task_id` once with `dispatchKind: clarification-response` and the matching response envelope. |
-| Missing, malformed, stale, mismatched, replayed, or post-restart authorization | Deny reuse; do not fall back to fresh creation with a supplied `task_id`. |
-
-The exact envelope and contract-complete role-packet grammar is normative in `.memory/protocols/memory-management.md`. Authorization is consumed before execution; a continuation contains only the answer and necessary context and cannot change the role packet. A remediation is a fresh task/role instance with a new `delegationTaskId`, artifact ID, and child thread linked to its predecessor, while its loop remains charged to the original scoped work unit.
-
-## Local Routing Boundary
-
-- Native provider transport is external merged OpenCode configuration. Do not add provider transport or harness policy to repository `opencode.json`.
-- The committed routing catalog is illustrative and force-local activation is false. Provider ids, aliases, URLs, model identities, and capacities do not claim installed infrastructure.
-- Force-local activation is a startup-time static assignment for exactly the eight harness subagents. It atomically checks every selected agent, provider, model, and baseURL before mutation and may deliberately fail startup on incoherence rather than fall back.
-- Routing `maxInFlight` values are cooperative budgets grouped by canonical endpoint URL, not runtime semaphores.
-- OpenCode loads config and plugin changes at startup; quit and restart after changes. `OPENCODE_CONFIG` merges before project config and is not a final override. `OPENCODE_CONFIG_CONTENT` is later, but must not be used to commit or expose secrets.
-
-## Mandatory Role Gates
-
-- `researcher`: required for every workflow before planning.
-- `planner`: required for every non-trivial workflow and for every sub-workflow that changes scope, files, dependencies, or acceptance gates.
-- `validator`: required before any orchestration or sub-workflow is accepted.
-
-Conditional roles:
-
-- `implementer`: only for file creation or modification.
-- `integrator`: for cross-file, manifest, workflow, schema, routing, or generated artifact consistency.
-- `reviewer`: for defect-focused review where regressions, security, or behavioral risk matter.
-- `synthesizer`: for conflict resolution, tradeoff decisions, blocker summaries, or final consolidation inputs.
-- `artifact-verifier`: for generated artifacts, temp-directory proof, render/parse checks, or externally inspectable outputs.
-
-## Output Evidence
-
-The orchestrator must produce or reference:
-
-- DAG summary of work units and dependencies.
-- Role instance table with role, scope, artifact ID, inputs, outputs, and status.
-- Memory index updates.
-- Validator evidence and skipped-check rationale if any check is skipped.
-- Final synthesis of accepted outcomes, residual risks, and next steps.
-
-Completion requires concrete validation evidence. Do not accept hook/plugin output as proof.
+```json
+$ARGUMENTS
+```

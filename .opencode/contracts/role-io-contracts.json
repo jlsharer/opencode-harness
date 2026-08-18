@@ -1,13 +1,14 @@
 {
   "$schema": "../schemas/role-io-contracts.schema.json",
-  "schemaVersion": "0.1.0",
+  "schemaVersion": "0.2.0",
   "memoryProtocol": ".memory/protocols/memory-management.md",
   "traceArtifactSchema": ".opencode/schemas/memory-trace-artifact.schema.json",
   "tracePathTemplate": ".memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md",
   "roles": {
     "researcher": {
+      "taskModes": ["research"],
       "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "scopedQuestion", "sourceConstraints", "freshnessRequirements", "downstreamNeeds", "routingMetadataStatus"],
+        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "taskMode", "scopedQuestion", "sourceConstraints", "freshnessRequirements", "downstreamNeeds", "routingMetadataStatus"],
         "optional": ["relevantPaths", "documentationTargets", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
@@ -21,24 +22,26 @@
       "verificationExpectations": ["Cite sources or supplied evidence.", "Distinguish direct evidence from inference.", "Do not edit files."]
     },
     "planner": {
+      "taskModes": ["plan", "synthesis"],
       "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "approvedGoal", "scopeBoundaries", "researchEvidence", "deliverablePaths", "acceptanceCriteria", "routingMetadataStatus"],
-        "optional": ["dependencies", "assumptions", "workspaceRoot", "runtimeRoot", "traceRoot"]
+        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "taskMode", "approvedGoal", "scopeBoundaries", "researchEvidence", "deliverablePaths", "acceptanceCriteria", "routingMetadataStatus"],
+        "optional": ["dependencies", "assumptions", "conflictsOrDecisions", "roleOutputs", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
-        "required": ["orderedPlan", "fileContracts", "dependencies", "verificationGates", "handoffNotes", "traceArtifactPath"],
-        "optional": ["openQuestions"]
+        "required": ["orderedPlanOrResolvedConclusions", "fileContractsOrDecisions", "dependencies", "verificationGates", "handoffNotes", "traceArtifactPath"],
+        "optional": ["openQuestions", "tradeoffs"]
       },
       "traceArtifact": {
         "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/planner/<artifact-id>.md"
       },
-      "verificationExpectations": ["Specify exact target paths.", "Keep acceptance gates executable.", "Do not edit implementation files."]
+      "verificationExpectations": ["State the selected task mode.", "Specify exact target paths or evidence decisions.", "Keep acceptance gates executable.", "Do not edit implementation files."]
     },
     "implementer": {
+      "taskModes": ["implementation", "integration"],
       "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "approvedPlan", "targetPaths", "allowedEditScope", "schemaRequirements", "preservationRequirements", "verificationCommands", "routingMetadataStatus"],
-        "optional": ["styleConstraints", "handoffRequirements", "workspaceRoot", "runtimeRoot", "traceRoot"]
+        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "taskMode", "approvedPlan", "targetPaths", "allowedEditScope", "schemaRequirements", "preservationRequirements", "verificationCommands", "routingMetadataStatus"],
+        "optional": ["styleConstraints", "handoffRequirements", "pathRelationships", "manifestExpectations", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
         "required": ["changedFiles", "rationale", "schemaOrBoundaryChoices", "commandsRun", "handoffNotes", "traceArtifactPath"],
@@ -48,82 +51,23 @@
         "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/implementer/<artifact-id>.md"
       },
-      "verificationExpectations": ["Edit only assigned paths.", "Keep changes deterministic and diffable.", "Run assigned self-checks before handoff."]
-    },
-    "integrator": {
-      "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "changedArtifacts", "pathRelationships", "manifestExpectations", "workflowContracts", "knownRisks", "routingMetadataStatus"],
-        "optional": ["commandContracts", "schemaContracts", "workspaceRoot", "runtimeRoot", "traceRoot"]
-      },
-      "outputContract": {
-        "required": ["pathConsistencyNotes", "manifestCoverageNotes", "crossFileIssues", "fixesAppliedOrRequested", "residualRisks", "traceArtifactPath"],
-        "optional": ["followUpChecks"]
-      },
-      "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
-        "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/integrator/<artifact-id>.md"
-      },
-      "verificationExpectations": ["Confirm paths and manifests agree.", "Check role names and routing labels.", "Do not replace validator evidence."]
+      "verificationExpectations": ["State the selected task mode.", "Edit only assigned paths.", "Keep changes deterministic and diffable.", "Run assigned self-checks before handoff."]
     },
     "validator": {
+      "taskModes": ["validation", "review", "artifact-proof", "integration-check"],
       "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "changedFiles", "verificationCriteria", "commandsToRun", "schemaContracts", "acceptanceStandard", "routingMetadataStatus"],
-        "optional": ["expectedWarnings", "skippedCheckPolicy", "workspaceRoot", "runtimeRoot", "traceRoot"]
+        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "taskMode", "changedFiles", "verificationCriteria", "commandsToRun", "schemaContracts", "acceptanceStandard", "routingMetadataStatus"],
+        "optional": ["expectedWarnings", "skippedCheckPolicy", "riskAreas", "artifactExpectations", "pathRelationships", "workspaceRoot", "runtimeRoot", "traceRoot"]
       },
       "outputContract": {
-        "required": ["passFailMatrix", "commandOutputs", "schemaResults", "securityAndActivationFindings", "remediationList", "traceArtifactPath"],
-        "optional": ["skippedChecks", "residualRisk"]
+        "required": ["passFailMatrixOrFindings", "commandOutputs", "schemaResults", "securityAndActivationFindings", "remediationList", "traceArtifactPath"],
+        "optional": ["skippedChecks", "residualRisk", "artifactProof"]
       },
       "traceArtifact": {
         "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
         "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/validator/<artifact-id>.md"
       },
-      "verificationExpectations": ["Run command-backed checks.", "Treat hooks as guardrails only.", "Do not implement fixes."]
-    },
-    "reviewer": {
-      "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "diffOrChangedPaths", "intendedBehavior", "riskAreas", "testExpectations", "routingMetadataStatus"],
-        "optional": ["reviewScope", "knownTradeoffs", "workspaceRoot", "runtimeRoot", "traceRoot"]
-      },
-      "outputContract": {
-        "required": ["findings", "openQuestions", "residualRisk", "changeSummary", "traceArtifactPath"],
-        "optional": ["noIssueStatement"]
-      },
-      "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
-        "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/reviewer/<artifact-id>.md"
-      },
-      "verificationExpectations": ["Lead with defects and regressions.", "Ground findings in paths and lines when possible.", "Do not rewrite implementation."]
-    },
-    "synthesizer": {
-      "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "roleOutputs", "conflictsOrDecisions", "assumptions", "routingMetadataStatus"],
-        "optional": ["tradeoffInputs", "requestedDecision", "workspaceRoot", "runtimeRoot", "traceRoot"]
-      },
-      "outputContract": {
-        "required": ["resolvedConclusions", "tradeoffs", "assumptions", "recommendedDecision", "remainingQuestions", "traceArtifactPath"],
-        "optional": ["decisionRecordPath"]
-      },
-      "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
-        "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/synthesizer/<artifact-id>.md"
-      },
-      "verificationExpectations": ["Resolve conflicts using supplied evidence.", "Do not invent missing evidence.", "Do not replace validator acceptance evidence."]
-    },
-    "artifact-verifier": {
-      "inputContract": {
-        "required": ["orchestrationId", "delegationTaskId", "scopeKey", "dispatchKind", "artifactPaths", "expectedGeneratedTree", "parseOrRenderChecks", "tempDirectoryRequirements", "cleanupDecisionCriteria", "routingMetadataStatus"],
-        "optional": ["inspectionNotes", "formatSpecificChecks", "workspaceRoot", "runtimeRoot", "traceRoot"]
-      },
-      "outputContract": {
-        "required": ["tempPath", "fileListing", "commandOutputsOrRenderEvidence", "cleanupDecision", "limitations", "traceArtifactPath"],
-        "optional": ["artifactHashes", "screenshots"]
-      },
-      "traceArtifact": {
-        "requiredFields": ["orchestrationId", "role", "artifactId", "createdAt", "inputContract", "workPerformed", "outputContract", "handoff"],
-        "pathTemplate": ".memory/orchestrations/<orchestration-id>/roles/artifact-verifier/<artifact-id>.md"
-      },
-      "verificationExpectations": ["Use reproducible artifact proof.", "Capture temp-directory evidence when practical.", "Do not modify deliverables."]
+      "verificationExpectations": ["State the selected task mode.", "Run command-backed checks independently.", "Block only findings tied to the goal, an acceptance gate, or changed behavior.", "Treat hooks and progress artifacts as non-acceptance evidence.", "Do not implement fixes."]
     }
   }
 }

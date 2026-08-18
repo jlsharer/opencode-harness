@@ -13,17 +13,13 @@
     "tracePathTemplate": { "type": "string" },
     "roles": {
       "type": "object",
-      "required": ["researcher", "planner", "implementer", "integrator", "validator", "reviewer", "synthesizer", "artifact-verifier"],
+      "required": ["researcher", "planner", "implementer", "validator"],
       "additionalProperties": false,
       "properties": {
         "researcher": { "$ref": "#/$defs/roleContract" },
         "planner": { "$ref": "#/$defs/roleContract" },
         "implementer": { "$ref": "#/$defs/roleContract" },
-        "integrator": { "$ref": "#/$defs/roleContract" },
-        "validator": { "$ref": "#/$defs/roleContract" },
-        "reviewer": { "$ref": "#/$defs/roleContract" },
-        "synthesizer": { "$ref": "#/$defs/roleContract" },
-        "artifact-verifier": { "$ref": "#/$defs/roleContract" }
+        "validator": { "$ref": "#/$defs/roleContract" }
       }
     }
   },
@@ -53,9 +49,15 @@
     },
     "roleContract": {
       "type": "object",
-      "required": ["inputContract", "outputContract", "traceArtifact", "verificationExpectations"],
+      "required": ["taskModes", "inputContract", "outputContract", "traceArtifact", "verificationExpectations"],
       "additionalProperties": false,
       "properties": {
+        "taskModes": {
+          "type": "array",
+          "items": { "enum": ["research", "plan", "synthesis", "implementation", "integration", "validation", "review", "artifact-proof", "integration-check"] },
+          "minItems": 1,
+          "uniqueItems": true
+        },
         "inputContract": { "$ref": "#/$defs/ioContract" },
         "outputContract": { "$ref": "#/$defs/ioContract" },
         "traceArtifact": { "$ref": "#/$defs/traceArtifact" },

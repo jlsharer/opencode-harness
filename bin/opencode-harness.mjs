@@ -14,9 +14,9 @@ process.umask(0o077);
 const PACKAGE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MANIFEST_PATH = path.join(PACKAGE_ROOT, '.opencode/runtime.manifest.json');
 const MAX_INPUT_BYTES = 1024 * 1024;
-const ROLES = ['artifact-verifier', 'implementer', 'integrator', 'planner', 'researcher', 'reviewer', 'synthesizer', 'validator'];
-const TRACE_ONLY_ROLES = ['artifact-verifier', 'planner', 'researcher', 'reviewer', 'synthesizer', 'validator'];
-const COMMANDS = ['delegate-artifact-verify', 'delegate-implement', 'delegate-integrate', 'delegate-orchestration', 'delegate-plan', 'delegate-research', 'delegate-validate'];
+const ROLES = ['implementer', 'planner', 'researcher', 'validator'];
+const TRACE_ONLY_ROLES = ['planner', 'researcher', 'validator'];
+const COMMANDS = ['delegate-implement', 'delegate-orchestration', 'delegate-plan', 'delegate-research', 'delegate-validate'];
 const RESERVED_ENV = [
   'OPENCODE_CONFIG_DIR', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_CONFIG', 'OPENCODE_DB',
   'OPENCODE_HARNESS_WORKSPACE_ROOT', 'OPENCODE_HARNESS_RUNTIME_ROOT',
@@ -159,7 +159,7 @@ function ensurePrivateDirectory(directory) {
 function manifest() {
   const value = readJson(MANIFEST_PATH, 'runtime manifest');
   const expected = ['compatibility', 'fileModes', 'files', 'generatedEntries', 'packageVersion', 'profile', 'schemaVersion'];
-  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.8' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
+  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.9' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
   const seenGenerated = new Set();
   for (const entry of value.generatedEntries) {
     const allowed = entry.path === '.harness-runtime.json' ? ['path', 'kind', 'mode', 'recursive', 'required', 'content'] : ['path', 'kind', 'mode', 'recursive', 'required'];

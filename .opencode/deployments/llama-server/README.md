@@ -73,6 +73,6 @@ This baseline is static: each project keeps one resident model and the request m
 
 ## Activation and proof
 
-The committed routing policy keeps force-local activation false. Outside force mode, resolver local choices are advisory and do not configure native agents. Enabling force mode statically configures exactly the eight harness subagents during startup, after atomic agent/provider/model/baseURL preflight. A mismatch deliberately fails startup rather than falling back; correct the external provider or policy configuration and quit/restart OpenCode. Config and plugin changes are loaded only on restart.
+The committed routing policy keeps force-local activation false. Outside force mode, resolver local choices are advisory and do not configure native agents. Enabling force mode statically configures exactly the four harness subagents during startup, after atomic agent/provider/model/baseURL preflight. A mismatch deliberately fails startup rather than falling back; correct the external provider or policy configuration and quit/restart OpenCode. Config and plugin changes are loaded only on restart.
 
 Health output alone does not prove the expected model identity, tool use, quality, or capacity. Operator-dependent live acceptance should verify `/v1/models`, exact-alias inference, one delegated tool-using task per selected target, and measured concurrency/VRAM behavior. Offline harness validation does not start these servers.

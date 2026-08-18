@@ -17,19 +17,13 @@
       "researcher": { "model": null, "localModel": null, "variant": "research" },
       "planner": { "model": null, "localModel": null, "variant": "planning" },
       "implementer": { "model": null, "localModel": null, "variant": null },
-      "integrator": { "model": null, "localModel": null, "variant": null },
-      "validator": { "model": null, "localModel": null, "variant": "audit" },
-      "reviewer": { "model": null, "localModel": null, "variant": "review" },
-      "synthesizer": { "model": null, "localModel": null, "variant": "synthesis" },
-      "artifact-verifier": { "model": null, "localModel": null, "variant": "artifact-proof" }
+      "validator": { "model": null, "localModel": null, "variant": "audit" }
     },
     "commandOverrides": {
       "/delegate-research": { "agent": "researcher", "model": null, "variant": null },
       "/delegate-plan": { "agent": "planner", "model": null, "variant": null },
       "/delegate-implement": { "agent": "implementer", "model": null, "variant": null },
-      "/delegate-integrate": { "agent": "integrator", "model": null, "variant": null },
-      "/delegate-validate": { "agent": "validator", "model": null, "variant": "strict" },
-      "/delegate-artifact-verify": { "agent": "artifact-verifier", "model": null, "variant": "artifact-proof" }
+      "/delegate-validate": { "agent": "validator", "model": null, "variant": "strict" }
     },
     "orchestratorCommands": {
       "/delegate-orchestration": {

@@ -180,13 +180,13 @@ test('enabled local routing rejects an empty catalog and schema encodes the same
   assert.equal(schema.$defs.routing.properties.localRouting.properties.models.minProperties, undefined);
 });
 
-test('force plan assigns all eight by role selector or catalog default', () => {
+test('force plan assigns all four by role selector or catalog default', () => {
   const config = forceConfig();
-  config.roleOverrides.integrator.localModel = null;
+  config.roleOverrides.planner.localModel = null;
   const plan = resolveAllHarnessRoleAssignments(config);
   assert.equal(plan.mode, 'force-local');
   assert.deepEqual(Object.keys(plan.assignments), FIXED_HARNESS_ROLES);
-  assert.equal(plan.assignments.integrator.catalogName, 'qwen-coder');
+  assert.equal(plan.assignments.planner.catalogName, 'qwen-coder');
   assert.equal(plan.assignments.researcher.catalogName, 'qwen-research');
   assert.ok(Object.values(plan.assignments).every(Boolean));
 });
@@ -344,8 +344,8 @@ test('strict structure, roles, references, and types reject defects', () => {
     [(c) => { c.extra = true; }, /extra.*unknown property/],
     [(c) => { c.localRouting.enabled = 'true'; }, /must be a boolean/],
     [(c) => { c.localRouting.models['qwen-coder'].maxInFlight = 1.5; }, /integer of at least 1/],
-    [(c) => { delete c.roleOverrides.reviewer; }, /exactly the eight harness roles/],
-    [(c) => { c.roleOverrides.builder = c.roleOverrides.reviewer; }, /exactly the eight harness roles/],
+    [(c) => { delete c.roleOverrides.validator; }, /exactly the four harness roles/],
+    [(c) => { c.roleOverrides.builder = c.roleOverrides.validator; }, /exactly the four harness roles/],
     [(c) => { c.localRouting.defaultLocalModel = 'missing'; }, /must reference localRouting.models/],
     [(c) => { c.roleOverrides.implementer.localModel = 'missing'; }, /must reference localRouting.models/],
     [(c) => { c.roleOverrides.implementer.model = 'cloud/model'; }, /mutually exclusive/],
@@ -669,7 +669,7 @@ test('native coherence returns evidence and rejects missing provider relationshi
   }
 });
 
-test('force enforcement mutates all eight agents only after complete preflight', () => {
+test('force enforcement mutates all four agents only after complete preflight', () => {
   const cfg = nativeConfig();
   const providersBefore = clone(cfg.provider);
   const plan = applyHarnessRoleModelOverrides(cfg, { routingDocument: forceConfig() });
@@ -701,7 +701,7 @@ test('neutral and advisory local config hooks need no providers and do not mutat
   }
 });
 
-test('every force failure position including eighth is atomic and providers never mutate', () => {
+test('every force failure position including fourth is atomic and providers never mutate', () => {
   for (const failedRole of FIXED_HARNESS_ROLES) {
     const cfg = nativeConfig();
     delete cfg.agent[failedRole];

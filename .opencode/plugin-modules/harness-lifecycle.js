@@ -9,7 +9,7 @@ export const HarnessLifecyclePlugin = async () => {
   function isDelegateCommand(command) {
     return /^\s*(\/delegate-|node\s+.*resolve-model-routing|node\s+.*model-routing-helper)/.test(command);
   }
-  const blockedRoleCommands = new Set(['delegate-research', 'delegate-plan', 'delegate-implement', 'delegate-integrate', 'delegate-validate', 'delegate-artifact-verify']);
+  const blockedRoleCommands = new Set(['delegate-research', 'delegate-plan', 'delegate-implement', 'delegate-validate']);
 
   return {
     event: async ({ event }) => {

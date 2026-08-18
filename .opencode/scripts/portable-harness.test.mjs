@@ -65,7 +65,7 @@ test.after(async () => rm(tempParent, { recursive: true, force: true }));
 test('fresh foreign repository installs and validates without source-owned roots or history', async () => {
   const repo = await makeRepo(tempParent, 'fresh');
   const installed = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(installed.stdout, /created\/updated=50, memory-created=4, unchanged=0, collisions=0/);
+  assert.match(installed.stdout, /created\/updated=43, memory-created=4, unchanged=0, collisions=0/);
   assert.match(installed.stdout, process.platform === 'darwin' ? /write-safety=darwin-native-race-detecting/ : /write-safety=linux-descriptor-relative-race-detecting:\/proc\/self\/fd/);
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
   const validated = await runNode([validator, '--root', '.'], { cwd: repo });
@@ -86,10 +86,10 @@ test('fresh foreign repository installs and validates without source-owned roots
 test('bootstrap is idempotent and dry-run performs no writes', async () => {
   const repo = path.join(tempParent, 'fresh');
   const second = await runNode([BOOTSTRAP, '--target', repo]);
-  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=54, collisions=0/);
+  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=47, collisions=0/);
   const dryRepo = await makeRepo(tempParent, 'dry-run');
   const dry = await runNode([BOOTSTRAP, '--target', dryRepo, '--dry-run']);
-  assert.match(dry.stdout, /dry-run complete: created\/updated=50, memory-created=4/);
+  assert.match(dry.stdout, /dry-run complete: created\/updated=43, memory-created=4/);
   assert.deepEqual(await readdir(dryRepo), []);
 });
 
@@ -136,7 +136,7 @@ test('managed collision aborts preflight and explicit overwrite changes only man
 
 test('atomic no-clobber publication preserves concurrently created managed and memory files', async () => {
   for (const [name, relative] of [
-    ['managed-race', '.opencode/agents/artifact-verifier.md'],
+    ['managed-race', '.opencode/agents/validator.md'],
     ['memory-race', '.memory/INDEX.md'],
   ]) {
     const repo = await makeRepo(tempParent, name);
@@ -351,7 +351,7 @@ test('installed validator independently rejects removed inventory entries', asyn
   await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
   await rm(path.join(repo, removed));
   const validator = path.join(repo, '.opencode/scripts/validate-portable-harness.mjs');
-  assert.match(await expectFailure([validator, '--root', repo]), /exact portable-core contract|exactly 50 files/);
+  assert.match(await expectFailure([validator, '--root', repo]), /exact portable-core contract|exactly 43 files/);
 });
 
 test('installed validator rejects missing task-thread policy assets and stale policy wording', async () => {

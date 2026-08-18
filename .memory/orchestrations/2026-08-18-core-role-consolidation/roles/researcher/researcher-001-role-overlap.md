@@ -1,0 +1,47 @@
+# Core Role Consolidation Research
+
+```json
+{
+  "orchestrationId": "2026-08-18-core-role-consolidation",
+  "role": "researcher",
+  "artifactId": "researcher-001-role-overlap",
+  "createdAt": "2026-08-18",
+  "contract": ".opencode/contracts/role-io-contracts.json#roles.researcher",
+  "traceSchema": ".opencode/schemas/memory-trace-artifact.schema.json",
+  "inputContract": {
+    "inputsReceived": "Repository-only inventory for consolidation to researcher, planner, implementer, and validator; classify all eliminated-role references and investigate leaf skill visibility.",
+    "requiredContextPresent": "Goal, workspace, orchestrationId, artifactId, scope, constraints, downstream need, and routing status were supplied. delegationTaskId, scopeKey, and dispatchKind required by the current researcher contract were not supplied and were not invented.",
+    "routingMetadataStatus": "absent",
+    "workspaceRoot": "/home/joshl/projects/opencode-harness",
+    "traceRoot": "/home/joshl/projects/opencode-harness/.memory"
+  },
+  "workPerformed": {
+    "summary": "Read active agents, commands, skills, workflows, contracts, schemas, memory protocol/templates, manifests, routing policy/config/tests, lifecycle/task policy, validators, launcher/package allowlists, README/design/instructions, and current official OpenCode skill/agent/permission docs. No live provider or validation command was run.",
+    "filesRead": [
+      "AGENTS.md", "README.md", "opencode-harness.design.md", "opencode.json", "package.json", "bin/opencode-harness.mjs",
+      ".opencode/agents/*.md", ".opencode/commands/delegate-*.md", ".opencode/commands/implement-feature.md",
+      ".opencode/skills/delegation-orchestrator/**", ".opencode/workflows/*.md", ".opencode/contracts/role-io-contracts.json",
+      ".opencode/schemas/{role-io-contracts,memory-trace-artifact,harness-model-routing,harness-routing-profile}.schema.json",
+      ".opencode/{harness,portable,runtime}.manifest.json", ".opencode/routing/**", ".opencode/plugin-modules/**",
+      ".opencode/scripts/{validate-harness,validate-portable-harness,portable-harness.test,runtime-harness.test,runtime-foreign-repo.test}.mjs",
+      ".memory/protocols/memory-management.md", ".memory/templates/*.md", ".opencode/bootstrap/memory/**", ".memory/references/opencode-refs.md"
+    ],
+    "filesChanged": [".memory/orchestrations/2026-08-18-core-role-consolidation/roles/researcher/researcher-001-role-overlap.md"],
+    "commands": ["Repository reads/searches and official docs fetches only; shell used solely to create this required trace after the patch tool could not address the caller-selected workspace."]
+  },
+  "outputContract": {
+    "outputs": "OBSERVED INVENTORY: The active system is closed around eight roles in agents, contracts, trace/routing schemas, task packet policy, routing preflight, trace permissions, launcher, manifests, and validators (AGENTS.md:23-33; contracts:7-127; memory-trace schema:10-13; routing-policy.mjs:1-12,126-141,302-345; task-thread-policy.js:3-15; trace-root-permissions.js:5-11). OVERLAP MATRIX: reviewer -> validator `review` mode because both are read-only defect/risk/test assessment, with validator additionally owning independent acceptance (agents/reviewer.md:13-21; agents/validator.md:13-21; contracts:68-97). artifact-verifier -> validator `artifact-proof` mode because its temp listing/parse/render/cleanup evidence is specialized validation (agents/artifact-verifier.md:13-21; contract:113-126). integrator -> split: fixes/stitching to implementer `integration` mode, independent path/manifest/schema checks to validator criteria; its current contract both checks and permits assigned fixes (agents/integrator.md:10-16; contract:53-67). synthesizer -> planner `synthesis` mode for pre-implementation conflict/tradeoff/blocker decisions; post-validation consolidation remains parent orchestration behavior (agents/synthesizer.md:13-21; contract:98-111; AGENTS.md:35-39). Remove all four as active identities. Every `.memory/orchestrations/**` occurrence is historical trace-only and should remain unchanged; current source QA requires indexed history but does not validate historical role identity (validate-harness.mjs:571-593). SKILL CONSTRAINT: project skills are discovered and listed to agents; denied skills are hidden and rejected; permissions may be overridden per Markdown agent. Current core agents lack a skill denial, defaults are permissive, and leaf command prompts explicitly say to use delegation-orchestrator (agents/{researcher,planner,implementer,validator}.md:1-9; commands/delegate-{research,plan,implement,validate}.md:10; opencode.json:1-7; https://opencode.ai/docs/skills sections Understand discovery, Recognize tool description, Configure permissions, Override per agent; https://opencode.ai/docs/permissions Defaults). Supported prevention: give every core leaf an exact per-agent `permission.skill` deny for `delegation-orchestrator` and remove leaf instructions to load it. This preserves unrelated skills. `tools.skill:false` would hide all skills but tools is deprecated (official skills Disable the skill tool; agents Tools deprecated). EXACT ACTIVE FILES AFFECTED: remove `.opencode/agents/{integrator,reviewer,synthesizer,artifact-verifier}.md` and `.opencode/commands/{delegate-integrate,delegate-artifact-verify}.md`; revise `.opencode/agents/{researcher,planner,implementer,validator}.md`, `.opencode/commands/{delegate-research,delegate-plan,delegate-implement,delegate-validate,delegate-orchestration,implement-feature}.md`, `.opencode/workflows/{delegation-workflow,implement-feature-workflow,validation-workflow}.md`, `.opencode/skills/delegation-orchestrator/{SKILL.md,references/role-routing-matrix.md,references/validation-checklist.md,references/trust-and-restart-guide.md}`; revise `.opencode/contracts/role-io-contracts.json`, `.opencode/schemas/{role-io-contracts,memory-trace-artifact,harness-model-routing,harness-routing-profile}.schema.json`, `.memory/protocols/memory-management.md`, `.memory/templates/orchestration-index.md`, matching bootstrap memory protocol/template, and `.opencode/bootstrap/memory/INDEX.md`; revise `.opencode/routing/{harness-model-routing.example.json,harness-model-routing.local.example.json,routing-policy.mjs,routing-policy.test.mjs}`, `.opencode/plugin-modules/{task-thread-policy.js,task-thread-policy.test.mjs,trace-root-permissions.js,trace-root-permissions.test.mjs,harness-lifecycle.js,role-model-routing-enforcement.js}`, `bin/opencode-harness.mjs`, `.opencode/scripts/{validate-harness.mjs,validate-portable-harness.mjs,portable-harness.test.mjs,runtime-harness.test.mjs,runtime-foreign-repo.test.mjs}`; revise `.opencode/{harness,portable,runtime}.manifest.json`, AGENTS.md, README.md, and opencode-harness.design.md. Review package.json, but its broad agent/command selectors need not change. The ignored `.opencode/routing/harness-model-routing.json` is an operator migration concern, not a committed target. TEST/MANIFEST IMPLICATIONS: update role sets, route fixtures/schemas, contract and packet maps, model-preflight tests, trace permission plans, launcher collision/activation plans, and docs atomically. Current hard counts are source 79, runtime 43, package selectors 29, packed payload 47 (validate-harness.mjs:250-421), and portable 50 (validate-portable-harness.mjs:9-65,132-143); deleting six runtime files changes runtime/portable/npm counts unless replaced. Add checks for exactly four active roles, absent legacy role files/routes, per-core-agent orchestrator-skill denial, no leaf prompt loading instruction, mode-contract alignment, four-role atomic routing preflight, four-role trace permissions, and historical-tree exclusion from legacy-name rejection.",
+    "evidence": "Inline repository path/line citations and official OpenCode URLs distinguish direct evidence from the mode-assignment inference.",
+    "artifactLinks": [".memory/orchestrations/2026-08-18-core-role-consolidation/roles/researcher/researcher-001-role-overlap.md"],
+    "sourceList": ["Repository files listed above", "https://opencode.ai/docs/skills (fetched 2026-08-18)", "https://opencode.ai/docs/agents (fetched 2026-08-18)", "https://opencode.ai/docs/permissions (fetched 2026-08-18)"],
+    "implementationImplications": "Use exactly four active identities; former specialties become explicit planner/implementer/validator task modes, not aliases. Keep delegation-orchestrator visible only to parent orchestration through supported per-agent skill permission denial on every leaf. Preserve historical traces verbatim.",
+    "risks": "Closed-set drift; loss of validator independence if integration checking and fixing are conflated; historical traces becoming invalid if the active trace enum is narrowed and future QA parses old artifacts; stale private routing overrides; exact OpenCode 1.18.18 skill visibility remains unconfirmed because runtime activation was prohibited."
+  },
+  "handoff": {
+    "nextRole": "planner",
+    "recommendedNextRole": "planner",
+    "limitations": "No final plan, implementation edits outside this required trace, command-backed acceptance, live providers, global mutation, or runtime activation. Caller omitted delegationTaskId, scopeKey, and dispatchKind. Historical references were classified by subtree rather than individually enumerated.",
+    "risks": "Plan must preserve the active/historical boundary and require later independent validator evidence."
+  }
+}
+```

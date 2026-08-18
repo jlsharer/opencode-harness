@@ -78,7 +78,7 @@ OpenCode after changing config or plugins because existing sessions retain their
 loaded configuration.
 
 When an operator deliberately enables force-local mode, startup statically
-assigns exactly the eight fixed harness subagents. The asynchronous config hook
+assigns exactly the four fixed harness subagents. The asynchronous config hook
 preflights all selected agents, providers, models, and baseURLs before changing
 any agent. A missing or mismatched relationship deliberately fails startup
 without partial mutation or cloud fallback. Recover by correcting configuration
@@ -311,7 +311,7 @@ Before relying on a local llama.cpp endpoint for harness work:
   for harness-specific acceptance evidence.
 - Confirm no secrets, tokens, private paths, or runtime dependency on prior
   projection directories were introduced.
-- For force-local activation, validate all eight native agent/provider/model/
+- For force-local activation, validate all four native agent/provider/model/
   baseURL relationships before restart and expect startup to fail closed on any
   mismatch.
 - Run an operator-approved delegated tool-using task per selected target and

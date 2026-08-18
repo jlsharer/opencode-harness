@@ -20,9 +20,9 @@ The installable `portable-core` profile is a narrower boundary defined only by `
 
 ## Harness Conventions
 
-- Use delegation-only orchestration for multi-step harness work.
-- Preserve the eight role names exactly: `researcher`, `planner`, `implementer`, `integrator`, `validator`, `reviewer`, `synthesizer`, and `artifact-verifier`.
-- Use `/delegate-orchestration` for recursive parent orchestration. It is orchestrator-owned, omits command `agent` frontmatter, builds a DAG of scoped work units, requires research before planning, requires validation before acceptance, and may spawn as many scoped instances of each role as the workflow requires.
+- Use delegation-only parent behavior when `delegation-orchestrator` or `/delegate-orchestration` is invoked; outside that invocation, normal project instructions apply.
+- Preserve exactly four active role names: `researcher`, `planner`, `implementer`, and `validator`. Specialties are explicit bounded task modes: planner `plan|synthesis`, implementer `implementation|integration`, and validator `validation|review|artifact-proof|integration-check`.
+- `.opencode/skills/delegation-orchestrator/SKILL.md` is the sole protocol authority. `/delegate-orchestration` is a thin complete-input wrapper. When invoked, the parent delegates and synthesizes only; leaf agents deny further delegation and the orchestrator skill.
 - Keep role agents under `.opencode/agents/` as Markdown files with `description`, `mode: subagent`, and conservative `permission` frontmatter.
 - Keep role-specific command prompts under `.opencode/commands/` with `description` and `agent` frontmatter only; do not set `model` in command files. The central `/delegate-orchestration` command is the exception: it omits `agent` and sets `subtask: false`.
 - Keep the committed neutral routing default in `.opencode/routing/harness-model-routing.example.json`; local routing is disabled with no catalog or selectors. `.opencode/routing/harness-model-routing.local.example.json` is an explicit opt-in example/test fixture and is never an implicit default. An operator may create the ignored `.opencode/routing/harness-model-routing.json` override. Implicit loads choose a present custom file first, otherwise the neutral example, never merge, and fail rather than falling back when a present custom file is unreadable, malformed, or invalid. Explicit config paths are exact. If both implicit files are absent, restore/copy the neutral example. Routing fixtures do not configure native provider transport, and force-local remains false by default.
@@ -30,11 +30,12 @@ The installable `portable-core` profile is a narrower boundary defined only by `
 - Require every delegated role to follow `.opencode/contracts/role-io-contracts.json`, shape trace artifacts according to `.opencode/schemas/memory-trace-artifact.schema.json`, and write or reference `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
 - Give every separately scoped delegated task a new `delegationTaskId` and fresh child thread; fresh Task calls omit `task_id`. Reuse is allowed only once to answer a child-originated clarification while that exact task remains unresolved. Retry, remediation, correction, follow-up, changed scope/role/deliverable, and terminal work always start fresh child threads; direct unverified child-dispatch surfaces are prohibited for managed orchestration.
 - Treat `.opencode/plugins/index.js` as the only auto-loaded local plugin entry point. Keep segmented guardrail/telemetry modules under `.opencode/plugin-modules/`, such as `.opencode/plugin-modules/harness-lifecycle.js`, so OpenCode does not auto-load them separately. Do not add local plugin file paths to `opencode.json`.
-- Treat lifecycle hooks as guardrails and telemetry only. Validation evidence still comes from validator or artifact-verifier work.
+- Default local-model DAG execution to serial unless explicit authorization or distinct-capacity evidence permits parallelism. Default remediation to one cycle per scoped work unit and enforce declared loop/agent budgets.
+- Treat lifecycle hooks and progress artifacts as guardrails or coordination evidence only. Independent validator evidence is required, and findings block only with command-backed evidence tied to the goal, an acceptance gate, or changed behavior.
 
 ## Delegation Boundaries
 
-Parent orchestration may classify work, create delegation prompts, pass complete context, review returned evidence, request remediation, and produce final summaries. It must not conduct substantive research, draft implementation plans, edit files, integrate artifacts, or validate acceptance in place of the specialized role evidence.
+Parent orchestration may validate complete explicit orchestration input, classify work, create delegation packets, pass context, review returned evidence, request bounded remediation, and synthesize final summaries. It must not conduct substantive research, draft implementation plans, edit or integrate files, or validate acceptance in place of leaf evidence.
 
 When caller-supplied routing metadata is present, preserve these labels exactly: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`. When the original request does not include enriched routing metadata, do not invent values.
 

@@ -18,6 +18,7 @@ Use this skill when creating a new OpenCode skill or updating an existing `SKILL
   - `description`: specific third-person trigger guidance that explains what the skill does and when to use it.
 - Optional frontmatter fields are `license`, `compatibility`, and `metadata` when they are useful and documented.
 - Avoid unknown OpenCode config changes. Do not add unrelated keys to `opencode.json` or other config surfaces while authoring a skill.
+- In this harness, `delegation-orchestrator/SKILL.md` is the sole delegation protocol authority. Do not duplicate that protocol in another skill, command, or workflow document.
 
 ## Create Checklist
 
@@ -34,6 +35,7 @@ Use this skill when creating a new OpenCode skill or updating an existing `SKILL
 3. Avoid broadening activation unless intentionally requested.
 4. Keep body guidance current with official OpenCode standards and remove stale references.
 5. If config files are touched, validate them against the official schema before handoff.
+6. If delegation guidance is touched, keep the four-role/mode mapping and explicit orchestration-input schema authoritative in `delegation-orchestrator` rather than copying its procedure.
 
 ## Validation Checklist
 

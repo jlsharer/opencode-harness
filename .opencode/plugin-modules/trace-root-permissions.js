@@ -3,11 +3,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 export const TRACE_PERMISSION_ROLES = Object.freeze([
-  'artifact-verifier', 'implementer', 'integrator', 'planner',
-  'researcher', 'reviewer', 'synthesizer', 'validator',
+  'implementer', 'planner', 'researcher', 'validator',
 ]);
 export const TRACE_ONLY_ROLES = Object.freeze([
-  'artifact-verifier', 'planner', 'researcher', 'reviewer', 'synthesizer', 'validator',
+  'planner', 'researcher', 'validator',
 ]);
 export const TRACE_PERMISSION_SCHEMA_VERSION = '1.0.0';
 

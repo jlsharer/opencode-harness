@@ -2,11 +2,7 @@ export const FIXED_HARNESS_ROLES = Object.freeze([
   'researcher',
   'planner',
   'implementer',
-  'integrator',
   'validator',
-  'reviewer',
-  'synthesizer',
-  'artifact-verifier',
 ]);
 
 const ROLE_SET = new Set(FIXED_HARNESS_ROLES);
@@ -127,7 +123,7 @@ export function normalizeAndValidateRoutingConfig(document) {
   const actualRoles = Object.keys(roles).sort();
   const expectedRoles = [...FIXED_HARNESS_ROLES].sort();
   if (actualRoles.length !== expectedRoles.length || actualRoles.some((role, index) => role !== expectedRoles[index])) {
-    fail('$.harnessModelRouting.roleOverrides', `must contain exactly the eight harness roles: ${FIXED_HARNESS_ROLES.join(', ')}`);
+    fail('$.harnessModelRouting.roleOverrides', `must contain exactly the four harness roles: ${FIXED_HARNESS_ROLES.join(', ')}`);
   }
   const normalizedRoles = {};
   for (const role of FIXED_HARNESS_ROLES) {

@@ -12,19 +12,13 @@ const ROLES = [
   'researcher',
   'planner',
   'implementer',
-  'integrator',
   'validator',
-  'reviewer',
-  'synthesizer',
-  'artifact-verifier',
 ];
 const ROLE_COMMANDS = [
   'delegate-research',
   'delegate-plan',
   'delegate-implement',
-  'delegate-integrate',
   'delegate-validate',
-  'delegate-artifact-verify',
 ];
 const ORCHESTRATOR_COMMANDS = ['delegate-orchestration'];
 const COMMANDS = [...ROLE_COMMANDS, ...ORCHESTRATOR_COMMANDS];
@@ -32,9 +26,7 @@ const COMMAND_ROLE_MAP = {
   'delegate-research': 'researcher',
   'delegate-plan': 'planner',
   'delegate-implement': 'implementer',
-  'delegate-integrate': 'integrator',
   'delegate-validate': 'validator',
-  'delegate-artifact-verify': 'artifact-verifier',
 };
 const STATIC_MANIFEST_PATHS = [
   'opencode.json',
@@ -53,9 +45,6 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
   '.opencode/skills/opencode-skill-authoring/SKILL.md',
   '.opencode/skills/opencode-workflow-guidance/SKILL.md',
-  '.opencode/workflows/delegation-workflow.md',
-  '.opencode/workflows/implement-feature-workflow.md',
-  '.opencode/workflows/validation-workflow.md',
   '.opencode/deployments/llama-server/compose.yaml',
   '.opencode/deployments/llama-server/instances/research.env.example',
   '.opencode/deployments/llama-server/instances/coder.env.example',
@@ -63,6 +52,7 @@ const STATIC_MANIFEST_PATHS = [
   '.opencode/contracts/role-io-contracts.json',
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/orchestration-input.schema.json',
   '.opencode/schemas/harness-endpoint-catalog.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
   '.opencode/schemas/harness-routing-profile.schema.json',
@@ -111,6 +101,7 @@ const STATIC_MEMORY_PATHS = [
 const SCHEMA_PATHS = [
   '.opencode/schemas/role-io-contracts.schema.json',
   '.opencode/schemas/memory-trace-artifact.schema.json',
+  '.opencode/schemas/orchestration-input.schema.json',
   '.opencode/schemas/harness-endpoint-catalog.schema.json',
   '.opencode/schemas/harness-model-routing.schema.json',
   '.opencode/schemas/harness-routing-profile.schema.json',
@@ -213,7 +204,6 @@ function assertNoLocalPluginPathInOpenCodeConfig(config) {
 function assertLabelsPresent() {
   const haystack = [
     read('.opencode/skills/delegation-orchestrator/SKILL.md'),
-    read('.opencode/workflows/delegation-workflow.md'),
     ...COMMANDS.map((command) => read(`.opencode/commands/${command}.md`)),
   ].join('\n');
   for (const label of [
@@ -252,7 +242,6 @@ function expectedManifestPaths() {
     ...STATIC_MANIFEST_PATHS,
     ...ROLES.map((role) => `.opencode/agents/${role}.md`),
     ...COMMANDS.map((command) => `.opencode/commands/${command}.md`),
-    '.opencode/commands/implement-feature.md',
   ];
 }
 
@@ -267,7 +256,7 @@ function assertManifest(manifest) {
   const rootOwned = new Set(['opencode.json', 'AGENTS.md', 'README.md', 'opencode-harness.design.md', 'package.json', 'bin/opencode-harness.mjs']);
   const staticMemoryOwned = new Set(STATIC_MEMORY_PATHS);
   const paths = manifest.artifacts.map((artifact) => artifact.path);
-  if (paths.length !== 79) fail(`Source manifest must contain exactly 79 artifacts; got ${paths.length}`);
+  if (paths.length !== 70) fail(`Source manifest must contain exactly 70 artifacts; got ${paths.length}`);
   sameSet(paths, expectedManifestPaths(), 'manifest artifact paths');
 
   const seen = new Set();
@@ -368,9 +357,9 @@ function assertRuntimeManifest(runtimeManifest) {
   }
   const destinations = runtimeManifest.files.map((entry) => entry.destination);
   if (!destinations.includes('schemas/opencode-provider-projection.schema.json')) fail('Runtime manifest must include the provider projection schema');
-  if (runtimeManifest.files.length !== 43 || !destinations.includes('plugin-modules/task-thread-policy.js') || !destinations.includes('plugin-modules/trace-root-permissions.js')) fail('Runtime manifest must contain the exact 43-file external runtime including trace permissions');
+  if (runtimeManifest.files.length !== 36 || !destinations.includes('plugin-modules/task-thread-policy.js') || !destinations.includes('plugin-modules/trace-root-permissions.js')) fail('Runtime manifest must contain the exact 36-file external runtime including trace permissions');
   const packageManifest = json('package.json');
-  if (packageManifest.version !== '0.1.8' || runtimeManifest.packageVersion !== packageManifest.version) fail('Package and runtime manifest versions must both equal 0.1.8');
+  if (packageManifest.version !== '0.1.9' || runtimeManifest.packageVersion !== packageManifest.version) fail('Package and runtime manifest versions must both equal 0.1.9');
   if (!Array.isArray(packageManifest.files) || packageManifest.files.filter((pathname) => pathname === 'README.md').length !== 1) fail('Package files must include README.md exactly once');
   for (const pathname of ['.opencode/bootstrap', '.opencode/plugin-modules']) {
     if (packageManifest.files.includes(pathname)) fail(`Package files must not include broad source-only directory: ${pathname}`);
@@ -379,24 +368,24 @@ function assertRuntimeManifest(runtimeManifest) {
     if (packageManifest.files.includes(pathname)) fail(`Package files must exclude source-only payload: ${pathname}`);
   }
   const launcher = read('bin/opencode-harness.mjs');
-  if (!launcher.includes("value.packageVersion !== '0.1.8'")) fail('Runtime launcher must reject package versions other than 0.1.8');
+  if (!launcher.includes("value.packageVersion !== '0.1.9'")) fail('Runtime launcher must reject package versions other than 0.1.9');
   for (const snippet of ["'OPENCODE_DB'", 'OPENCODE_DB: snapshot.database', "'opencode.db-wal'", "'opencode.db-shm'", 'parentIdentity', 'directoryIdentity', '.quarantine-', 'removeContainedEntry', 'retained launch:', 'retained quarantine:', 'quarantine dev/ino', 'quarantine path still exists after recursive unlink']) {
     if (!launcher.includes(snippet)) fail(`Runtime launcher database isolation is missing: ${snippet}`);
   }
   const design = read('opencode-harness.design.md');
-  for (const snippet of ['opencode-harness-runtime` 0.1.8', '/0.1.8/opencode-1.18.18/runtime', '0.1.7']) {
+  for (const snippet of ['opencode-harness-runtime` 0.1.9', '/0.1.9/opencode-1.18.18/runtime', '0.1.8']) {
     if (!design.includes(snippet)) fail(`Runtime release documentation is missing: ${snippet}`);
   }
 }
 
 function assertExactPackagePayload(runtimeManifest) {
   const packageManifest = json('package.json');
-  if (packageManifest.files.length !== 29 || new Set(packageManifest.files).size !== 29) fail('Package files selector allowlist must contain exactly 29 unique entries');
+  if (packageManifest.files.length !== 27 || new Set(packageManifest.files).size !== 27) fail('Package files selector allowlist must contain exactly 27 unique entries');
   const selectors = [
     'README.md', 'bin/opencode-harness.mjs', '.opencode/runtime.manifest.json', '.opencode/agents', '.opencode/agents/researcher.md',
     '.opencode/commands/delegate-*.md', '.opencode/skills/delegation-orchestrator/SKILL.md',
     '.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md', '.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md',
-    '.opencode/skills/delegation-orchestrator/references/validation-checklist.md', '.opencode/workflows/delegation-workflow.md', '.opencode/workflows/validation-workflow.md',
+    '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
     '.opencode/contracts', '.opencode/schemas', '.opencode/routing/harness-model-routing.example.json', '.opencode/routing/harness-model-routing.local.example.json',
     '.opencode/routing/model-routing-helper.mjs', '.opencode/routing/resolve-model-routing.mjs', '.opencode/routing/routing-config-loader.mjs', '.opencode/routing/routing-policy.mjs',
     '.opencode/plugins', '.opencode/plugin-modules/harness-lifecycle.js', '.opencode/plugin-modules/task-thread-policy.js',
@@ -411,10 +400,10 @@ function assertExactPackagePayload(runtimeManifest) {
   try { reports = JSON.parse(result.stdout); } catch (error) { fail(`npm pack dry-run returned malformed JSON: ${error.message}`); }
   if (!Array.isArray(reports) || reports.length !== 1) fail('npm pack dry-run must return one package report');
   const report = reports[0];
-  if (report.name !== 'opencode-harness-runtime' || report.version !== '0.1.8' || !Array.isArray(report.files)) fail('npm pack report identity is invalid');
+  if (report.name !== 'opencode-harness-runtime' || report.version !== '0.1.9' || !Array.isArray(report.files)) fail('npm pack report identity is invalid');
   const actual = report.files.map((entry) => entry.path);
   const expected = ['package.json', 'README.md', 'bin/opencode-harness.mjs', '.opencode/runtime.manifest.json', ...runtimeManifest.files.map((entry) => entry.source)];
-  if (actual.length !== 47 || new Set(actual).size !== 47) fail(`npm payload must contain exactly 47 unique paths; got ${actual.length}`);
+  if (actual.length !== 40 || new Set(actual).size !== 40) fail(`npm payload must contain exactly 40 unique paths; got ${actual.length}`);
   sameSet(actual, expected, 'exact npm payload allowlist');
   const launcher = report.files.find((entry) => entry.path === 'bin/opencode-harness.mjs');
   if (!launcher || launcher.mode !== 0o755) fail('npm payload launcher must retain mode 0755');
@@ -516,7 +505,7 @@ function assertRoleContracts(contract) {
     if (!entry?.inputContract?.required?.length) {
       fail(`Missing input contract required fields for role: ${role}`);
     }
-    for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind']) {
+    for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode']) {
       if (!entry.inputContract.required.includes(field)) fail(`Role ${role} input contract is missing ${field}`);
     }
     if (!entry?.outputContract?.required?.length) {
@@ -529,6 +518,8 @@ function assertRoleContracts(contract) {
       fail(`Missing verification expectations for role: ${role}`);
     }
   }
+  const expectedModes = { researcher: ['research'], planner: ['plan', 'synthesis'], implementer: ['implementation', 'integration'], validator: ['validation', 'review', 'artifact-proof', 'integration-check'] };
+  for (const role of ROLES) sameSet(contract.roles[role].taskModes ?? [], expectedModes[role], `task modes for ${role}`);
 }
 
 function assertTraceAlignment(contract) {
@@ -558,7 +549,7 @@ function assertMemorySeeds() {
   }
   const portableManifest = json('.opencode/portable.manifest.json');
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 50 || mappings.length !== 4) fail('Portable manifest must contain exactly 50 managed files plus four memory seeds');
+  if (portableManifest.managedFiles?.length !== 43 || mappings.length !== 4) fail('Portable manifest must contain exactly 43 managed files plus four memory seeds');
   const expectedTargets = [
     '.memory/INDEX.md',
     '.memory/protocols/memory-management.md',
@@ -682,22 +673,22 @@ async function assertRoleModelRoutingEnforcement(neutralRoutingConfig, localRout
   const providerBefore = clone(forceCfg.provider);
   applyHarnessRoleModelOverrides(forceCfg, { routingPath: writeTempRouting(tempDir, forceRouting) });
   if (ROLES.some((role) => !Object.hasOwn(forceCfg.agent[role], 'model'))) {
-    fail('Force-local enforcement must assign all eight agents');
+    fail('Force-local enforcement must assign all four agents');
   }
   if (JSON.stringify(forceCfg.provider) !== JSON.stringify(providerBefore)) {
     fail('Force-local enforcement must not mutate providers');
   }
 
   const failureCfg = cfgWithAgents();
-  delete failureCfg.agent['artifact-verifier'];
+  delete failureCfg.agent.validator;
   const failureBefore = clone(failureCfg);
   expectThrows(
-    'eighth-role atomic preflight',
+    'fourth-role atomic preflight',
     () => applyHarnessRoleModelOverrides(failureCfg, { routingPath: writeTempRouting(tempDir, forceRouting) }),
-    /artifact-verifier/,
+    /validator/,
   );
   if (JSON.stringify(failureCfg) !== JSON.stringify(failureBefore)) {
-    fail('Failed eighth-role preflight must not partially mutate agents or providers');
+    fail('Failed fourth-role preflight must not partially mutate agents or providers');
   }
 
   expectThrows(
@@ -762,25 +753,19 @@ function assertDarwinNativeAssets() {
 function assertRecursiveOrchestrationDocs() {
   const command = read('.opencode/commands/delegate-orchestration.md');
   for (const snippet of [
-    'orchestrator',
-    'omits `agent`',
-    'DAG',
-    'parallel',
-    'research before planning',
-    'validation before acceptance',
-    '3 remediation loops',
-    '.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md',
+    '$ARGUMENTS',
+    'delegation-orchestrator/SKILL.md',
+    'orchestration-input.schema.json',
+    'do not infer',
   ]) {
     if (!command.includes(snippet)) {
       fail(`delegate-orchestration command missing recursive orchestration detail: ${snippet}`);
     }
   }
-  const workflow = read('.opencode/workflows/delegation-workflow.md');
   const memoryProtocol = read('.memory/protocols/memory-management.md');
   const template = read('.memory/templates/orchestration-index.md');
   const skill = read('.opencode/skills/delegation-orchestrator/SKILL.md');
   for (const [label, text] of [
-    ['delegation workflow', workflow],
     ['memory protocol', memoryProtocol],
     ['orchestration index template', template],
     ['delegation skill', skill],
@@ -808,7 +793,7 @@ function assertAgentContractReferences(role, text) {
       fail(`Role ${role} must reference ${snippet}`);
     }
   }
-  for (const snippet of ['contract-complete Task packet', '/delegate-orchestration', `@${role}`, 'refuse']) {
+  for (const snippet of ['contract-complete Task packet', '/delegate-orchestration', `@${role}`, 'refuse', 'delegation-orchestrator', 'taskMode']) {
     if (!text.includes(snippet)) fail(`Role ${role} direct-dispatch boundary is missing ${snippet}`);
   }
 }
@@ -876,11 +861,7 @@ async function assertTaskThreadPolicy() {
   const protocol = read('.memory/protocols/memory-management.md');
   for (const phrase of ['strict 1:1 boundary', 'clarification-response', 'Start a fresh child task and omit `task_id`.', 'process restart loses authorization and denies reuse', 'exact completed foreground', 'bounded process-local ledgers']) if (!protocol.includes(phrase)) fail(`Canonical task-thread policy wording is missing: ${phrase}`);
   for (const pathname of [
-    '.opencode/commands/delegate-orchestration.md',
     '.opencode/skills/delegation-orchestrator/SKILL.md',
-    '.opencode/workflows/delegation-workflow.md',
-    '.opencode/workflows/validation-workflow.md',
-    '.opencode/skills/delegation-orchestrator/references/validation-checklist.md',
     'AGENTS.md',
     'opencode-harness.design.md',
   ]) {
@@ -889,7 +870,7 @@ async function assertTaskThreadPolicy() {
   }
   for (const command of ROLE_COMMANDS) {
     const text = read(`.opencode/commands/${command}.md`);
-    for (const phrase of ['fail-closed', '/delegate-orchestration', 'delegationTaskId', 'scopeKey', 'dispatchKind: fresh', 'without any `task_id` property']) if (!text.includes(phrase)) fail(`Role command task-thread wording missing from ${command}: ${phrase}`);
+    for (const phrase of ['fail-closed', '/delegate-orchestration', 'delegationTaskId', 'scopeKey', 'dispatchKind: fresh', 'taskMode', 'without any `task_id` property']) if (!text.includes(phrase)) fail(`Role command task-thread wording missing from ${command}: ${phrase}`);
   }
   const lifecycle = read('.opencode/plugin-modules/harness-lifecycle.js');
   for (const phrase of ["'command.execute.before'", 'blockedRoleCommands', 'not a managed dispatch surface']) if (!lifecycle.includes(phrase)) fail(`Lifecycle direct-command guard is missing: ${phrase}`);
@@ -901,7 +882,6 @@ function assertGuardrailOnlyDocs() {
   const haystack = [
     read('AGENTS.md'),
     read('opencode-harness.design.md'),
-    read('.opencode/workflows/validation-workflow.md'),
     read('.opencode/skills/delegation-orchestrator/SKILL.md'),
   ].join('\n');
   if (!/guardrails? and telemetry/i.test(haystack) || !/not acceptance (proof|evidence)/i.test(haystack)) {

@@ -16,6 +16,7 @@
 - Memory protocol: `.memory/protocols/memory-management.md`
 - Role contracts: `.opencode/contracts/role-io-contracts.json`
 - Trace schema: `.opencode/schemas/memory-trace-artifact.schema.json`
+- Orchestration input schema: `.opencode/schemas/orchestration-input.schema.json`
 
 ## Workflow DAG
 
@@ -46,6 +47,7 @@
 - `<delegationTaskId>`:
   - scopeKey:
   - role:
+  - taskMode:
   - artifactId:
   - dispatchKind: fresh | clarification-response
   - childTaskOrSessionId:
@@ -63,16 +65,8 @@
   - `<scope>-planner-<sequence>-<slug>`:
 - `implementer`:
   - `<scope>-implementer-<sequence>-<slug>`:
-- `integrator`:
-  - `<scope>-integrator-<sequence>-<slug>`:
 - `validator`:
   - `<scope>-validator-<sequence>-<slug>`:
-- `reviewer`:
-  - `<scope>-reviewer-<sequence>-<slug>`:
-- `synthesizer`:
-  - `<scope>-synthesizer-<sequence>-<slug>`:
-- `artifact-verifier`:
-  - `<scope>-artifact-verifier-<sequence>-<slug>`:
 
 ## Validation Evidence
 
