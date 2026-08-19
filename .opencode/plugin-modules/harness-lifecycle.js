@@ -1,9 +1,14 @@
 import { createTaskThreadPolicy } from './task-thread-policy.js';
 
-export const HarnessLifecyclePlugin = async () => {
+export const HarnessLifecyclePlugin = async ({ client } = {}) => {
+  function logDiagnostic(message, extra) {
+    try {
+      Promise.resolve(client.app.log({ body: { service: 'opencode-harness', level: 'debug', message, extra } })).catch(() => {});
+    } catch {}
+  }
   const taskThreadPolicy = createTaskThreadPolicy({
     telemetry: ({ event, delegationTaskId, scopeKey, reason }) => {
-      console.error(`[harness] task-thread ${event} task=${delegationTaskId ?? 'unknown'} scope=${scopeKey ?? 'unknown'}${reason ? ` reason=${reason}` : ''}`);
+      logDiagnostic('Harness task state changed.', { event, delegationTaskId, scopeKey, ...(reason ? { reason } : {}) });
     },
   });
   function isDelegateCommand(command) {
@@ -15,7 +20,7 @@ export const HarnessLifecyclePlugin = async () => {
     event: async ({ event }) => {
       const type = event?.type ?? event?.name ?? 'unknown';
       if (type === 'session.created') {
-        console.error('[harness] OpenCode harness loaded. Use delegated role evidence before acceptance.');
+        logDiagnostic('OpenCode harness loaded.', { event: 'session-created' });
       }
     },
     'command.execute.before': async (input) => {
@@ -31,7 +36,7 @@ export const HarnessLifecyclePlugin = async () => {
         throw new Error('Harness guardrail: destructive deletion of harness-managed directories requires explicit cleanup approval.');
       }
       if (isDelegateCommand(command)) {
-        console.error('[harness] Delegation command observed. Model routing is enforced by the native config hook.');
+        logDiagnostic('Delegation command observed.', { event: 'delegation-command-observed' });
       }
     },
     'tool.execute.after': async (input, output) => {

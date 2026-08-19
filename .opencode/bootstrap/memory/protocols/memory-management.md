@@ -36,7 +36,7 @@ Examples:
 - `ui-implementer-003-form-state`
 - `root-validator-004-final`
 
-Use one remediation cycle per scoped work unit by default and never exceed the complete orchestration input's explicit loop budget. After exhaustion, stop and report the blocker or follow the explicit scope-expansion policy.
+Use one remediation cycle per scoped work unit by default and never exceed the normalized orchestration specification's loop budget. After exhaustion, stop and report the blocker or follow the explicit scope-expansion policy.
 
 ## Delegated Task and Child Thread Policy
 

@@ -115,12 +115,13 @@ The harness uses delegation-only orchestration. Parent orchestration coordinates
 
 The workflow is:
 
-1. Validate the complete explicit request against `.opencode/schemas/orchestration-input.schema.json` without inference.
-2. Classify each work unit into one of the four roles and an allowed explicit task mode.
-3. Pass complete task context, allowed paths, file contracts, verification gates, `orchestration-id`, memory root, role contract catalog, trace schema, trace artifact requirement, and any caller-supplied routing metadata.
-4. Inspect role outputs for required evidence and trace artifact references.
-5. When evidence is incomplete, create a fresh remediation role task and child thread linked to the predecessor.
-6. Accept only after independent validator evidence covers every acceptance gate.
+1. Accept an ordinary-language request, extract explicit intent and constraints, and ask focused follow-ups only for unresolved user decisions.
+2. Assemble a normalized internal specification against `.opencode/schemas/orchestration-input.schema.json`: generate mechanical IDs and conservative policy defaults, and derive only the bounded coordination structure supported by the request and workspace instructions.
+3. Classify each work unit into one of the four roles and an allowed explicit task mode.
+4. Pass complete task context, allowed paths, file contracts, verification gates, `orchestration-id`, memory root, role contract catalog, trace schema, trace artifact requirement, and any caller-supplied routing metadata.
+5. Inspect role outputs for required evidence and trace artifact references.
+6. When evidence is incomplete, create a fresh remediation role task and child thread linked to the predecessor.
+7. Accept only after independent validator evidence covers every acceptance gate.
 
 Delegated prompts that originate from enriched orchestration input must preserve caller-supplied labels exactly:
 
@@ -136,7 +137,7 @@ If those labels are absent from the original request, the OpenCode harness does 
 
 ## Commands, Skills, and Workflows
 
-`/delegate-orchestration` is a thin orchestrator-owned `$ARGUMENTS` wrapper around the sole authoritative protocol in `.opencode/skills/delegation-orchestrator/SKILL.md`. It rejects incomplete input. When invoked, the parent delegates and synthesizes only. Local-model DAG execution is serial by default; parallelism requires explicit authorization or recorded distinct-capacity evidence.
+`/delegate-orchestration` is a thin orchestrator-owned `$ARGUMENTS` wrapper around the sole authoritative protocol in `.opencode/skills/delegation-orchestrator/SKILL.md`. It accepts natural-language intent, gathers unresolved user decisions through focused follow-ups, and validates a parent-assembled internal specification before delegation. When invoked, the parent delegates and synthesizes only. Local-model DAG execution is serial by default; parallelism requires explicit authorization or recorded distinct-capacity evidence.
 
 Role names are fixed, but bounded role instances are repeatable within declared agent budgets. Every instance has an explicit task mode, scoped artifact ID, and trace artifact under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
 
@@ -144,7 +145,7 @@ Remediation defaults to one cycle per scoped work unit and never exceeds the dec
 
 Managed orchestration enforces one separately scoped delegated task per fresh child session/thread. Every new role task has a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; Task calls omit the `task_id` property. The sole reuse is one `clarification-response` to a recorded child-originated request while the exact task remains unresolved. New deliverables, changed scope or role, retries, remediation, corrections, follow-ups, terminal work, replay, and post-restart responses start fresh. `/delegate-orchestration` is the managed surface; direct `@subagent` dispatch is prohibited and the lifecycle guard rejects direct subagent-targeted role commands.
 
-Four direct role commands remain only as fail-closed compatibility entry points. Their frontmatter names the role, but lifecycle policy rejects them and directs operators to the complete orchestration-input surface:
+Four direct role commands remain only as fail-closed compatibility entry points. Their frontmatter names the role, but lifecycle policy rejects them and directs operators to the natural-language orchestration surface:
 
 - `/delegate-research` identifies `researcher`.
 - `/delegate-plan` identifies `planner`.

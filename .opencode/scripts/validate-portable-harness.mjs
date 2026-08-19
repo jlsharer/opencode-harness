@@ -209,7 +209,10 @@ async function validateRolesAndCommands(root) {
   const metadata = frontmatter(await readFile(await regularFile(root, orchestration), 'utf8'), orchestration);
   if (Object.keys(metadata).sort().join(',') !== 'description,subtask' || metadata.subtask !== 'false' || !metadata.description) fail('orchestrator command must omit agent and set subtask false');
   const orchestrationText = await readFile(await regularFile(root, orchestration), 'utf8');
-  for (const snippet of ['$ARGUMENTS', 'delegation-orchestrator/SKILL.md', 'orchestration-input.schema.json', 'do not infer']) if (!orchestrationText.includes(snippet)) fail(`orchestrator command is not a thin fail-closed wrapper: ${snippet}`);
+  for (const snippet of ['$ARGUMENTS', 'delegation-orchestrator/SKILL.md', 'orchestration-input.schema.json', '<<<ORCHESTRATION_REQUEST>>>', '<<<END_ORCHESTRATION_REQUEST>>>', 'Never require the user to write JSON']) if (!orchestrationText.includes(snippet)) fail(`orchestrator command is not a thin progressive-intake wrapper: ${snippet}`);
+  if (/```json\s*\n\$ARGUMENTS\s*\n```/.test(orchestrationText)) fail('orchestrator command must not wrap caller input in a JSON fence');
+  const skillText = await readFile(await regularFile(root, '.opencode/skills/delegation-orchestrator/SKILL.md'), 'utf8');
+  for (const snippet of ['not a required user prompt format', 'ordinary language', 'date-prefixed slug', 'Default privileged or expansive behavior safely', 'Ask one concise grouped follow-up', 'Repair generated or derived structural failures internally']) if (!skillText.includes(snippet)) fail(`orchestrator progressive intake rule is missing: ${snippet}`);
 }
 
 async function validateMemory(root, manifest) {
@@ -233,6 +236,10 @@ async function validateTraceAlignment(root) {
   const schema = JSON.parse(await readFile(await regularFile(root, '.opencode/schemas/memory-trace-artifact.schema.json'), 'utf8'));
   const inputSchema = JSON.parse(await readFile(await regularFile(root, '.opencode/schemas/orchestration-input.schema.json'), 'utf8'));
   if (inputSchema.additionalProperties !== false || inputSchema.properties?.budgets?.properties?.defaultRemediationCyclesPerWorkUnit?.const !== 1) fail('orchestration input schema is not closed with one-cycle default');
+  const expectedIntakeFields = {
+    schemaVersion: 'generated', orchestrationId: 'generated', goal: 'user', deliverables: 'derived', nonGoals: 'derived', workUnits: 'derived', allowedPaths: 'derived', acceptanceGates: 'derived', roleModeTaskMapping: 'generated', dag: 'generated', budgets: 'generated', scopeExpansion: 'generated', authorization: 'generated', routingMetadataStatus: 'generated', routingMetadata: 'user',
+  };
+  if (inputSchema['x-intake']?.contract !== 'normalized-internal' || inputSchema['x-intake']?.nestedFieldPolicy !== 'inherit-parent-unless-explicit-user-value' || JSON.stringify(inputSchema['x-intake']?.sourceClasses) !== JSON.stringify(['user', 'derived', 'generated']) || JSON.stringify(inputSchema['x-intake']?.fields) !== JSON.stringify(expectedIntakeFields) || JSON.stringify(Object.keys(inputSchema.properties ?? {}).sort()) !== JSON.stringify(Object.keys(expectedIntakeFields).sort())) fail('orchestration schema progressive-intake provenance contract differs');
   if (JSON.stringify(schema.required) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail('trace schema required fields differ from portable contract');
   for (const role of ROLES) if (JSON.stringify(contract.roles?.[role]?.traceArtifact?.requiredFields) !== JSON.stringify(REQUIRED_TRACE_FIELDS)) fail(`trace required fields differ for role: ${role}`);
   for (const role of ROLES) for (const field of ['delegationTaskId', 'scopeKey', 'dispatchKind', 'taskMode']) if (!contract.roles?.[role]?.inputContract?.required?.includes(field)) fail(`role input contract is missing ${field}: ${role}`);

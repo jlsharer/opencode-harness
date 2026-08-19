@@ -756,15 +756,31 @@ function assertRecursiveOrchestrationDocs() {
     '$ARGUMENTS',
     'delegation-orchestrator/SKILL.md',
     'orchestration-input.schema.json',
-    'do not infer',
+    '<<<ORCHESTRATION_REQUEST>>>',
+    '<<<END_ORCHESTRATION_REQUEST>>>',
+    'Never require the user to write JSON',
   ]) {
     if (!command.includes(snippet)) {
       fail(`delegate-orchestration command missing recursive orchestration detail: ${snippet}`);
     }
   }
+  if (/```json\s*\n\$ARGUMENTS\s*\n```/.test(command)) {
+    fail('delegate-orchestration must not wrap caller input in a JSON fence');
+  }
   const memoryProtocol = read('.memory/protocols/memory-management.md');
   const template = read('.memory/templates/orchestration-index.md');
   const skill = read('.opencode/skills/delegation-orchestrator/SKILL.md');
+  for (const snippet of ['not a required user prompt format', 'ordinary language', 'date-prefixed slug', 'Default privileged or expansive behavior safely', 'Ask one concise grouped follow-up', 'Repair generated or derived structural failures internally']) {
+    if (!skill.includes(snippet)) fail(`delegation skill missing progressive intake rule: ${snippet}`);
+  }
+  const inputSchema = json('.opencode/schemas/orchestration-input.schema.json');
+  const expectedIntakeFields = {
+    schemaVersion: 'generated', orchestrationId: 'generated', goal: 'user', deliverables: 'derived', nonGoals: 'derived', workUnits: 'derived', allowedPaths: 'derived', acceptanceGates: 'derived', roleModeTaskMapping: 'generated', dag: 'generated', budgets: 'generated', scopeExpansion: 'generated', authorization: 'generated', routingMetadataStatus: 'generated', routingMetadata: 'user',
+  };
+  if (inputSchema['x-intake']?.contract !== 'normalized-internal' || inputSchema['x-intake']?.nestedFieldPolicy !== 'inherit-parent-unless-explicit-user-value' || JSON.stringify(inputSchema['x-intake']?.sourceClasses) !== JSON.stringify(['user', 'derived', 'generated']) || JSON.stringify(inputSchema['x-intake']?.fields) !== JSON.stringify(expectedIntakeFields)) {
+    fail('orchestration schema must define the exact normalized progressive-intake provenance map');
+  }
+  sameSet(Object.keys(inputSchema.properties ?? {}), Object.keys(expectedIntakeFields), 'orchestration schema intake/property coverage');
   for (const [label, text] of [
     ['memory protocol', memoryProtocol],
     ['orchestration index template', template],

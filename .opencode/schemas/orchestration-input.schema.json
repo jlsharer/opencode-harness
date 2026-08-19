@@ -1,7 +1,30 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://opencode-harness.local/schemas/orchestration-input.schema.json",
-  "title": "OpenCode Harness Orchestration Input",
+  "title": "OpenCode Harness Normalized Orchestration Specification",
+  "description": "Internal coordinator contract assembled from user intent, focused follow-ups, derived coordination structure, and generated safe defaults. Users are not required to author this JSON.",
+  "x-intake": {
+    "contract": "normalized-internal",
+    "sourceClasses": ["user", "derived", "generated"],
+    "nestedFieldPolicy": "inherit-parent-unless-explicit-user-value",
+    "fields": {
+      "schemaVersion": "generated",
+      "orchestrationId": "generated",
+      "goal": "user",
+      "deliverables": "derived",
+      "nonGoals": "derived",
+      "workUnits": "derived",
+      "allowedPaths": "derived",
+      "acceptanceGates": "derived",
+      "roleModeTaskMapping": "generated",
+      "dag": "generated",
+      "budgets": "generated",
+      "scopeExpansion": "generated",
+      "authorization": "generated",
+      "routingMetadataStatus": "generated",
+      "routingMetadata": "user"
+    }
+  },
   "type": "object",
   "additionalProperties": false,
   "required": ["schemaVersion", "orchestrationId", "goal", "deliverables", "nonGoals", "workUnits", "allowedPaths", "acceptanceGates", "roleModeTaskMapping", "dag", "budgets", "scopeExpansion", "authorization", "routingMetadataStatus"],

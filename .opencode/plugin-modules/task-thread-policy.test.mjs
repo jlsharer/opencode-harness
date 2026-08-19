@@ -136,18 +136,70 @@ test('malformed, extra-field, deeply nested, and oversized envelopes reject with
 });
 
 test('lifecycle adapter guards Task and blocks direct role commands', async () => {
-  const original = console.error;
-  const logs = [];
-  console.error = (...parts) => logs.push(parts.join(' '));
+  const originals = Object.fromEntries(['error', 'log', 'warn', 'info'].map((method) => [method, console[method]]));
+  const consoleCalls = [];
+  for (const method of Object.keys(originals)) console[method] = (...parts) => consoleCalls.push([method, ...parts]);
+  const records = [];
+  const tuiCalls = [];
   try {
-    const hooks = await HarnessLifecyclePlugin({});
+    const hooks = await HarnessLifecyclePlugin({
+      client: {
+        app: { log: (record) => { records.push(record); return Promise.resolve(); } },
+        tui: {
+          appendPrompt: () => { tuiCalls.push('appendPrompt'); throw new Error('TUI must not be called'); },
+          showToast: () => { tuiCalls.push('showToast'); throw new Error('TUI must not be called'); },
+        },
+      },
+    });
     await hooks.event({ event: { type: 'session.created' } });
     await hooks['tool.execute.before']({ tool: 'task', sessionID: 'parent', callID: 'call' }, { args: freshArgs() });
-    await hooks['tool.execute.after']({ tool: 'task', sessionID: 'parent', callID: 'call' }, { output: wrapped('done', 'child'), metadata: { sessionId: 'child' } });
+    await hooks['tool.execute.after']({ tool: 'task', sessionID: 'parent', callID: 'call' }, { output: wrapped('raw-output-secret', 'child'), metadata: { sessionId: 'child' } });
+    await hooks['tool.execute.before']({ tool: 'bash' }, { args: { command: '/delegate-orchestration raw-command-secret' } });
     await assert.rejects(() => hooks['command.execute.before']({ command: 'delegate-implement' }), /not a managed dispatch surface/);
     await assert.rejects(() => hooks['tool.execute.before']({ tool: 'bash', args: { command: 'safe' } }, { args: { command: 'rm -rf .memory' } }), /destructive deletion/);
-    assert.match(logs.join('\n'), /harness loaded/);
+    assert.deepEqual(consoleCalls, []);
+    assert.deepEqual(tuiCalls, []);
+    assert.deepEqual(records, [
+      { body: { service: 'opencode-harness', level: 'debug', message: 'OpenCode harness loaded.', extra: { event: 'session-created' } } },
+      { body: { service: 'opencode-harness', level: 'debug', message: 'Harness task state changed.', extra: { event: 'fresh-in-flight', delegationTaskId: 'task-1', scopeKey: 'root' } } },
+      { body: { service: 'opencode-harness', level: 'debug', message: 'Harness task state changed.', extra: { event: 'terminal', delegationTaskId: 'task-1', scopeKey: 'root', reason: 'ordinary-or-invalid-result' } } },
+      { body: { service: 'opencode-harness', level: 'debug', message: 'Delegation command observed.', extra: { event: 'delegation-command-observed' } } },
+    ]);
+    assert.doesNotMatch(JSON.stringify(records), /raw-output-secret|raw-command-secret|HARNESS_TASK_THREAD_POLICY/);
   } finally {
-    console.error = original;
+    for (const [method, original] of Object.entries(originals)) console[method] = original;
+  }
+});
+
+test('lifecycle diagnostics contain logger failures without fallback or policy changes', async () => {
+  const originals = Object.fromEntries(['error', 'log', 'warn', 'info'].map((method) => [method, console[method]]));
+  const consoleCalls = [];
+  for (const method of Object.keys(originals)) console[method] = (...parts) => consoleCalls.push([method, ...parts]);
+  const tuiCalls = [];
+  let logCalls = 0;
+  try {
+    const hooks = await HarnessLifecyclePlugin({
+      client: {
+        app: { log: () => { if (++logCalls === 1) throw new Error('logger threw'); return Promise.reject(new Error('logger rejected')); } },
+        tui: {
+          appendPrompt: () => { tuiCalls.push('appendPrompt'); throw new Error('TUI must not be called'); },
+          showToast: () => { tuiCalls.push('showToast'); throw new Error('TUI must not be called'); },
+        },
+      },
+    });
+    await hooks.event({ event: { type: 'session.created' } });
+    await hooks['tool.execute.before']({ tool: 'task', sessionID: 'parent', callID: 'call' }, { args: freshArgs() });
+    await hooks['tool.execute.after']({ tool: 'task', callID: 'call' }, { output: wrapped('done', 'child'), metadata: { sessionId: 'child' } });
+    await hooks['tool.execute.before']({ tool: 'bash' }, { args: { command: '/delegate-orchestration safe' } });
+    await new Promise((resolve) => setImmediate(resolve));
+    await assert.rejects(
+      () => hooks['tool.execute.before']({ tool: 'task', sessionID: 'parent', callID: 'invalid' }, { args: freshArgs({ task_id: null }) }),
+      /invalid task_id/,
+    );
+    assert.equal(logCalls, 4);
+    assert.deepEqual(consoleCalls, []);
+    assert.deepEqual(tuiCalls, []);
+  } finally {
+    for (const [method, original] of Object.entries(originals)) console[method] = original;
   }
 });

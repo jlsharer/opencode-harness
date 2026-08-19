@@ -1,18 +1,28 @@
 ---
 name: delegation-orchestrator
-description: Use when an explicit orchestration specification requires bounded delegation across the four OpenCode harness roles with independent validation.
+description: Use when a natural-language request or prefilled specification requires bounded delegation across the four OpenCode harness roles with independent validation.
 ---
 
 # Delegation Orchestrator
 
 This skill is the sole authoritative harness delegation protocol. When this skill or `/delegate-orchestration` is invoked, the parent performs delegation and evidence synthesis only: it does not research, plan, edit, integrate, review, artifact-check, or validate directly.
 
-## Input Gate
+## Intake and Normalization
 
-1. Require one complete explicit JSON orchestration specification conforming to `.opencode/schemas/orchestration-input.schema.json`.
-2. Require explicit goal, deliverables, non-goals, scoped work units, allowed paths, acceptance gates, role/task-mode mapping, DAG dependencies and parallelization decision, loop and agent budgets, scope-expansion policy, live/Git authorization, and routing metadata status.
-3. Reject or clarify missing, ambiguous, unknown, or contradictory fields. Never infer an orchestration ID, authorization, scope, mode, budget, route, path, gate, or default work unit.
-4. Preserve caller routing labels and values exactly when `routingMetadataStatus` is `present`: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`. When status is `absent`, do not invent values.
+`.opencode/schemas/orchestration-input.schema.json` defines the parent's normalized internal execution specification. It is not a required user prompt format.
+
+1. For `/delegate-orchestration`, take only the content between the exact `<<<ORCHESTRATION_REQUEST>>>` marker lines as the request. Accept ordinary language. Also accept a JSON object as an optional prefilled form, but never require JSON or expose schema completion as the user's task.
+2. Extract the goal and every supplied constraint, deliverable, non-goal, path, success condition, authorization, and routing label. Preserve explicit user choices over derived values and surface contradictions for clarification.
+3. Build an internal specification using the schema's `x-intake` provenance map:
+   - User-sourced fields come from the request or focused follow-up answers.
+   - Derived fields are conservative coordination structure inferred from the stated goal, supplied constraints, workspace instructions, and supplied evidence. Derivation is coordination, not substantive role work.
+   - Generated fields are mechanical identifiers or safe policy defaults owned by the parent.
+4. Generate `schemaVersion`, a date-prefixed slug `orchestrationId`, stable work-unit and gate IDs, role/mode mappings, DAG edges, and bounded budgets. Use serial execution and one remediation cycle per work unit unless explicit authorization permits otherwise.
+5. Default privileged or expansive behavior safely without asking: `liveProviders`, `userGlobalMutation`, and every Git mutation are `false`; scope expansion is denied; parallelism is not authorized; and `routingMetadataStatus` is `absent` when the routing labels are not present. These defaults grant no capability and may be changed only by an explicit user statement.
+6. Derive the smallest useful deliverables, non-goals, work units, allowed paths, and preliminary acceptance gates supported by the request. Do not invent product requirements or broaden edit scope. A request to determine, investigate, compare, or recommend normally creates research/planning deliverables, not implementation authorization.
+7. Ask one concise grouped follow-up only when a required user decision remains genuinely ambiguous and no conservative interpretation can proceed. Ask in ordinary language about the decision, not schema field names. Do not ask users for IDs, role mappings, DAG syntax, budgets, routing status, boolean denial defaults, or a JSON rewrite.
+8. Validate the assembled internal object against the schema before creating memory or dispatching. Repair generated or derived structural failures internally. Ask the user only when validation exposes missing or contradictory user-owned intent.
+9. Preserve caller routing labels and values exactly when `routingMetadataStatus` is `present`: `### Delegation Parameters`, `**Provider Model**`, `**Routing Config**`, `routingServiceUrl`, `localModelEnabled`, `preferLocal`, and `localModelFallback`. When status is `absent`, do not invent routing values.
 
 ## Four Roles and Task Modes
 
@@ -27,15 +37,15 @@ Every leaf packet must name exactly one `taskMode`, one work-unit ID/scope key, 
 
 ## Execution Protocol
 
-1. Validate the complete input before creating `.memory/orchestrations/<orchestrationId>/INDEX.md` or dispatching work.
+1. Complete and validate the normalized internal specification before creating `.memory/orchestrations/<orchestrationId>/INDEX.md` or dispatching work.
 2. Build the declared DAG. Research precedes dependent planning; planning precedes implementation; independent validator evidence precedes acceptance. Planner `synthesis` may resolve supplied pre-implementation conflicts. Implementer `integration` applies assigned stitching fixes. Validator `integration-check` independently checks them.
 3. Default local-model execution is serial with no intra-node parallelism. Parallel dispatch requires explicit input authorization or recorded evidence of distinct capacity; otherwise serialize even independent DAG nodes.
 4. Resolve routing before each dispatch using the runtime resolver and include the decision as packet context only when the role contract permits it. Routing remains subject to the documented provider boundary.
 5. Use one fresh child thread per scoped task. The exact Task envelope and clarification grammar are normative in `.memory/protocols/memory-management.md`. Fresh tasks omit `task_id`; the only reuse is an authorized matching clarification response.
 6. Require each packet to match `.opencode/contracts/role-io-contracts.json` exactly, including explicit `taskMode`, `orchestrationId`, `delegationTaskId`, `scopeKey`, `dispatchKind: fresh`, and `routingMetadataStatus`.
 7. Default to one remediation cycle per scoped work unit. Each remediation is a fresh task charged to that work unit's declared loop budget. When exhausted, stop and report the blocker or follow the explicit scope-expansion policy; do not create an endless loop.
-8. Enforce the declared total and per-role agent budgets. Do not spawn extra agents to compensate for incomplete input or weak evidence.
-9. Scope expansion requires the input's explicit policy and any required user approval. Live providers, user-global mutation, commit, amend, push, publication, or other Git mutation require matching explicit authorization.
+8. Enforce the declared total and per-role agent budgets. Do not spawn extra agents to compensate for unresolved intent or weak evidence.
+9. Scope expansion requires the normalized specification's policy and any required user approval. Live providers, user-global mutation, commit, amend, push, publication, or other Git mutation require matching explicit authorization.
 10. Synthesize returned evidence only after checking packet outputs and trace links. Progress artifacts and lifecycle telemetry never independently block or prove acceptance.
 
 ## Findings and Acceptance
