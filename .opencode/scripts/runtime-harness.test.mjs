@@ -136,6 +136,27 @@ function validProvider(enableThinking = false) {
   return { $schema: 'https://opencode.ai/config.json', provider: { 'ai-infra-test': { npm: '@ai-sdk/openai-compatible', name: 'test', options: { baseURL: 'http://127.0.0.1:8080/v1' }, models: { model: { name: 'model', limit: { context: 8192, output: 384 }, options: { chat_template_kwargs: { enable_thinking: enableThinking } } } } } } };
 }
 
+function validCatalog(port = 8080) {
+  return { schemaVersion: '1.0.0', models: { 'ai-infra-test': { model: 'ai-infra-test/model', routingServiceUrl: `http://127.0.0.1:${port}/v1`, maxInFlight: 1 } } };
+}
+
+function validProfile() {
+  const profile = JSON.parse(fs.readFileSync(path.join(ROOT, '.opencode/routing/harness-model-routing.example.json'), 'utf8')).harnessModelRouting;
+  delete profile.localRouting.models;
+  return profile;
+}
+
+function validationFixture(name, { provider = validProvider(), catalog = validCatalog(), profile = validProfile() } = {}) {
+  const directory = path.join(temp, name);
+  fs.mkdirSync(directory, { mode: 0o700 });
+  return {
+    directory,
+    provider: writePrivate(path.join(directory, 'provider.json'), provider),
+    catalog: writePrivate(path.join(directory, 'catalog.json'), catalog),
+    profile: writePrivate(path.join(directory, 'profile.json'), profile),
+  };
+}
+
 test('prepare creates a deterministic owner-only runtime and reuses it', () => {
   const cache = path.join(temp, 'cache');
   const first = run(['prepare', '--cache-root', cache]);
@@ -166,7 +187,7 @@ test('prepare refuses managed drift and symlink collisions without repairing the
   assert.notEqual(drift.status, 0);
   assert.match(drift.stderr, /managed runtime drift/);
   const collisionCache = path.join(temp, 'symlink-cache');
-  const runtime = path.join(collisionCache, '0.1.9/opencode-1.18.18/runtime');
+  const runtime = path.join(collisionCache, '0.1.10/opencode-1.18.18/runtime');
   fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
   fs.symlinkSync(temp, runtime);
   const collision = run(['prepare', '--cache-root', collisionCache]);
@@ -190,7 +211,168 @@ test('help is available from arbitrary working directories', () => {
   const result = run(['help'], {}, '/');
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /prepare/);
+  assert.match(result.stdout, /validate-inputs \[--provider-config FILE\] \[--routing-catalog FILE --routing-profile FILE\]/);
   assert.match(result.stdout, /run --workspace ABS/);
+});
+
+test('validate-inputs accepts exactly the three supported combinations with deterministic compact output', () => {
+  const fixture = validationFixture('validate-success');
+  const cases = [
+    [['--provider-config', fixture.provider], { providerConfig: true, routingCatalog: false, routingProfile: false }],
+    [['--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile], { providerConfig: false, routingCatalog: true, routingProfile: true }],
+    [['--provider-config', fixture.provider, '--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile], { providerConfig: true, routingCatalog: true, routingProfile: true }],
+  ];
+  for (const [args, inputs] of cases) {
+    const expected = `${JSON.stringify({ schemaVersion: '1.0.0', valid: true, packageVersion: '0.1.10', inputs })}\n`;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const result = run(['validate-inputs', ...args], {}, '/');
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, expected);
+      assert.equal(result.stderr, '');
+    }
+  }
+});
+
+test('validate-inputs grammar is closed and failures use stderr only', () => {
+  const fixture = validationFixture('validate-grammar');
+  const cases = [
+    [],
+    ['--routing-catalog', fixture.catalog],
+    ['--routing-profile', fixture.profile],
+    ['--provider-config', fixture.provider, '--provider-config', fixture.provider],
+    ['--allow-project-plugins'],
+    ['--workspace', fixture.directory],
+    ['--trace-root', fixture.directory],
+    ['--cache-root', fixture.directory],
+    ['--'],
+    ['--', 'models'],
+    ['positional.json'],
+    ['--provider-config'],
+  ];
+  for (const args of cases) {
+    const result = run(['validate-inputs', ...args]);
+    assert.equal(result.status, 1, args.join(' '));
+    assert.equal(result.stdout, '', args.join(' '));
+    assert.match(result.stderr, /^opencode-harness: .+\n$/);
+  }
+});
+
+test('validate-inputs escapes line breaks in caller-controlled option and path failures', () => {
+  const fixture = validationFixture('validate-line-breaks');
+  const cases = [
+    ['unknown option newline', [`--bad\ninjected`], /--bad\\ninjected/],
+    ['unknown option carriage return', [`--bad\rinjected`], /--bad\\rinjected/],
+    ['missing path newline', ['--provider-config', path.join(fixture.directory, 'missing\nprovider.json')], /missing\\nprovider\.json/],
+    ['missing path carriage return', ['--provider-config', path.join(fixture.directory, 'missing\rprovider.json')], /missing\\rprovider\.json/],
+  ];
+  for (const [name, args, expected] of cases) {
+    const result = run(['validate-inputs', ...args]);
+    assert.equal(result.status, 1, name);
+    assert.equal(result.stdout, '', name);
+    assert.match(result.stderr, /^opencode-harness: [^\r\n]+\n$/, name);
+    assert.match(result.stderr, expected, name);
+  }
+});
+
+test('validate-inputs rejects malformed, oversized, unsafe-mode, and symlinked leaves', () => {
+  const fixture = validationFixture('validate-files');
+  const malformed = path.join(fixture.directory, 'malformed.json'); fs.writeFileSync(malformed, '{', { mode: 0o600 });
+  const oversized = path.join(fixture.directory, 'oversized.json'); fs.writeFileSync(oversized, Buffer.alloc(1024 * 1024 + 1), { mode: 0o600 });
+  const wrongMode = writePrivate(path.join(fixture.directory, 'wrong-mode.json'), validProvider()); fs.chmodSync(wrongMode, 0o644);
+  const symlink = path.join(fixture.directory, 'provider-link.json'); fs.symlinkSync(fixture.provider, symlink);
+  for (const [filename, expected] of [[malformed, /malformed JSON/], [oversized, /exceeds/], [wrongMode, /mode 600/], [symlink, /must not be a symlink/]]) {
+    const result = run(['validate-inputs', '--provider-config', filename]);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, '');
+    assert.match(result.stderr, expected);
+  }
+});
+
+test('validate-inputs applies provider metadata, profile policy, and cross-document checks without repair', () => {
+  const providerMutations = [
+    ['missing-context', (value) => { delete value.provider['ai-infra-test'].models.model.limit.context; }, /context is required/],
+    ['zero-context', (value) => { value.provider['ai-infra-test'].models.model.limit.context = 0; }, /context limit/],
+    ['boolean-context', (value) => { value.provider['ai-infra-test'].models.model.limit.context = true; }, /context limit/],
+    ['overflow-context', (value) => { value.provider['ai-infra-test'].models.model.limit.context = 2147483648; }, /context limit/],
+    ['missing-output', (value) => { delete value.provider['ai-infra-test'].models.model.limit.output; }, /output is required/],
+    ['zero-output', (value) => { value.provider['ai-infra-test'].models.model.limit.output = 0; }, /output limit/],
+    ['boolean-output', (value) => { value.provider['ai-infra-test'].models.model.limit.output = false; }, /output limit/],
+    ['overflow-output', (value) => { value.provider['ai-infra-test'].models.model.limit.output = 2147483648; }, /output limit/],
+    ['equal-output', (value) => { value.provider['ai-infra-test'].models.model.limit.output = 8192; }, /less than context/],
+    ['greater-output', (value) => { value.provider['ai-infra-test'].models.model.limit.output = 8193; }, /less than context/],
+  ];
+  for (const [name, mutate, expected] of providerMutations) {
+    const provider = validProvider(); mutate(provider);
+    const fixture = validationFixture(`validate-provider-${name}`, { provider });
+    const result = run(['validate-inputs', '--provider-config', fixture.provider]);
+    assert.equal(result.status, 1, name); assert.equal(result.stdout, ''); assert.match(result.stderr, expected, name);
+  }
+
+  const profileCases = [
+    ['wrapped', { harnessModelRouting: validProfile() }, /routing profile/],
+    ['embedded-models', (() => { const value = validProfile(); value.localRouting.models = {}; return value; })(), /models/],
+    ['force-local', (() => { const value = validProfile(); value.localRouting.forceLocalForHarnessSubagents = true; return value; })(), /forceLocalForHarnessSubagents/],
+    ['missing-reference', (() => { const value = validProfile(); value.localRouting.defaultLocalModel = 'ai-infra-missing'; return value; })(), /must reference localRouting.models|unknown catalog model/],
+  ];
+  for (const [name, profile, expected] of profileCases) {
+    const fixture = validationFixture(`validate-profile-${name}`, { profile });
+    const result = run(['validate-inputs', '--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile]);
+    assert.equal(result.status, 1, name); assert.equal(result.stdout, ''); assert.match(result.stderr, expected, name);
+  }
+
+  const crossCases = [
+    ['missing-provider', (provider, catalog) => { catalog.models['ai-infra-other'] = { model: 'ai-infra-other/model', routingServiceUrl: 'http://127.0.0.1:8081/v1', maxInFlight: 1 }; }, /mismatch/],
+    ['extra-provider', (provider) => { provider.provider['ai-infra-other'] = structuredClone(provider.provider['ai-infra-test']); }, /provider sets differ/],
+    ['model', (provider, catalog) => { catalog.models['ai-infra-test'].model = 'ai-infra-test/other'; }, /mismatch/],
+    ['url', (provider, catalog) => { catalog.models['ai-infra-test'].routingServiceUrl = 'http://127.0.0.1:8081/v1'; }, /mismatch/],
+  ];
+  for (const [name, mutate, expected] of crossCases) {
+    const provider = validProvider(); const catalog = validCatalog(); mutate(provider, catalog);
+    const fixture = validationFixture(`validate-cross-${name}`, { provider, catalog });
+    const result = run(['validate-inputs', '--provider-config', fixture.provider, '--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile]);
+    assert.equal(result.status, 1, name); assert.equal(result.stdout, ''); assert.match(result.stderr, expected, name);
+  }
+});
+
+test('validate-inputs performs no workspace, state, network, or child activity', () => {
+  const portFile = path.join(temp, 'validate-listener-port');
+  const requestMarker = path.join(temp, 'validate-listener-request');
+  const listener = spawn(process.execPath, ['-e', `const fs=require('node:fs');const http=require('node:http');const server=http.createServer(()=>fs.writeFileSync(${JSON.stringify(requestMarker)},'request'));server.listen(0,'127.0.0.1',()=>fs.writeFileSync(${JSON.stringify(portFile)},String(server.address().port),{mode:0o600}));`], { stdio: 'ignore' });
+  try {
+    for (let count = 0; count < 100 && !fs.existsSync(portFile); count += 1) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+    assert.equal(fs.existsSync(portFile), true, 'request-counting listener did not start');
+    const port = Number(fs.readFileSync(portFile, 'utf8'));
+    const provider = validProvider(); provider.provider['ai-infra-test'].options.baseURL = `http://127.0.0.1:${port}/v1`;
+    const fixture = validationFixture('validate-no-effects', { provider, catalog: validCatalog(port) });
+    const marker = path.join(temp, 'validate-opencode-marker');
+    const absent = ['home', 'xdg-cache', 'xdg-state', 'xdg-data', 'workspace', 'cache', 'trace'].map((name) => path.join(temp, `validate-absent-${name}`));
+    const before = canonicalInventory(fixture.directory);
+    const env = {
+      PATH: path.join(temp, 'validate-nonexistent-path'), OPENCODE_BIN: marker, OPENCODE_DB: path.join(temp, 'validate.db'),
+      OPENCODE_CONFIG: path.join(temp, 'poison-config'), OPENCODE_CONFIG_CONTENT: '{poison', OPENCODE_CONFIG_DIR: path.join(temp, 'poison-dir'),
+      OPENCODE_HARNESS_WORKSPACE_ROOT: absent[4], OPENCODE_HARNESS_RUNTIME_ROOT: path.join(temp, 'poison-runtime'), OPENCODE_HARNESS_TRACE_ROOT: absent[6],
+      HOME: absent[0], XDG_CACHE_HOME: absent[1], XDG_STATE_HOME: absent[2], XDG_DATA_HOME: absent[3],
+    };
+    const args = ['validate-inputs', '--provider-config', fixture.provider, '--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile];
+    const result = run(args, env, fixture.directory);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(result.stderr, '');
+    assert.equal(canonicalInventory(fixture.directory), before);
+    assert.equal(fs.existsSync(marker), false);
+    for (const pathname of absent) assert.equal(fs.existsSync(pathname), false, pathname);
+    assert.equal(fs.existsSync(requestMarker), false);
+
+    fs.writeFileSync(fixture.provider, '{', { mode: 0o600 });
+    const invalidBefore = canonicalInventory(fixture.directory);
+    const invalid = run(args, env, fixture.directory);
+    assert.equal(invalid.status, 1); assert.equal(invalid.stdout, '');
+    assert.equal(canonicalInventory(fixture.directory), invalidBefore);
+    assert.equal(fs.existsSync(marker), false);
+    for (const pathname of absent) assert.equal(fs.existsSync(pathname), false, pathname);
+    assert.equal(fs.existsSync(requestMarker), false);
+  } finally {
+    listener.kill();
+  }
 });
 
 test('run keeps workspace in cwd and forwards TUI, models, and run grammar unchanged', () => {
@@ -650,7 +832,7 @@ test('snapshot construction failure removes every partial launch directory', () 
   const cache = path.join(temp, 'snapshot-failure-cache');
   const result = run(['run', '--workspace', workspace, '--cache-root', cache, '--provider-config', provider], { OPENCODE_BIN: opencode.executable, OPENCODE_HARNESS_TESTING: '1', OPENCODE_HARNESS_TEST_SNAPSHOT_FAIL_AFTER: '1' });
   assert.match(result.stderr, /injected snapshot construction failure/);
-  const launches = path.join(cache, '0.1.9/opencode-1.18.18/launches');
+  const launches = path.join(cache, '0.1.10/opencode-1.18.18/launches');
   assert.deepEqual(fs.readdirSync(launches).filter((name) => name.startsWith('launch-')), []);
   assert.equal(fs.existsSync(opencode.capture), false);
 });

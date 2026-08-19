@@ -33,6 +33,7 @@ const SEEDS = [
 ];
 
 function fail(message) { throw new Error(`opencode-harness: ${message}`); }
+function singleLine(message) { return message.replace(/\r/g, '\\r').replace(/\n/g, '\\n'); }
 function mode(stat) { return Number(stat.mode & 0o777n); }
 function hash(bytes) { return createHash('sha256').update(bytes).digest('hex'); }
 function sameIdentity(before, after) {
@@ -159,7 +160,7 @@ function ensurePrivateDirectory(directory) {
 function manifest() {
   const value = readJson(MANIFEST_PATH, 'runtime manifest');
   const expected = ['compatibility', 'fileModes', 'files', 'generatedEntries', 'packageVersion', 'profile', 'schemaVersion'];
-  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.9' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
+  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.10' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
   const seenGenerated = new Set();
   for (const entry of value.generatedEntries) {
     const allowed = entry.path === '.harness-runtime.json' ? ['path', 'kind', 'mode', 'recursive', 'required', 'content'] : ['path', 'kind', 'mode', 'recursive', 'required'];
@@ -675,6 +676,10 @@ function chooseTraceRoot(workspace, explicit, runtimeRoot) {
 
 function inspectExternalFile(input, label) {
   if (!input || !path.isAbsolute(input)) fail(`${label} must be an absolute path`);
+  let supplied;
+  try { supplied = fs.lstatSync(input, { bigint: true }); }
+  catch (error) { fail(`${label} is unavailable: ${error.message}`); }
+  if (supplied.isSymbolicLink()) fail(`${label} must not be a symlink`);
   const resolved = fs.realpathSync(input);
   assertTrustedAncestry(path.dirname(resolved), `${label} parent`);
   const opened = readStableFile(resolved, label, { exactMode: 0o600 });
@@ -739,6 +744,43 @@ function validateCatalog(document) {
     if (!Number.isInteger(entry.maxInFlight) || entry.maxInFlight < 1 || entry.maxInFlight > 2147483647) fail(`routing catalog.models.${name}.maxInFlight is out of range`);
   }
   return document;
+}
+
+function validateExternalInputs(options) {
+  if (Boolean(options.catalog) !== Boolean(options.profile)) fail('--routing-catalog and --routing-profile are an all-or-none pair');
+  const inputs = [];
+  let providerDocument = null;
+  let catalogDocument = null;
+  if (options.providerConfig) {
+    const provider = inspectExternalFile(options.providerConfig, 'provider config');
+    providerDocument = validateProviderProjection(provider.document);
+    inputs.push({ key: 'provider', name: 'provider.json', bytes: provider.bytes });
+  }
+  if (options.catalog) {
+    const catalog = inspectExternalFile(options.catalog, 'routing catalog');
+    const profile = inspectExternalFile(options.profile, 'routing profile');
+    catalogDocument = validateCatalog(catalog.document);
+    normalizeAndValidateRoutingConfig(mergeExternalRoutingDocuments(catalog.document, profile.document));
+    inputs.push({ key: 'catalog', name: 'catalog.json', bytes: catalog.bytes }, { key: 'profile', name: 'profile.json', bytes: profile.bytes });
+  }
+  if (providerDocument && catalogDocument) {
+    for (const [name, entry] of Object.entries(catalogDocument.models)) {
+      const provider = providerDocument.provider[name];
+      const model = entry.model.slice(name.length + 1);
+      if (!provider || !Object.hasOwn(provider.models, model) || provider.options.baseURL !== entry.routingServiceUrl) fail(`provider/catalog mismatch for ${name}`);
+    }
+    if (Object.keys(providerDocument.provider).length !== Object.keys(catalogDocument.models).length) fail('provider/catalog provider sets differ');
+  }
+  return {
+    inputs,
+    providerDocument,
+    catalogDocument,
+    presence: {
+      providerConfig: Boolean(options.providerConfig),
+      routingCatalog: Boolean(options.catalog),
+      routingProfile: Boolean(options.profile),
+    },
+  };
 }
 
 function createSnapshots(runtimeRoot, inputs) {
@@ -947,6 +989,21 @@ function resolveExecutable() {
 
 function parse(argv) {
   const command = argv.shift() ?? 'help';
+  if (command === 'validate-inputs') {
+    const options = { forward: [] };
+    const keys = new Map([['--provider-config', 'providerConfig'], ['--routing-catalog', 'catalog'], ['--routing-profile', 'profile']]);
+    const seen = new Set();
+    while (argv.length) {
+      const token = argv.shift();
+      const key = keys.get(token);
+      if (!key || seen.has(key) || argv.length === 0 || argv[0] === '--' || keys.has(argv[0])) fail(`unknown, duplicate, or incomplete option: ${token}`);
+      seen.add(key);
+      options[key] = argv.shift();
+    }
+    if (!options.providerConfig && !options.catalog && !options.profile) fail('validate-inputs requires at least one input');
+    if (Boolean(options.catalog) !== Boolean(options.profile)) fail('--routing-catalog and --routing-profile are an all-or-none pair');
+    return { command, options };
+  }
   const options = { forward: [] };
   while (argv.length) {
     const token = argv.shift();
@@ -960,7 +1017,14 @@ function parse(argv) {
 }
 
 function usage() {
-  return `Usage:\n  opencode-harness prepare [--cache-root ABS]\n  opencode-harness run --workspace ABS [--trace-root ABS] [--cache-root ABS]\n    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n    [--allow-project-plugins] [-- OPENCODE_ARGS...]\n`;
+  return `Usage:\n  opencode-harness prepare [--cache-root ABS]\n  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n  opencode-harness run --workspace ABS [--trace-root ABS] [--cache-root ABS]\n    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n    [--allow-project-plugins] [-- OPENCODE_ARGS...]\n`;
+}
+
+function validateInputs(options) {
+  const value = manifest();
+  assertNodeCompatibility(value);
+  const validated = validateExternalInputs(options);
+  return JSON.stringify({ schemaVersion: '1.0.0', valid: true, packageVersion: value.packageVersion, inputs: validated.presence });
 }
 
 function run(options) {
@@ -974,29 +1038,7 @@ function run(options) {
   for (const [left, right, label] of [[workspace, runtimeRoot, 'workspace/runtime'], [runtimeRoot, traceRoot, 'runtime/trace']]) if (left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`)) fail(`${label} roots must not overlap`);
   if (traceRoot.startsWith(`${workspace}${path.sep}`) && traceRoot !== path.join(workspace, '.memory')) fail('workspace/trace roots may overlap only at the ignored workspace .memory directory');
 
-  const inputs = [];
-  let providerDocument = null;
-  let catalogDocument = null;
-  if (options.providerConfig) {
-    const provider = inspectExternalFile(options.providerConfig, 'provider config');
-    providerDocument = validateProviderProjection(provider.document);
-    inputs.push({ key: 'provider', name: 'provider.json', bytes: provider.bytes });
-  }
-  if (options.catalog) {
-    const catalog = inspectExternalFile(options.catalog, 'routing catalog');
-    const profile = inspectExternalFile(options.profile, 'routing profile');
-    catalogDocument = validateCatalog(catalog.document);
-    normalizeAndValidateRoutingConfig(mergeExternalRoutingDocuments(catalog.document, profile.document));
-    inputs.push({ key: 'catalog', name: 'catalog.json', bytes: catalog.bytes }, { key: 'profile', name: 'profile.json', bytes: profile.bytes });
-  }
-  if (providerDocument && catalogDocument) {
-    for (const [name, entry] of Object.entries(catalogDocument.models)) {
-      const provider = providerDocument.provider[name];
-      const model = entry.model.slice(name.length + 1);
-      if (!provider || !Object.hasOwn(provider.models, model) || provider.options.baseURL !== entry.routingServiceUrl) fail(`provider/catalog mismatch for ${name}`);
-    }
-    if (Object.keys(providerDocument.provider).length !== Object.keys(catalogDocument.models).length) fail('provider/catalog provider sets differ');
-  }
+  const { inputs } = validateExternalInputs(options);
   let snapshots = null;
   let resultStatus = 1;
   let originalError = null;
@@ -1024,9 +1066,10 @@ try {
   const { command, options } = parse(process.argv.slice(2));
   if (command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usage()); process.exitCode = 0; }
   else if (command === 'prepare') process.stdout.write(`${prepareRuntime(options)}\n`);
+  else if (command === 'validate-inputs') process.stdout.write(`${validateInputs(options)}\n`);
   else if (command === 'run') process.exitCode = run(options);
   else fail(`unknown command: ${command}`);
 } catch (error) {
-  process.stderr.write(`${error.message}\n`);
+  process.stderr.write(`${singleLine(error.message)}\n`);
   process.exitCode = 1;
 }

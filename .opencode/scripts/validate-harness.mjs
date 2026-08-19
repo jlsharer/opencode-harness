@@ -359,7 +359,7 @@ function assertRuntimeManifest(runtimeManifest) {
   if (!destinations.includes('schemas/opencode-provider-projection.schema.json')) fail('Runtime manifest must include the provider projection schema');
   if (runtimeManifest.files.length !== 36 || !destinations.includes('plugin-modules/task-thread-policy.js') || !destinations.includes('plugin-modules/trace-root-permissions.js')) fail('Runtime manifest must contain the exact 36-file external runtime including trace permissions');
   const packageManifest = json('package.json');
-  if (packageManifest.version !== '0.1.9' || runtimeManifest.packageVersion !== packageManifest.version) fail('Package and runtime manifest versions must both equal 0.1.9');
+  if (packageManifest.version !== '0.1.10' || runtimeManifest.packageVersion !== packageManifest.version) fail('Package and runtime manifest versions must both equal 0.1.10');
   if (!Array.isArray(packageManifest.files) || packageManifest.files.filter((pathname) => pathname === 'README.md').length !== 1) fail('Package files must include README.md exactly once');
   for (const pathname of ['.opencode/bootstrap', '.opencode/plugin-modules']) {
     if (packageManifest.files.includes(pathname)) fail(`Package files must not include broad source-only directory: ${pathname}`);
@@ -368,13 +368,19 @@ function assertRuntimeManifest(runtimeManifest) {
     if (packageManifest.files.includes(pathname)) fail(`Package files must exclude source-only payload: ${pathname}`);
   }
   const launcher = read('bin/opencode-harness.mjs');
-  if (!launcher.includes("value.packageVersion !== '0.1.9'")) fail('Runtime launcher must reject package versions other than 0.1.9');
+  if (!launcher.includes("value.packageVersion !== '0.1.10'")) fail('Runtime launcher must reject package versions other than 0.1.10');
+  if (!launcher.includes('opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]')) fail('Runtime launcher help must expose the exact validate-inputs grammar');
+  for (const pathname of ["'../.opencode/routing/routing-config-loader.mjs'", "'../.opencode/routing/routing-policy.mjs'"]) if (!launcher.includes(pathname)) fail(`Runtime launcher packaged import is missing: ${pathname}`);
   for (const snippet of ["'OPENCODE_DB'", 'OPENCODE_DB: snapshot.database', "'opencode.db-wal'", "'opencode.db-shm'", 'parentIdentity', 'directoryIdentity', '.quarantine-', 'removeContainedEntry', 'retained launch:', 'retained quarantine:', 'quarantine dev/ino', 'quarantine path still exists after recursive unlink']) {
     if (!launcher.includes(snippet)) fail(`Runtime launcher database isolation is missing: ${snippet}`);
   }
   const design = read('opencode-harness.design.md');
-  for (const snippet of ['opencode-harness-runtime` 0.1.9', '/0.1.9/opencode-1.18.18/runtime', '0.1.8']) {
+  for (const snippet of ['opencode-harness-runtime` 0.1.10', '/0.1.10/opencode-1.18.18/runtime', '0.1.9', 'validate-inputs']) {
     if (!design.includes(snippet)) fail(`Runtime release documentation is missing: ${snippet}`);
+  }
+  const readme = read('README.md');
+  for (const snippet of ['OpenCode Harness Runtime 0.1.10', 'opencode-harness-runtime-0.1.10.tgz', 'Package version `0.1.10`', 'retained version `0.1.9`', 'opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]']) {
+    if (!readme.includes(snippet)) fail(`Runtime README release documentation is missing: ${snippet}`);
   }
 }
 
@@ -400,7 +406,7 @@ function assertExactPackagePayload(runtimeManifest) {
   try { reports = JSON.parse(result.stdout); } catch (error) { fail(`npm pack dry-run returned malformed JSON: ${error.message}`); }
   if (!Array.isArray(reports) || reports.length !== 1) fail('npm pack dry-run must return one package report');
   const report = reports[0];
-  if (report.name !== 'opencode-harness-runtime' || report.version !== '0.1.9' || !Array.isArray(report.files)) fail('npm pack report identity is invalid');
+  if (report.name !== 'opencode-harness-runtime' || report.version !== '0.1.10' || !Array.isArray(report.files)) fail('npm pack report identity is invalid');
   const actual = report.files.map((entry) => entry.path);
   const expected = ['package.json', 'README.md', 'bin/opencode-harness.mjs', '.opencode/runtime.manifest.json', ...runtimeManifest.files.map((entry) => entry.source)];
   if (actual.length !== 40 || new Set(actual).size !== 40) fail(`npm payload must contain exactly 40 unique paths; got ${actual.length}`);

@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.9
+# OpenCode Harness Runtime 0.1.10
 
 `opencode-harness-runtime` is a no-copy launcher for the repository's four-role OpenCode delegation harness: `researcher`, `planner`, `implementer`, and `validator`. Planner, implementer, and validator packets carry explicit bounded task modes for synthesis, integration, adversarial review, artifact proof, and integration checks.
 
@@ -21,7 +21,7 @@ npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS
 npm pack --pack-destination /OWNER/ONLY/PACKS
 mkdir -m 700 /OWNER/ONLY/EXTRACT
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.9.tgz -C /OWNER/ONLY/EXTRACT
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.10.tgz -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
 
@@ -33,6 +33,7 @@ The complete launcher grammar is:
 
 ```text
 opencode-harness prepare [--cache-root ABS]
+opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]
 opencode-harness run --workspace ABS [--trace-root ABS] [--cache-root ABS]
   [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]
   [--allow-project-plugins] [-- OPENCODE_ARGS...]
@@ -129,9 +130,30 @@ node bin/opencode-harness.mjs run \
 
 Authentication remains native external OpenCode state. Do not place tokens, credentials, auth paths, global configuration, provider secrets, or `OPENCODE_CONFIG_CONTENT` secrets in these files or command examples.
 
+### Offline input validation
+
+`validate-inputs` applies the same closed provider, catalog, profile, metadata, force-local, and cross-document checks used by `run`, without preparing a runtime or selecting a workspace:
+
+```sh
+node bin/opencode-harness.mjs validate-inputs \
+  --provider-config /OWNER/ONLY/provider.json \
+  --routing-catalog /OWNER/ONLY/catalog.json \
+  --routing-profile /OWNER/ONLY/profile.json
+```
+
+The accepted combinations are provider alone, catalog plus profile, or all three. No inputs, a partial catalog/profile pair, duplicate or unknown options, workspace/cache/trace/plugin options, positional files, and `--` forwarding are rejected. Each file must be an absolute current-user-owned mode-`0600` regular JSON file of at most 1 MiB beneath trusted resolved ancestry. A caller-supplied symbolic-link leaf is rejected, and reads retain no-follow and before/after stability checks.
+
+Success exits `0`, writes nothing to stderr, and writes exactly one compact JSON line to stdout (shown here for all three inputs):
+
+```json
+{"schemaVersion":"1.0.0","valid":true,"packageVersion":"0.1.10","inputs":{"providerConfig":true,"routingCatalog":true,"routingProfile":true}}
+```
+
+A grammar, trust, parse, schema, policy, or cross-document failure exits `1`, writes no stdout, and writes one human-readable error line to stderr. This command performs package compatibility reads and explicit input reads only: it does not inspect a workspace, create cache/trace/snapshot/database state, resolve or run OpenCode, spawn a child, contact a provider, or inspect or mutate global OpenCode/auth state. Ambient OpenCode, harness, HOME, XDG, database, executable, and PATH variables do not select validation inputs. Success proves offline structural and semantic compatibility only, not endpoint health, model identity, authentication, capacity, OpenCode activation, or restart acceptance. Consumers must strictly parse the result and separately pin package/source/entrypoint identity.
+
 ## Runtime, traces, and rollback
 
-`prepare` creates or verifies an owner-only cache under the default versioned cache root, or under an optional canonical absolute `--cache-root`. Package version `0.1.9` and harness adapter version `0.1.0` describe different contracts and intentionally differ. Managed drift, unsafe ownership or modes, symlinks, and collisions fail closed; the launcher does not repair them. Prior package-version caches remain separate and retained. Roll back by invoking retained version `0.1.8`, not by using a rollback subcommand.
+`prepare` creates or verifies an owner-only cache under the default versioned cache root, or under an optional canonical absolute `--cache-root`. Package version `0.1.10` and harness adapter version `0.1.0` describe different contracts and intentionally differ. Managed drift, unsafe ownership or modes, symlinks, and collisions fail closed; the launcher does not repair them. Prior package-version caches remain separate and retained. Roll back by invoking retained version `0.1.9`, not by using a rollback subcommand.
 
 Launcher setup does not copy or create workspace `.opencode` and does not itself edit workspace files or Git state. After spawn, OpenCode commands and project plugins explicitly allowed with `--allow-project-plugins` run in the workspace and can modify files or Git state; review their actions and resulting diffs. Runtime, workspace, trace, launch-snapshot, and database roots remain separate. Ambient `OPENCODE_DB` is rejected; each launch receives unique initially absent database, WAL, and SHM paths. `XDG_DATA_HOME` passes through unchanged. Cleanup failures and identity mismatches fail closed and report an absolute retained launch or quarantine path for owner action.
 
@@ -170,4 +192,4 @@ npm pack --dry-run --json
 git diff --check
 ```
 
-These checks cover source inventory, routing policy, no-copy runtime behavior, foreign-workspace Git isolation, the portable profile, and the exact 40-entry Linux npm payload with fake children and fixtures. The npm package excludes Darwin bootstrap source/binaries, dedicated trace-permission tests, source-only policy tests, private/generated trace state, and custom routing. Inspect any concrete local tarball separately for `package/README.md`, package version `0.1.9`, executable `package/bin/opencode-harness.mjs`, and the same exact allowlist. The activation marker and plugin hooks are startup guardrails, not validator acceptance evidence or proof of provider/model behavior.
+These checks cover source inventory, routing policy, no-copy runtime behavior, foreign-workspace Git isolation, the portable profile, and the exact 40-entry Linux npm payload with fake children and fixtures. The npm package excludes Darwin bootstrap source/binaries, dedicated trace-permission tests, source-only policy tests, private/generated trace state, and custom routing. Inspect any concrete local tarball separately for `package/README.md`, package version `0.1.10`, executable `package/bin/opencode-harness.mjs`, and the same exact allowlist. The activation marker and plugin hooks are startup guardrails, not validator acceptance evidence or proof of provider/model behavior.
