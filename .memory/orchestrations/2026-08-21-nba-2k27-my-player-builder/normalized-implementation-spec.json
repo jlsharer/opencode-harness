@@ -1,0 +1,78 @@
+{
+  "schemaVersion": "1.0.0",
+  "orchestrationId": "2026-08-21-nba-2k27-my-player-builder",
+  "goal": "Implement the accepted NBA 2K27 MyPLAYER optimizer plan as a standalone Node 24 application in /tmp/opencode/nba2k27-myplayer, through a fake-tested BlueStacks UI adapter, without live emulator or network operation.",
+  "deliverables": [
+    "A standalone package with closed schemas, typed domain contracts, deterministic replay/manual capture, black-box optimization, structured reports, security controls, and a fake-tested BlueStacks UI adapter.",
+    "Automated tests, synthetic fixtures, operator/data/optimization documentation, and independent command-backed validation for each implementation body and final integration."
+  ],
+  "nonGoals": [
+    "No live BlueStacks, NBA 2K HQ, ADB, account, credential, app, or network operation.",
+    "No network diagnostic adapter, TLS interception, certificate installation, pinning bypass, private endpoint replay, publication, or Git mutation.",
+    "No changes to the OpenCode harness source, package, manifest, configuration, or runtime behavior."
+  ],
+  "allowedPaths": [
+    "/tmp/opencode/nba2k27-myplayer/",
+    ".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/"
+  ],
+  "acceptanceGates": [
+    {"id":"gate-bootstrap-contracts","criterion":"The standalone package, closed schemas, vocabulary, evidence/context facts, semantic validation, and synthetic fixtures implement the accepted plan contracts.","evidenceCommand":"npm test","workUnitIds":["impl-bootstrap-contracts","validate-bootstrap-contracts"]},
+    {"id":"gate-optimizer","criterion":"Hard partitioning, soft priorities, context cache, deterministic proposals, Pareto and near-tie behavior, confidence, stopping, and replay invariants are tested.","evidenceCommand":"node --test test/nba2k27-myplayer/optimizer.test.mjs","workUnitIds":["impl-optimizer","validate-optimizer"]},
+    {"id":"gate-oracles-reports","criterion":"Replay/manual capture and JSON/Markdown reports are deterministic, provenance-preserving, and correctly expose satisfied, missed, unknown, costs, confidence, assumptions, and deltas.","evidenceCommand":"node --test test/nba2k27-myplayer/oracles-reports.test.mjs","workUnitIds":["impl-oracles-reports","validate-oracles-reports"]},
+    {"id":"gate-ui-adapter","criterion":"State recognition, preflight, approval, redaction, fake host transport, and bounded UI planning/execution fail closed without live host access.","evidenceCommand":"node --test test/nba2k27-myplayer/ui-adapter.test.mjs","workUnitIds":["impl-ui-adapter","validate-ui-adapter"]},
+    {"id":"gate-integration","criterion":"CLI validation, replay optimization, deterministic manifest replay, docs, package checks, and the complete offline suite pass with no live or network dependency.","evidenceCommand":"npm test && npm pack --dry-run --json","workUnitIds":["impl-integration","validate-integration"]},
+    {"id":"gate-no-live-scope","criterion":"Implementation contains no network adapter and performs no live emulator, app, account, credential, source-harness, or Git mutation.","evidenceCommand":"test ! -e src/nba2k27-myplayer/oracle/network-metadata-oracle.mjs","workUnitIds":["impl-ui-adapter","impl-integration","validate-integration"]}
+  ],
+  "workUnits": [
+    {"id":"impl-bootstrap-contracts","goal":"Create the standalone package and shared closed data/domain contracts.","deliverable":"Package metadata, schemas, vocabulary, provenance, requirement and semantic validation modules, plus contract fixtures/tests.","nonGoals":["Do not implement optimizer, oracle adapters, live behavior, or network code."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/package.json","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/schemas/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/domain/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/fixtures/synthetic/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/contracts.test.mjs"],"acceptanceGateIds":["gate-bootstrap-contracts"]},
+    {"id":"validate-bootstrap-contracts","goal":"Independently validate package and contract behavior.","deliverable":"Command-backed validation trace and remediation list.","nonGoals":["Do not implement fixes."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/",".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/"],"acceptanceGateIds":["gate-bootstrap-contracts"]},
+    {"id":"impl-optimizer","goal":"Implement the deterministic constrained multi-objective optimizer core.","deliverable":"Cache, objectives, hard partition, proposal, feasibility, sensitivity, Pareto, near-tie, confidence, stopping, and run modules with tests.","nonGoals":["Do not implement oracle or host adapters."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/optimizer/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/optimizer.test.mjs"],"acceptanceGateIds":["gate-optimizer"]},
+    {"id":"validate-optimizer","goal":"Independently validate optimizer invariants.","deliverable":"Command-backed optimizer findings.","nonGoals":["Do not implement fixes."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/optimizer/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/optimizer.test.mjs",".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/"],"acceptanceGateIds":["gate-optimizer"]},
+    {"id":"impl-oracles-reports","goal":"Implement offline replay/manual capture and reports.","deliverable":"Oracle interface, replay/manual adapters, normalization, JSON/Markdown reports, fixtures, and tests.","nonGoals":["Do not implement live host or network access."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/oracle.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/replay-oracle.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/manual-capture-oracle.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/capture/normalize-observation.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/report/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/oracles-reports.test.mjs","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/fixtures/replay/"],"acceptanceGateIds":["gate-oracles-reports"]},
+    {"id":"validate-oracles-reports","goal":"Independently validate offline oracle and report behavior.","deliverable":"Command-backed oracle/report findings.","nonGoals":["Do not implement fixes."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/capture/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/report/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/oracles-reports.test.mjs",".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/"],"acceptanceGateIds":["gate-oracles-reports"]},
+    {"id":"impl-ui-adapter","goal":"Implement a fake-tested, approval-gated BlueStacks UI adapter without live operation.","deliverable":"State machine, host profile, recognizers, approval/redaction, observability, abstract/fake host adapter, preflight and bounded UI oracle with tests.","nonGoals":["No live commands, ADB invocation, network code, credentials, or emulator interaction."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/state/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/capture/recognizers.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/host-adapter.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/bluestacks-ui-oracle.mjs","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/security/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/observability/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/ui-adapter.test.mjs"],"acceptanceGateIds":["gate-ui-adapter","gate-no-live-scope"]},
+    {"id":"validate-ui-adapter","goal":"Independently validate fail-closed UI adapter behavior.","deliverable":"Command-backed state/security/adapter findings.","nonGoals":["Do not operate live systems or implement fixes."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/state/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/oracle/","/tmp/opencode/nba2k27-myplayer/src/nba2k27-myplayer/security/","/tmp/opencode/nba2k27-myplayer/test/nba2k27-myplayer/ui-adapter.test.mjs",".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/"],"acceptanceGateIds":["gate-ui-adapter"]},
+    {"id":"impl-integration","goal":"Integrate the standalone CLI, exports, docs, and complete offline workflow.","deliverable":"Public index, CLI, integration tests, docs, package scripts/files, and coherent end-to-end replay/manual flow.","nonGoals":["No live operation, network adapter, publication, or Git mutation."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/"],"acceptanceGateIds":["gate-integration","gate-no-live-scope"]},
+    {"id":"validate-integration","goal":"Independently validate the complete standalone package and scope boundary.","deliverable":"Final command-backed gate matrix and artifact proof.","nonGoals":["Do not implement fixes, publish, or operate live systems."],"allowedPaths":["/tmp/opencode/nba2k27-myplayer/",".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/"],"acceptanceGateIds":["gate-integration","gate-no-live-scope"]}
+  ],
+  "roleModeTaskMapping": [
+    {"workUnitId":"impl-bootstrap-contracts","role":"implementer","taskMode":"implementation","boundedTask":"Create standalone package and shared contracts."},
+    {"workUnitId":"validate-bootstrap-contracts","role":"validator","taskMode":"artifact-proof","boundedTask":"Validate shared contracts independently."},
+    {"workUnitId":"impl-optimizer","role":"implementer","taskMode":"implementation","boundedTask":"Implement optimizer core in assigned paths."},
+    {"workUnitId":"validate-optimizer","role":"validator","taskMode":"validation","boundedTask":"Validate optimizer invariants independently."},
+    {"workUnitId":"impl-oracles-reports","role":"implementer","taskMode":"implementation","boundedTask":"Implement replay/manual oracles and reports."},
+    {"workUnitId":"validate-oracles-reports","role":"validator","taskMode":"validation","boundedTask":"Validate offline oracles and reports independently."},
+    {"workUnitId":"impl-ui-adapter","role":"implementer","taskMode":"implementation","boundedTask":"Implement fake-tested UI adapter and safety controls."},
+    {"workUnitId":"validate-ui-adapter","role":"validator","taskMode":"review","boundedTask":"Review UI adapter safety and state behavior independently."},
+    {"workUnitId":"impl-integration","role":"implementer","taskMode":"integration","boundedTask":"Integrate CLI, exports, docs, package, and tests."},
+    {"workUnitId":"validate-integration","role":"validator","taskMode":"integration-check","boundedTask":"Validate complete offline integration and scope boundary."}
+  ],
+  "dag": {
+    "dependencies": [
+      {"workUnitId":"impl-bootstrap-contracts","dependsOn":[]},
+      {"workUnitId":"validate-bootstrap-contracts","dependsOn":["impl-bootstrap-contracts"]},
+      {"workUnitId":"impl-optimizer","dependsOn":["validate-bootstrap-contracts"]},
+      {"workUnitId":"impl-oracles-reports","dependsOn":["validate-bootstrap-contracts"]},
+      {"workUnitId":"impl-ui-adapter","dependsOn":["validate-bootstrap-contracts"]},
+      {"workUnitId":"validate-optimizer","dependsOn":["impl-optimizer"]},
+      {"workUnitId":"validate-oracles-reports","dependsOn":["impl-oracles-reports"]},
+      {"workUnitId":"validate-ui-adapter","dependsOn":["impl-ui-adapter"]},
+      {"workUnitId":"impl-integration","dependsOn":["validate-optimizer","validate-oracles-reports","validate-ui-adapter"]},
+      {"workUnitId":"validate-integration","dependsOn":["impl-integration"]}
+    ],
+    "parallelism": {"mode":"parallel","authorization":"explicit","distinctCapacityEvidence":null}
+  },
+  "budgets": {
+    "defaultRemediationCyclesPerWorkUnit": 1,
+    "maxRemediationCyclesPerWorkUnit": 3,
+    "maxTotalLeafAgents": 26,
+    "maxLeafAgentsByRole": {"researcher":0,"planner":0,"implementer":13,"validator":13}
+  },
+  "scopeExpansion": {"policy":"explicit-only","requiresUserApproval":true},
+  "authorization": {
+    "liveProviders": false,
+    "userGlobalMutation": false,
+    "git": {"commit":false,"amend":false,"push":false,"otherMutation":false}
+  },
+  "routingMetadataStatus": "absent"
+}

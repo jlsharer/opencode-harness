@@ -35,10 +35,22 @@ export function applyHarnessRoleModelOverrides(cfg, options = {}) {
         ? { configPath: options.routingPath, fallbackDirectory: path.join(runtimeRoot(), 'routing') }
         : { configPath: options.routingPath, startPath: projectPathFromContext(options) }).document;
     plan = resolveAllHarnessRoleAssignments(document);
-    // Outside force mode the shared plan intentionally contains only non-null
-    // native roleOverrides models. Local selectors, singleModel, and defaultModel
-    // remain resolver-only advisory routing policy and never mutate agents.
+    // The shared plan resolves all role assignments and provider-class filters
+    // before any native config mutation.
     validateNativeProviderCoherence(cfg, plan);
+    for (const key of ['enabled_providers', 'disabled_providers']) {
+      if (cfg[key] !== undefined && (!Array.isArray(cfg[key]) || cfg[key].some((value) => typeof value !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value)))) throw new Error(`$.nativeConfig.${key} must be an array of provider IDs`);
+    }
+    const enabled = cfg.enabled_providers === undefined ? undefined : [...new Set(cfg.enabled_providers)];
+    const disabled = [...new Set(cfg.disabled_providers ?? [])];
+    if (plan.mode === 'local-only') {
+      plan.enabledProviders = plan.localProviders;
+      plan.disabledProviders = disabled.filter((provider) => !plan.localProviders.includes(provider));
+    } else if (plan.mode === 'cloud-only') {
+      plan.enabledProviders = enabled?.filter((provider) => !plan.localProviders.includes(provider));
+      plan.disabledProviders = [...new Set([...disabled, ...plan.localProviders])].sort();
+    }
+    if (plan.enabledProviders?.some((provider) => plan.disabledProviders?.includes(provider))) throw new Error('native provider filters would be contradictory');
   } catch (error) {
     if (error.message.startsWith('Harness role model routing enforcement failed:')) throw error;
     throw new Error(`Harness role model routing enforcement failed: ${error.message}`);
@@ -51,6 +63,13 @@ export function applyHarnessRoleModelOverrides(cfg, options = {}) {
     if (assignment === null) continue;
     cfg.agent[role].model = assignment.model;
     cfg.agent[role].mode = 'subagent';
+  }
+  if (plan.mode === 'local-only') {
+    cfg.enabled_providers = plan.enabledProviders;
+    cfg.disabled_providers = plan.disabledProviders;
+  } else if (plan.mode === 'cloud-only') {
+    if (plan.enabledProviders !== undefined) cfg.enabled_providers = plan.enabledProviders;
+    cfg.disabled_providers = plan.disabledProviders;
   }
   return plan;
 }

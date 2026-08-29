@@ -51,6 +51,7 @@ function deepFreeze(value) {
 
 function forceConfig() {
   const config = routing();
+  config.providerClassMode = 'local-only';
   config.localRouting.forceLocalForHarnessSubagents = true;
   return config;
 }
@@ -129,7 +130,7 @@ test('external profile rejects embedded models, force mode, provider fields, and
   const { catalog, profile } = externalPair();
   assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, provider: {} }), /provider is forbidden/);
   assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, localRouting: { ...profile.localRouting, models: {} } }), /models is forbidden/);
-  assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, localRouting: { ...profile.localRouting, forceLocalForHarnessSubagents: true } }), /must be false/);
+  assert.throws(() => mergeExternalRoutingDocuments(catalog, { ...profile, localRouting: { ...profile.localRouting, forceLocalForHarnessSubagents: true } }), /contradicts providerClassMode/);
   const unknown = clone(profile);
   unknown.localRouting.defaultLocalModel = 'missing';
   assert.throws(() => normalizeAndValidateRoutingConfig(mergeExternalRoutingDocuments(catalog, unknown)), /must reference/);
@@ -184,21 +185,21 @@ test('force plan assigns all four by role selector or catalog default', () => {
   const config = forceConfig();
   config.roleOverrides.planner.localModel = null;
   const plan = resolveAllHarnessRoleAssignments(config);
-  assert.equal(plan.mode, 'force-local');
+  assert.equal(plan.mode, 'local-only');
   assert.deepEqual(Object.keys(plan.assignments), FIXED_HARNESS_ROLES);
   assert.equal(plan.assignments.planner.catalogName, 'qwen-coder');
   assert.equal(plan.assignments.researcher.catalogName, 'qwen-research');
   assert.ok(Object.values(plan.assignments).every(Boolean));
 });
 
-test('outside force only non-null native role overrides are assignments', () => {
+test('mixed applies local role mappings and preserves an explicit native override', () => {
   const config = routing();
   config.roleOverrides.implementer.localModel = null;
   config.roleOverrides.implementer.model = 'cloud/coder';
   const plan = resolveAllHarnessRoleAssignments(config);
-  assert.equal(plan.mode, 'role-overrides');
+  assert.equal(plan.mode, 'mixed');
   assert.deepEqual(plan.assignments.implementer, { model: 'cloud/coder', catalogName: null, routingServiceUrl: null, maxInFlight: null });
-  assert.equal(Object.values(plan.assignments).filter(Boolean).length, 1);
+  assert.equal(Object.values(plan.assignments).filter(Boolean).length, 4);
 });
 
 test('all fixed commands lock targets and reject every explicit escape shape', () => {
@@ -673,7 +674,7 @@ test('force enforcement mutates all four agents only after complete preflight', 
   const cfg = nativeConfig();
   const providersBefore = clone(cfg.provider);
   const plan = applyHarnessRoleModelOverrides(cfg, { routingDocument: forceConfig() });
-  assert.equal(plan.mode, 'force-local');
+  assert.equal(plan.mode, 'local-only');
   assert.ok(FIXED_HARNESS_ROLES.every((role) => typeof cfg.agent[role].model === 'string' && cfg.agent[role].mode === 'subagent'));
   assert.deepEqual(cfg.provider, providersBefore);
 });
@@ -687,18 +688,41 @@ test('non-force enforcement preserves config-derived null/no-own-property behavi
   config.roleOverrides.implementer.model = 'llamacpp-coder/qwen2.5-coder-7b';
   applyHarnessRoleModelOverrides(cfg, { routingDocument: config });
   assert.equal(cfg.agent.implementer.model, 'llamacpp-coder/qwen2.5-coder-7b');
-  assert.equal(FIXED_HARNESS_ROLES.filter((role) => Object.hasOwn(cfg.agent[role], 'model')).length, 1);
+  assert.equal(FIXED_HARNESS_ROLES.filter((role) => Object.hasOwn(cfg.agent[role], 'model')).length, 4);
 });
 
-test('neutral and advisory local config hooks need no providers and do not mutate agents', () => {
-  for (const routingDocument of [committed, localCommitted]) {
-    const cfg = { agent: Object.fromEntries(FIXED_HARNESS_ROLES.map((role) => [role, { mode: 'subagent' }])) };
-    const before = clone(cfg);
-    const plan = applyHarnessRoleModelOverrides(cfg, { routingDocument });
-    assert.equal(plan.mode, 'role-overrides');
-    assert.ok(Object.values(plan.assignments).every((assignment) => assignment === null));
-    assert.deepEqual(cfg, before);
-  }
+test('neutral config is inert while mixed local config applies validated mappings', () => {
+  const neutral = { agent: Object.fromEntries(FIXED_HARNESS_ROLES.map((role) => [role, { mode: 'subagent' }])) };
+  const before = clone(neutral);
+  const neutralPlan = applyHarnessRoleModelOverrides(neutral, { routingDocument: committed });
+  assert.equal(neutralPlan.mode, 'mixed');
+  assert.ok(Object.values(neutralPlan.assignments).every((assignment) => assignment === null));
+  assert.deepEqual(neutral, before);
+  const local = nativeConfig();
+  const localPlan = applyHarnessRoleModelOverrides(local, { routingDocument: localCommitted });
+  assert.equal(localPlan.mode, 'mixed');
+  assert.ok(FIXED_HARNESS_ROLES.every((role) => typeof local.agent[role].model === 'string'));
+});
+
+test('strict provider modes mutate native filters only after full preflight', () => {
+  const localCfg = nativeConfig();
+  localCfg.enabled_providers = ['cloud', 'llamacpp-research'];
+  localCfg.disabled_providers = ['llamacpp-coder', 'other'];
+  applyHarnessRoleModelOverrides(localCfg, { routingDocument: forceConfig() });
+  assert.deepEqual(localCfg.enabled_providers, ['llamacpp-coder', 'llamacpp-research']);
+  assert.deepEqual(localCfg.disabled_providers, ['other']);
+
+  const cloud = routing();
+  cloud.providerClassMode = 'cloud-only';
+  cloud.localRouting.defaultLocalModel = null;
+  for (const role of FIXED_HARNESS_ROLES) cloud.roleOverrides[role].localModel = null;
+  const cloudCfg = nativeConfig();
+  cloudCfg.enabled_providers = ['cloud', 'llamacpp-coder'];
+  cloudCfg.disabled_providers = ['other'];
+  const plan = applyHarnessRoleModelOverrides(cloudCfg, { routingDocument: cloud });
+  assert.ok(Object.values(plan.assignments).every((assignment) => assignment === null));
+  assert.deepEqual(cloudCfg.enabled_providers, ['cloud']);
+  assert.deepEqual(cloudCfg.disabled_providers, ['llamacpp-coder', 'llamacpp-research', 'other']);
 });
 
 test('every force failure position including fourth is atomic and providers never mutate', () => {

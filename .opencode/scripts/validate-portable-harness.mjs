@@ -275,9 +275,15 @@ async function validateRoutingAndPlugin(root) {
   await hooks.config(nativeConfig);
   if (JSON.stringify(nativeConfig) !== '{}') fail('neutral no-provider config hook must be a no-op');
   const localHooks = await plugin.default({ routingPath: localPath, project: { root } });
-  const localNativeConfig = {};
+  const localNativeConfig = {
+    agent: Object.fromEntries(['researcher', 'planner', 'implementer', 'validator'].map((role) => [role, { mode: 'subagent' }])),
+    provider: {
+      'llamacpp-research': { options: { baseURL: 'http://127.0.0.1:8080/v1' }, models: { 'qwen2.5-7b-instruct': {} } },
+      'llamacpp-coder': { options: { baseURL: 'http://127.0.0.1:8081/v1' }, models: { 'qwen2.5-coder-7b': {} } },
+    },
+  };
   await localHooks.config(localNativeConfig);
-  if (JSON.stringify(localNativeConfig) !== '{}') fail('advisory local no-provider config hook must be a no-op');
+  if (['researcher', 'planner', 'implementer', 'validator'].some((role) => typeof localNativeConfig.agent[role].model !== 'string')) fail('mixed local config hook must assign all four roles');
   const traceTest = await regularFile(root, '.opencode/plugin-modules/trace-root-permissions.test.mjs');
   const traceTestSource = await readFile(traceTest, 'utf8');
   for (const snippet of ["from './trace-root-permissions.js'", 'absent and exact workspace memory are no-ops', 'four external allows and only three trailing md edit allows are role-isolated', 'probe pair is closed, exclusive, owner-only and exact']) {

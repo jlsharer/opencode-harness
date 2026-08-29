@@ -1,0 +1,96 @@
+{
+  "schemaVersion": "1.0.0",
+  "orchestrationId": "2026-08-21-nba2k27-bluestacks-preparation",
+  "goal": "Prepare the standalone NBA 2K27 MyPLAYER optimizer for later explicitly approved BlueStacks use on the Windows host associated with WSL, with screenshot capture, allowlisted bounded input, and short owner-only evidence retention, without changing or operating the host now.",
+  "deliverables": [
+    "Durable standalone project at /home/joshl/projects/nba2k27-myplayer migrated from the accepted offline implementation",
+    "Source-backed Windows-via-WSL host-control and capture boundary decision",
+    "Versioned companion protocol, trusted configuration, fake transport, preflight, approval, canary, action-budget, and evidence-retention implementation",
+    "Windows companion deployment bundle or exact implementation-ready contract selected by the approved plan, never launched in this workflow",
+    "Operator setup, rollback, privacy, calibration, and per-run approval documentation",
+    "Independent command-backed preparation and no-live validation evidence"
+  ],
+  "nonGoals": [
+    "Launching or controlling BlueStacks, NBA 2K HQ, or any account",
+    "Installing, configuring, probing, or changing the Windows or BlueStacks host",
+    "ADB, network interception, remote network service, credentials, authentication, or game traffic inspection",
+    "Git mutation, publication, user-global configuration, or OpenCode harness source changes",
+    "Claiming current NBA 2K27 mechanics or real-host compatibility without later on-host validation"
+  ],
+  "workUnits": [
+    {
+      "id": "host-interface-research",
+      "goal": "Determine the narrowest supportable Windows-via-WSL capture and bounded-input preparation boundary using current authoritative sources and the accepted package evidence.",
+      "deliverable": "Cited host-interface research with transport options, security constraints, and implementation implications.",
+      "nonGoals": ["No files edited outside the assigned trace", "No host or emulator contact"],
+      "allowedPaths": ["/tmp/opencode/nba2k27-myplayer", ".memory/orchestrations/2026-08-21-nba2k27-bluestacks-preparation/roles/researcher"],
+      "acceptanceGateIds": ["gate-research"]
+    },
+    {
+      "id": "preparation-plan",
+      "goal": "Turn accepted research and user policy into an executable file-level migration, adapter, safety, retention, deployment, and validation plan.",
+      "deliverable": "Ordered implementation plan with exact paths, contracts, trust boundaries, commands, and no-live gates.",
+      "nonGoals": ["No implementation edits", "No host or emulator contact"],
+      "allowedPaths": ["/tmp/opencode/nba2k27-myplayer", "/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-21-nba2k27-bluestacks-preparation/roles/planner"],
+      "acceptanceGateIds": ["gate-plan"]
+    },
+    {
+      "id": "durable-host-preparation",
+      "goal": "Migrate the accepted package to the durable path and implement the approved fake-tested real-host preparation surfaces without contacting Windows or BlueStacks.",
+      "deliverable": "Durable package, host protocol/configuration, safety controls, fake integration, deployment assets, tests, and documentation.",
+      "nonGoals": ["No actual Windows process invocation", "No live capture or input", "No network or ADB", "No Git mutation"],
+      "allowedPaths": ["/tmp/opencode/nba2k27-myplayer", "/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-21-nba2k27-bluestacks-preparation/roles/implementer"],
+      "acceptanceGateIds": ["gate-implementation", "gate-no-live"]
+    },
+    {
+      "id": "preparation-validation",
+      "goal": "Independently verify migration fidelity, protocol fail-closure, fake-only execution, retention safety, packaging, documentation, and absence of live authority.",
+      "deliverable": "Command-backed final findings and gate matrix.",
+      "nonGoals": ["No fixes", "No host or emulator contact", "No publication or Git mutation"],
+      "allowedPaths": ["/tmp/opencode/nba2k27-myplayer", "/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-21-nba2k27-bluestacks-preparation/roles/validator"],
+      "acceptanceGateIds": ["gate-migration", "gate-host-safety", "gate-package", "gate-no-live"]
+    }
+  ],
+  "allowedPaths": [
+    "/tmp/opencode/nba2k27-myplayer",
+    "/home/joshl/projects/nba2k27-myplayer",
+    ".memory/orchestrations/2026-08-21-nba2k27-bluestacks-preparation"
+  ],
+  "acceptanceGates": [
+    {"id": "gate-research", "criterion": "Current authoritative evidence supports a selected Windows-via-WSL companion boundary and identifies unresolved host assumptions.", "evidenceCommand": "Inspect cited sources and source-to-claim mapping in the researcher trace.", "workUnitIds": ["host-interface-research"]},
+    {"id": "gate-plan", "criterion": "The plan specifies exact migration, protocol, security, retention, deployment, testing, and rollback contracts without live execution.", "evidenceCommand": "Inspect planner trace for file contracts, dependency order, and executable acceptance commands.", "workUnitIds": ["preparation-plan"]},
+    {"id": "gate-implementation", "criterion": "The durable package implements the approved preparation surfaces with fake/injected transport and bounded deterministic behavior.", "evidenceCommand": "Run the complete Node test suite and fake host-preflight/action-plan scenarios.", "workUnitIds": ["durable-host-preparation"]},
+    {"id": "gate-migration", "criterion": "All previously accepted offline behavior is present and regression-tested at the durable path.", "evidenceCommand": "Run npm test and compare required source, fixture, documentation, export, and package inventories.", "workUnitIds": ["preparation-validation"]},
+    {"id": "gate-host-safety", "criterion": "Configuration, protocol, approvals, canaries, budgets, coordinates, evidence storage, cleanup, and failure handling fail closed under adversarial tests.", "evidenceCommand": "Run host-preparation security tests and malformed/replay/symlink/permission/identity attack probes.", "workUnitIds": ["preparation-validation"]},
+    {"id": "gate-package", "criterion": "The package remains private, reviewable, and free of unintended dependencies, lifecycle scripts, credentials, and packed evidence.", "evidenceCommand": "Run npm ls --all --json and npm pack --dry-run --json and inspect package metadata and inventory.", "workUnitIds": ["preparation-validation"]},
+    {"id": "gate-no-live", "criterion": "No Windows, BlueStacks, app, account, network, ADB, input, or capture operation occurs and default runtime paths cannot acquire live authority.", "evidenceCommand": "Run recursive authority scans and process/network sentinels while exercising all preparation commands.", "workUnitIds": ["durable-host-preparation", "preparation-validation"]}
+  ],
+  "roleModeTaskMapping": [
+    {"workUnitId": "host-interface-research", "role": "researcher", "taskMode": "research", "boundedTask": "Research authoritative Windows-via-WSL capture/input companion choices and constraints."},
+    {"workUnitId": "preparation-plan", "role": "planner", "taskMode": "plan", "boundedTask": "Create exact migration and fake-tested real-host preparation plan."},
+    {"workUnitId": "durable-host-preparation", "role": "implementer", "taskMode": "implementation", "boundedTask": "Migrate and implement only the approved no-live preparation design."},
+    {"workUnitId": "preparation-validation", "role": "validator", "taskMode": "integration-check", "boundedTask": "Independently validate migration, security, package, and no-live gates."}
+  ],
+  "dag": {
+    "dependencies": [
+      {"workUnitId": "host-interface-research", "dependsOn": []},
+      {"workUnitId": "preparation-plan", "dependsOn": ["host-interface-research"]},
+      {"workUnitId": "durable-host-preparation", "dependsOn": ["preparation-plan"]},
+      {"workUnitId": "preparation-validation", "dependsOn": ["durable-host-preparation"]}
+    ],
+    "parallelism": {"mode": "serial", "authorization": "not-authorized", "distinctCapacityEvidence": null}
+  },
+  "budgets": {
+    "defaultRemediationCyclesPerWorkUnit": 1,
+    "maxRemediationCyclesPerWorkUnit": 2,
+    "maxTotalLeafAgents": 8,
+    "maxLeafAgentsByRole": {"researcher": 1, "planner": 1, "implementer": 3, "validator": 4}
+  },
+  "scopeExpansion": {"policy": "explicit-only", "requiresUserApproval": true},
+  "authorization": {
+    "liveProviders": false,
+    "userGlobalMutation": false,
+    "git": {"commit": false, "amend": false, "push": false, "otherMutation": false}
+  },
+  "routingMetadataStatus": "absent"
+}

@@ -1,0 +1,102 @@
+{
+  "schemaVersion": "1.0.0",
+  "orchestrationId": "2026-08-21-nba-2k27-my-player-builder",
+  "goal": "Research current public NBA 2K27 MyPLAYER Builder information and produce an approval-ready plan for an agentic BlueStacks tracing and build-optimization workflow before implementation.",
+  "deliverables": [
+    "A retrieval-dated cited evidence dossier for NBA 2K27 MyPLAYER Builder and badge mechanics.",
+    "An independently reviewed workflow plan covering safe tracing, flexible desired-build input, black-box optimization, and clear tied-result presentation."
+  ],
+  "nonGoals": [
+    "No implementation, src edits, emulator or app interaction, credential use, network interception, Git mutation, publication, or global configuration changes.",
+    "No treatment of mutable or disputed public reports as immutable official formulas."
+  ],
+  "allowedPaths": [
+    ".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/",
+    ".opencode/contracts/role-io-contracts.json",
+    ".opencode/schemas/memory-trace-artifact.schema.json",
+    ".memory/protocols/memory-management.md",
+    "src/"
+  ],
+  "acceptanceGates": [
+    {
+      "id": "gate-current-research",
+      "criterion": "Material builder and badge claims are retrieval-dated, cited, evidence-classified, cross-checked where feasible, and explicit about conflicts and unknowns.",
+      "evidenceCommand": "test -s .memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/root-validator-004-research-recheck.md",
+      "workUnitIds": ["wu-research-builder", "wu-validate-research"]
+    },
+    {
+      "id": "gate-actionable-plan",
+      "criterion": "The combined plan defines coherent architecture, tracing, state and request contracts, optimization and tie semantics, exact future paths, staged tests, approvals, and executable verification gates.",
+      "evidenceCommand": "test -s .memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/planner/root-planner-003-agentic-workflow.md",
+      "workUnitIds": ["wu-plan-workflow", "wu-review-plan"]
+    },
+    {
+      "id": "gate-phase-boundary",
+      "criterion": "No implementation role output, emulator control, or src mutation occurs before plan approval.",
+      "evidenceCommand": "test ! -d .memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/implementer",
+      "workUnitIds": ["wu-plan-workflow", "wu-review-plan"]
+    }
+  ],
+  "workUnits": [
+    {
+      "id": "wu-research-builder",
+      "goal": "Compile current evidence on NBA 2K27 MyPLAYER Builder and badge systems.",
+      "deliverable": "A cited research trace distinguishing official facts, corroborated reports, single-source claims, conflicts, and inference.",
+      "nonGoals": ["Do not plan implementation or interact with the emulator."],
+      "allowedPaths": [".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/researcher/"],
+      "acceptanceGateIds": ["gate-current-research"]
+    },
+    {
+      "id": "wu-validate-research",
+      "goal": "Independently verify research citation, freshness, classification, and conflict handling.",
+      "deliverable": "Command-backed artifact proof and remediation findings.",
+      "nonGoals": ["Do not design or implement the workflow."],
+      "allowedPaths": [".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/", ".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/researcher/"],
+      "acceptanceGateIds": ["gate-current-research"]
+    },
+    {
+      "id": "wu-plan-workflow",
+      "goal": "Design a safe and efficient BlueStacks tracing and MyPLAYER optimization workflow.",
+      "deliverable": "An approval-ready plan and bounded correction addenda with exact future contracts and verification gates.",
+      "nonGoals": ["Do not implement, edit src, or control BlueStacks."],
+      "allowedPaths": [".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/planner/", "src/"],
+      "acceptanceGateIds": ["gate-actionable-plan", "gate-phase-boundary"]
+    },
+    {
+      "id": "wu-review-plan",
+      "goal": "Independently review plan completeness, feasibility, safety, and contract determinism.",
+      "deliverable": "Command-backed final plan gate matrix and residual risks.",
+      "nonGoals": ["Do not implement fixes or operate BlueStacks."],
+      "allowedPaths": [".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/validator/", ".memory/orchestrations/2026-08-21-nba-2k27-my-player-builder/roles/planner/"],
+      "acceptanceGateIds": ["gate-actionable-plan", "gate-phase-boundary"]
+    }
+  ],
+  "roleModeTaskMapping": [
+    {"workUnitId": "wu-research-builder", "role": "researcher", "taskMode": "research", "boundedTask": "Research and cite current builder and badge-system evidence."},
+    {"workUnitId": "wu-validate-research", "role": "validator", "taskMode": "artifact-proof", "boundedTask": "Independently prove research citation and classification quality."},
+    {"workUnitId": "wu-plan-workflow", "role": "planner", "taskMode": "plan", "boundedTask": "Design and correct the approval-ready tracing and optimization workflow without implementation."},
+    {"workUnitId": "wu-review-plan", "role": "validator", "taskMode": "review", "boundedTask": "Independently review the combined plan against actionable-plan and phase gates."}
+  ],
+  "dag": {
+    "dependencies": [
+      {"workUnitId": "wu-research-builder", "dependsOn": []},
+      {"workUnitId": "wu-validate-research", "dependsOn": ["wu-research-builder"]},
+      {"workUnitId": "wu-plan-workflow", "dependsOn": ["wu-validate-research"]},
+      {"workUnitId": "wu-review-plan", "dependsOn": ["wu-plan-workflow"]}
+    ],
+    "parallelism": {"mode": "serial", "authorization": "not-authorized", "distinctCapacityEvidence": null}
+  },
+  "budgets": {
+    "defaultRemediationCyclesPerWorkUnit": 1,
+    "maxRemediationCyclesPerWorkUnit": 2,
+    "maxTotalLeafAgents": 10,
+    "maxLeafAgentsByRole": {"researcher": 2, "planner": 3, "implementer": 0, "validator": 5}
+  },
+  "scopeExpansion": {"policy": "explicit-only", "requiresUserApproval": true},
+  "authorization": {
+    "liveProviders": false,
+    "userGlobalMutation": false,
+    "git": {"commit": false, "amend": false, "push": false, "otherMutation": false}
+  },
+  "routingMetadataStatus": "absent"
+}

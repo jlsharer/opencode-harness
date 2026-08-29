@@ -79,9 +79,10 @@ export function normalizeAndValidateRoutingConfig(document) {
   for (const key of ['localModel', 'routingServiceUrl', 'localModelEnabled', 'preferLocal', 'localModelFallback']) {
     if (Object.hasOwn(value, key)) legacyError(`$.harnessModelRouting.${key}`);
   }
-  const rootKeys = ['schemaVersion', 'defaultMode', 'defaultModel', 'singleModel', 'localRouting', 'roleOverrides', 'commandOverrides', 'orchestratorCommands', 'complexityTiers'];
+  const rootKeys = ['schemaVersion', 'providerClassMode', 'defaultMode', 'defaultModel', 'singleModel', 'localRouting', 'roleOverrides', 'commandOverrides', 'orchestratorCommands', 'complexityTiers'];
   exactKeys(value, rootKeys, rootKeys, '$.harnessModelRouting');
   if (value.schemaVersion !== '2.0.0') fail('$.harnessModelRouting.schemaVersion', 'must equal "2.0.0"');
+  if (!['mixed', 'local-only', 'cloud-only'].includes(value.providerClassMode)) fail('$.harnessModelRouting.providerClassMode', 'must be mixed, local-only, or cloud-only');
   if (typeof value.defaultMode !== 'string' || value.defaultMode.trim() === '') fail('$.harnessModelRouting.defaultMode', 'must be a nonblank string');
 
   const single = object(value.singleModel, '$.harnessModelRouting.singleModel');
@@ -94,6 +95,8 @@ export function normalizeAndValidateRoutingConfig(document) {
   const localEnabled = boolean(local.enabled, '$.harnessModelRouting.localRouting.enabled');
   const forceLocal = boolean(local.forceLocalForHarnessSubagents, '$.harnessModelRouting.localRouting.forceLocalForHarnessSubagents');
   if (forceLocal && !localEnabled) fail('$.harnessModelRouting.localRouting', 'forceLocalForHarnessSubagents:true requires enabled:true');
+  if (forceLocal !== (value.providerClassMode === 'local-only')) fail('$.harnessModelRouting.localRouting.forceLocalForHarnessSubagents', 'must be true exactly when providerClassMode is local-only');
+  if (value.providerClassMode !== 'mixed' && !localEnabled) fail('$.harnessModelRouting.localRouting.enabled', 'strict provider class modes require enabled:true and a catalog');
   const models = object(local.models, '$.harnessModelRouting.localRouting.models');
   if (localEnabled && Object.keys(models).length === 0) fail('$.harnessModelRouting.localRouting.models', 'must contain at least one catalog entry when localRouting.enabled is true');
   const normalizedModels = {};
@@ -135,6 +138,11 @@ export function normalizeAndValidateRoutingConfig(document) {
     if (nativeModel !== null && localModel !== null) fail(`$.harnessModelRouting.roleOverrides.${role}`, 'model and localModel are mutually exclusive when non-null');
     normalizedRoles[role] = { model: nativeModel, localModel, variant: nullableString(entry.variant, `$.harnessModelRouting.roleOverrides.${role}.variant`) };
   }
+  if (value.providerClassMode === 'cloud-only') {
+    if (defaultLocalModel !== null || Object.values(normalizedRoles).some((entry) => entry.localModel !== null)) {
+      fail('$.harnessModelRouting', 'cloud-only must not contain local role assignments');
+    }
+  }
 
   const commands = object(value.commandOverrides, '$.harnessModelRouting.commandOverrides');
   const normalizedCommands = {};
@@ -162,6 +170,7 @@ export function normalizeAndValidateRoutingConfig(document) {
 
   return {
     schemaVersion: '2.0.0',
+    providerClassMode: value.providerClassMode,
     defaultMode: value.defaultMode.trim(),
     defaultModel: model(value.defaultModel, '$.harnessModelRouting.defaultModel'),
     singleModel: normalizedSingle,
@@ -297,20 +306,25 @@ export function resolveRoutingDecision({ config, request = {} } = {}) {
 
 export function resolveAllHarnessRoleAssignments(config) {
   const routing = normalizeAndValidateRoutingConfig(config);
-  const force = routing.localRouting.enabled && routing.localRouting.forceLocalForHarnessSubagents;
   const assignments = {};
   for (const role of FIXED_HARNESS_ROLES) {
     const override = routing.roleOverrides[role];
-    if (force) {
+    if (routing.providerClassMode === 'mixed' && override.model !== null) {
+      assignments[role] = { model: override.model, catalogName: null, routingServiceUrl: null, maxInFlight: null };
+    } else if (routing.providerClassMode !== 'cloud-only' && routing.localRouting.enabled && (override.localModel !== null || routing.localRouting.defaultLocalModel !== null)) {
       const catalogName = override.localModel ?? routing.localRouting.defaultLocalModel;
       const catalog = catalogName === null ? null : routing.localRouting.models[catalogName];
-      if (!catalog) fail(`$.harnessModelRouting.roleOverrides.${role}`, 'force-local mode requires a catalog-backed role or default selection');
+      if (!catalog) fail(`$.harnessModelRouting.roleOverrides.${role}`, 'local role mapping requires a catalog-backed role or default selection');
       assignments[role] = { model: catalog.model, catalogName, routingServiceUrl: catalog.routingServiceUrl, maxInFlight: catalog.maxInFlight };
-    } else if (override.model !== null) {
+    } else if (routing.providerClassMode !== 'cloud-only' && override.model !== null) {
       assignments[role] = { model: override.model, catalogName: null, routingServiceUrl: null, maxInFlight: null };
     } else assignments[role] = null;
   }
-  return { schemaVersion: '2.0.0', mode: force ? 'force-local' : 'role-overrides', assignments };
+  const localProviders = [...new Set(Object.values(routing.localRouting.models).map((entry) => entry.model.split('/')[0]))].sort();
+  if (routing.providerClassMode === 'local-only' && (localProviders.length === 0 || Object.values(assignments).some((entry) => entry === null || entry.catalogName === null))) {
+    fail('$.harnessModelRouting', 'local-only requires a nonempty catalog and four catalog-backed role assignments');
+  }
+  return { schemaVersion: '2.0.0', mode: routing.providerClassMode, localProviders, assignments };
 }
 
 export function validateNativeProviderCoherence(nativeConfig, assignmentPlan) {

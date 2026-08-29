@@ -56,10 +56,22 @@
     "catalogEntry": { "$ref": "harness-endpoint-catalog.schema.json#/$defs/catalogEntry" },
     "routing": {
       "type": "object",
-      "required": ["schemaVersion", "defaultMode", "defaultModel", "singleModel", "localRouting", "roleOverrides", "commandOverrides", "orchestratorCommands", "complexityTiers"],
+      "required": ["schemaVersion", "providerClassMode", "defaultMode", "defaultModel", "singleModel", "localRouting", "roleOverrides", "commandOverrides", "orchestratorCommands", "complexityTiers"],
       "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "providerClassMode": { "const": "local-only" } }, "required": ["providerClassMode"] },
+          "then": { "properties": { "localRouting": { "properties": { "enabled": { "const": true }, "forceLocalForHarnessSubagents": { "const": true } } } } },
+          "else": { "properties": { "localRouting": { "properties": { "forceLocalForHarnessSubagents": { "const": false } } } } }
+        },
+        {
+          "if": { "properties": { "providerClassMode": { "const": "cloud-only" } }, "required": ["providerClassMode"] },
+          "then": { "properties": { "localRouting": { "properties": { "enabled": { "const": true }, "defaultLocalModel": { "type": "null" } } } } }
+        }
+      ],
       "properties": {
         "schemaVersion": { "const": "2.0.0" },
+        "providerClassMode": { "enum": ["mixed", "local-only", "cloud-only"] },
         "defaultMode": { "type": "string", "minLength": 1 },
         "defaultModel": { "$ref": "#/$defs/nullableModel" },
         "singleModel": {

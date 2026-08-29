@@ -160,7 +160,7 @@ function ensurePrivateDirectory(directory) {
 function manifest() {
   const value = readJson(MANIFEST_PATH, 'runtime manifest');
   const expected = ['compatibility', 'fileModes', 'files', 'generatedEntries', 'packageVersion', 'profile', 'schemaVersion'];
-  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.11' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
+  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.12' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
   const compatibilityKeys = ['node', 'opencode', 'platform'];
   if (!value.compatibility || Object.keys(value.compatibility).sort().join(',') !== compatibilityKeys.sort().join(',')
       || !value.compatibility.opencode || Object.keys(value.compatibility.opencode).sort().join(',') !== 'maximum,minimum') fail('unsupported runtime compatibility policy');
@@ -483,6 +483,14 @@ function canonicalWorkspace(input) {
   const top = git(workspace, ['rev-parse', '--show-toplevel']).stdout.trim();
   if (top !== workspace) fail('--workspace must name the canonical Git worktree root (not a nested directory)');
   return workspace;
+}
+
+function workspaceFromRunOption(input) {
+  if (input !== undefined) return canonicalWorkspace(input);
+  const start = trustedDirectoryPath(process.cwd(), 'current directory');
+  lstatOwned(start, 'current directory', 'directory');
+  const top = git(start, ['rev-parse', '--show-toplevel']).stdout.trim();
+  return canonicalWorkspace(top);
 }
 
 function stripJsonComments(input, label) {
@@ -1038,6 +1046,10 @@ function resolveCompatibleExecutable(value) {
 
 function parse(argv) {
   const command = argv.shift() ?? 'help';
+  if (command === 'capabilities') {
+    if (argv.length !== 0) fail('capabilities accepts no arguments');
+    return { command, options: { forward: [] } };
+  }
   if (command === 'validate-inputs') {
     const options = { forward: [] };
     const keys = new Map([['--provider-config', 'providerConfig'], ['--routing-catalog', 'catalog'], ['--routing-profile', 'profile']]);
@@ -1066,7 +1078,12 @@ function parse(argv) {
 }
 
 function usage() {
-  return `Usage:\n  opencode-harness prepare [--cache-root ABS]\n  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n  opencode-harness run --workspace ABS [--trace-root ABS] [--cache-root ABS]\n    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n    [--allow-project-plugins] [-- OPENCODE_ARGS...]\n`;
+  return `Usage:\n  opencode-harness capabilities\n  opencode-harness prepare [--cache-root ABS]\n  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n  opencode-harness run [--workspace ABS] [--trace-root ABS] [--cache-root ABS]\n    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]\n    [--allow-project-plugins] [-- OPENCODE_ARGS...]\n`;
+}
+
+function capabilities() {
+  const value = manifest();
+  return JSON.stringify({ packageVersion: value.packageVersion, launchContractVersion: '1.0.0', routingProfileVersion: '2.0.0', supportedModes: ['cloud-only', 'local-only', 'mixed'], opencode: value.compatibility.opencode });
 }
 
 function validateInputs(options) {
@@ -1080,7 +1097,7 @@ function run(options) {
   for (const name of RESERVED_ENV) if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
   for (const arg of options.forward) if (arg === '--pure' || arg === '--dir' || arg.startsWith('--dir=') || arg.startsWith('--project') || arg.startsWith('--config')) fail(`forbidden forwarded option: ${arg}`);
   if (Boolean(options.catalog) !== Boolean(options.profile)) fail('--routing-catalog and --routing-profile are an all-or-none pair');
-  const workspace = canonicalWorkspace(options.workspace);
+  const workspace = workspaceFromRunOption(options.workspace);
   const projectState = projectPreflight(workspace, Boolean(options.allowProjectPlugins), Boolean(options.providerConfig));
   const { inputs } = validateExternalInputs(options);
   const value = manifest();
@@ -1114,6 +1131,7 @@ function run(options) {
 try {
   const { command, options } = parse(process.argv.slice(2));
   if (command === 'help' || command === '--help' || command === '-h') { process.stdout.write(usage()); process.exitCode = 0; }
+  else if (command === 'capabilities') process.stdout.write(`${capabilities()}\n`);
   else if (command === 'prepare') process.stdout.write(`${prepareRuntime(options)}\n`);
   else if (command === 'validate-inputs') process.stdout.write(`${validateInputs(options)}\n`);
   else if (command === 'run') process.exitCode = run(options);

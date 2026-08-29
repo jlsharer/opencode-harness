@@ -1,6 +1,7 @@
 {
   "harnessModelRouting": {
     "schemaVersion": "2.0.0",
+    "providerClassMode": "mixed",
     "defaultMode": "single-model",
     "defaultModel": null,
     "singleModel": {

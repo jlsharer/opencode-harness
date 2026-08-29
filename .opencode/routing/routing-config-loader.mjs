@@ -101,10 +101,11 @@ export function mergeExternalRoutingDocuments(catalog, profile) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`routing catalog.models.${name}.routingServiceUrl port is out of range`);
     if (!Number.isInteger(entry.maxInFlight) || entry.maxInFlight < 1 || entry.maxInFlight > 2147483647) throw new Error(`routing catalog.models.${name}.maxInFlight is out of range`);
   }
-  const profileKeys = ['schemaVersion', 'defaultMode', 'defaultModel', 'singleModel', 'localRouting', 'roleOverrides', 'commandOverrides', 'orchestratorCommands', 'complexityTiers'];
+  const profileKeys = ['schemaVersion', 'providerClassMode', 'defaultMode', 'defaultModel', 'singleModel', 'localRouting', 'roleOverrides', 'commandOverrides', 'orchestratorCommands', 'complexityTiers'];
   exactObject(profile, profileKeys, profileKeys, 'routing profile');
   exactObject(profile.localRouting, ['enabled', 'forceLocalForHarnessSubagents', 'defaultLocalModel'], ['enabled', 'forceLocalForHarnessSubagents', 'defaultLocalModel'], 'routing profile.localRouting');
-  if (profile.localRouting.forceLocalForHarnessSubagents !== false) throw new Error('routing profile.localRouting.forceLocalForHarnessSubagents must be false');
+  if (!['mixed', 'local-only', 'cloud-only'].includes(profile.providerClassMode)) throw new Error('routing profile.providerClassMode is invalid');
+  if (profile.localRouting.forceLocalForHarnessSubagents !== (profile.providerClassMode === 'local-only')) throw new Error('routing profile force-local setting contradicts providerClassMode');
   return {
     ...profile,
     localRouting: { ...profile.localRouting, models: catalog.models },

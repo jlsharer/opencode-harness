@@ -180,9 +180,9 @@ test('prepare accepts only the bounded OpenCode range and separates exact-versio
   const maximum = fake('version-maximum', '1.18.25');
   const accepted = run(['prepare', '--cache-root', cache], { OPENCODE_BIN: maximum.executable });
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout.trim(), /\/0\.1\.11\/opencode-1\.18\.25\/runtime$/);
+  assert.match(accepted.stdout.trim(), /\/0\.1\.12\/opencode-1\.18\.25\/runtime$/);
   const marker = JSON.parse(fs.readFileSync(path.join(accepted.stdout.trim(), '.harness-runtime.json'), 'utf8'));
-  assert.deepEqual(marker, { packageVersion: '0.1.11', opencodeVersion: '1.18.25' });
+  assert.deepEqual(marker, { packageVersion: '0.1.12', opencodeVersion: '1.18.25' });
 
   for (const version of ['1.18.17', '1.18.26', '1.18.25-beta.1', '01.18.25']) {
     const unsupported = fake(`version-unsupported-${version.replaceAll('.', '-')}`, version);
@@ -210,7 +210,7 @@ test('prepare refuses managed drift and symlink collisions without repairing the
   assert.notEqual(drift.status, 0);
   assert.match(drift.stderr, /managed runtime drift/);
   const collisionCache = path.join(temp, 'symlink-cache');
-  const runtime = path.join(collisionCache, '0.1.11/opencode-1.18.18/runtime');
+  const runtime = path.join(collisionCache, '0.1.12/opencode-1.18.18/runtime');
   fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
   fs.symlinkSync(temp, runtime);
   const collision = run(['prepare', '--cache-root', collisionCache]);
@@ -235,7 +235,22 @@ test('help is available from arbitrary working directories', () => {
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, /prepare/);
   assert.match(result.stdout, /validate-inputs \[--provider-config FILE\] \[--routing-catalog FILE --routing-profile FILE\]/);
-  assert.match(result.stdout, /run --workspace ABS/);
+  assert.match(result.stdout, /run \[--workspace ABS\]/);
+});
+
+test('capabilities is deterministic, closed, offline, and no-write', () => {
+  const cwd = path.join(temp, 'capabilities-cwd'); fs.mkdirSync(cwd, { mode: 0o700 });
+  const before = canonicalInventory(cwd);
+  const first = run(['capabilities'], { PATH: path.join(temp, 'missing-path'), HOME: path.join(temp, 'missing-home') }, cwd);
+  const second = run(['capabilities'], { PATH: path.join(temp, 'missing-path'), HOME: path.join(temp, 'missing-home') }, cwd);
+  assert.equal(first.status, 0, first.stderr); assert.equal(first.stdout, second.stdout); assert.equal(first.stderr, '');
+  assert.deepEqual(JSON.parse(first.stdout), {
+    packageVersion: '0.1.12', launchContractVersion: '1.0.0', routingProfileVersion: '2.0.0',
+    supportedModes: ['cloud-only', 'local-only', 'mixed'], opencode: { minimum: '1.18.18', maximum: '1.18.25' },
+  });
+  const extra = run(['capabilities', '--cache-root', path.join(temp, 'forbidden-cache')], {}, cwd);
+  assert.equal(extra.status, 1); assert.match(extra.stderr, /accepts no arguments/);
+  assert.equal(canonicalInventory(cwd), before);
 });
 
 test('validate-inputs accepts exactly the three supported combinations with deterministic compact output', () => {
@@ -246,7 +261,7 @@ test('validate-inputs accepts exactly the three supported combinations with dete
     [['--provider-config', fixture.provider, '--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile], { providerConfig: true, routingCatalog: true, routingProfile: true }],
   ];
   for (const [args, inputs] of cases) {
-    const expected = `${JSON.stringify({ schemaVersion: '1.0.0', valid: true, packageVersion: '0.1.11', inputs })}\n`;
+    const expected = `${JSON.stringify({ schemaVersion: '1.0.0', valid: true, packageVersion: '0.1.12', inputs })}\n`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = run(['validate-inputs', ...args], {}, '/');
       assert.equal(result.status, 0, result.stderr);
@@ -334,7 +349,7 @@ test('validate-inputs applies provider metadata, profile policy, and cross-docum
   const profileCases = [
     ['wrapped', { harnessModelRouting: validProfile() }, /routing profile/],
     ['embedded-models', (() => { const value = validProfile(); value.localRouting.models = {}; return value; })(), /models/],
-    ['force-local', (() => { const value = validProfile(); value.localRouting.forceLocalForHarnessSubagents = true; return value; })(), /forceLocalForHarnessSubagents/],
+    ['force-local', (() => { const value = validProfile(); value.localRouting.forceLocalForHarnessSubagents = true; return value; })(), /force-local setting|forceLocalForHarnessSubagents/],
     ['missing-reference', (() => { const value = validProfile(); value.localRouting.defaultLocalModel = 'ai-infra-missing'; return value; })(), /must reference localRouting.models|unknown catalog model/],
   ];
   for (const [name, profile, expected] of profileCases) {
@@ -417,6 +432,20 @@ test('run keeps workspace in cwd and forwards TUI, models, and run grammar uncha
   const rejected = spawnSync(grammar.executable, [workspace, 'models', 'ai-infra-secondary'], { cwd: workspace, encoding: 'utf8' });
   assert.equal(rejected.status, 64);
   assert.match(rejected.stderr, /project-before-subcommand/);
+});
+
+test('omitted workspace resolves a nested Git directory while explicit nested workspace stays strict', () => {
+  const workspace = repo('nested-workspace-repo');
+  const nested = path.join(workspace, 'one/two'); fs.mkdirSync(nested, { recursive: true });
+  const opencode = fake('nested-workspace');
+  const accepted = run(['run', '--cache-root', path.join(temp, 'nested-workspace-cache')], { OPENCODE_BIN: opencode.executable }, nested);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.equal(JSON.parse(fs.readFileSync(opencode.capture)).cwd, workspace);
+  const explicit = run(['run', '--workspace', nested], { OPENCODE_BIN: opencode.executable }, nested);
+  assert.equal(explicit.status, 1); assert.match(explicit.stderr, /canonical Git worktree root/);
+  const nonGit = path.join(temp, 'nested-workspace-non-git'); fs.mkdirSync(nonGit, { mode: 0o700 });
+  const rejected = run(['run'], { OPENCODE_BIN: opencode.executable }, nonGit);
+  assert.equal(rejected.status, 1); assert.match(rejected.stderr, /Git preflight failed/);
 });
 
 test('recursive runtime inventory rejects undeclared leaves, symlinked intermediates, unsafe modes, and generated abuse', () => {
@@ -865,7 +894,7 @@ test('snapshot construction failure removes every partial launch directory', () 
   const cache = path.join(temp, 'snapshot-failure-cache');
   const result = run(['run', '--workspace', workspace, '--cache-root', cache, '--provider-config', provider], { OPENCODE_BIN: opencode.executable, OPENCODE_HARNESS_TESTING: '1', OPENCODE_HARNESS_TEST_SNAPSHOT_FAIL_AFTER: '1' });
   assert.match(result.stderr, /injected snapshot construction failure/);
-  const launches = path.join(cache, '0.1.11/opencode-1.18.18/launches');
+  const launches = path.join(cache, '0.1.12/opencode-1.18.18/launches');
   assert.deepEqual(fs.readdirSync(launches).filter((name) => name.startsWith('launch-')), []);
   assert.equal(fs.existsSync(opencode.capture), false);
 });

@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.11
+# OpenCode Harness Runtime 0.1.12
 
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
@@ -6,10 +6,10 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.11` requires Linux, Node.js 24, Git, and OpenCode
+Package version `0.1.12` requires Linux, Node.js 24, Git, and OpenCode
 `1.18.18` through `1.18.25`, inclusive. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
-invoking retained version `0.1.10`.
+invoking retained version `0.1.11`.
 
 ## Prepare and run
 
@@ -29,14 +29,16 @@ Launcher grammar:
 ```text
 opencode-harness prepare [--cache-root ABS]
 opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]
-opencode-harness run --workspace ABS [--trace-root ABS] [--cache-root ABS]
+opencode-harness capabilities
+opencode-harness run [--workspace ABS] [--trace-root ABS] [--cache-root ABS]
   [--provider-config FILE]
   [--routing-catalog FILE --routing-profile FILE]
   [--allow-project-plugins] [-- OPENCODE_ARGS...]
 ```
 
 Tokens after `--` are unchanged OpenCode arguments. With none, the TUI opens in
-the workspace. OpenCode and its agents can modify that workspace; use a clean
+the enclosing trusted Git worktree; an explicit `--workspace` must still be the
+exact canonical worktree root. OpenCode and its agents can modify that workspace; use a clean
 disposable clone or verified backup for initial testing and inspect Git status
 and diff afterward.
 
@@ -46,7 +48,7 @@ To inspect a local package without publishing it:
 npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
 npm pack --pack-destination /OWNER/ONLY/PACKS
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.11.tgz \
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.12.tgz \
   -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
@@ -71,58 +73,39 @@ The preferred topology keeps inference, harness runtime, and work separate:
 | `/ABSOLUTE/GIT/WORKSPACE` | unrelated target project |
 
 The target project does not need a copied `.opencode` tree or a provider block
-in its `opencode.json`. Follow **Fast path: use local nodes from a separate
-project** in the paired `llama-server/README.md`. That path:
-
-1. Creates owner-only node and projection inputs.
-2. Validates the server, exact model ID, health, and GPU state.
-3. Optionally commits a transactional context increase.
-4. Creates a schema-2 routing profile.
-5. Publishes provider/catalog files and binds them to the target workspace.
-6. Activates remote tunnels and runs this harness against that binding.
-
-The infrastructure wrapper is the normal entry point:
+in its `opencode.json`. The infrastructure wrapper is the normal entry point;
+a thin `opencode-local` shell function forwards to it unchanged:
 
 ```sh
-INTEGRATION=/OWNER/ONLY/SRC/ai-infrastructure/llama-server/scripts/opencode-harness-integration.sh
-HARNESS_ROOT=/OWNER/ONLY/SRC/opencode-harness
-WORKSPACE=/OWNER/ONLY/SRC/target-project
-PROJECTION_ROOT=/OWNER/ONLY/CONFIG/opencode/ai-infrastructure
-NODES=(--node main --node secondary)
-DEFAULT_NODE=main
-
-PROFILE=$("$INTEGRATION" create-profile "${NODES[@]}" \
-  --default-node "$DEFAULT_NODE" --yes)
-
-"$INTEGRATION" plan "${NODES[@]}" --workspace "$WORKSPACE" \
-  --routing-profile "$PROFILE" --harness-root "$HARNESS_ROOT" \
-  --projection-root "$PROJECTION_ROOT"
-"$INTEGRATION" prepare-harness --harness-root "$HARNESS_ROOT" --yes
-"$INTEGRATION" bind "${NODES[@]}" --workspace "$WORKSPACE" \
-  --routing-profile "$PROFILE" --harness-root "$HARNESS_ROOT" \
-  --projection-root "$PROJECTION_ROOT" --yes
-
-BINDING=/ABSOLUTE/PATH/PRINTED/BY/BIND
-"$INTEGRATION" activate --binding "$BINDING" --yes
-# Fully quit OpenCode before acknowledging the restart boundary.
-"$INTEGRATION" run --binding "$BINDING" \
-  --ack-opencode-restarted -- models "ai-infra-$DEFAULT_NODE"
+opencode-local
+opencode-local launch --mode mixed
+opencode-local launch --mode local-only
+opencode-local launch --mode cloud-only
+opencode-local launch -- models
+opencode-local nodes
+opencode-local --help
 ```
 
-Bindings pin the workspace, harness identity, provider generation, endpoint
-catalog, profile hash, and node set. Create a new binding after changing context,
-projection, profile, harness version, or workspace. Deactivate managed tunnels
-when finished:
+Launch defaults to `mixed`, exports every canonical registry node, creates the
+provider, catalog, and routing profile as mode-0600 transient leaves beneath a
+mode-0700 root, validates all three, and removes them after exit. It does not
+start nodes or tunnels, check reachability, or mutate published projections.
+
+Adding a node is a bounded plan-first transaction. Supply every value; remote
+execution also requires `--ssh-alias`, `--remote-root`, `--local-port`, and
+`--remote-port`:
 
 ```sh
-"$INTEGRATION" deactivate --binding "$BINDING" --yes
+opencode-local node add SLUG --execution local \
+  --image IMAGE --model-dir DIR --model-file FILE --model-alias ALIAS \
+  --host-port PORT --context TOKENS --parallel COUNT \
+  --output-limit TOKENS --thinking false
+# Review the exact no-write plan, then repeat with --yes.
 ```
 
-`create-profile` derives the selected default node's exact provider/model from
-the generated catalog, assigns it to all four roles, writes a deterministic
-owner-only profile, and prints only its absolute path. Repeating the same command
-reuses the same file. Generate a new profile instead of editing one already
-recorded by a binding.
+The transaction validates the complete canonical row and projection scalars,
+refuses collisions, writes private leaves at mode 0600, and publishes the
+registry update last. It does not download models or contact services.
 
 ## Model routing configuration
 
@@ -165,6 +148,7 @@ profile must be unwrapped. Important fields:
 
 | Field | Meaning |
 |---|---|
+| `providerClassMode` | Exact `mixed`, `local-only`, or `cloud-only` native provider filter policy |
 | `localRouting.enabled` | Enables catalog-backed advisory selections |
 | `localRouting.models` | Catalog keys mapped to exact model, URL, and concurrency |
 | `localRouting.defaultLocalModel` | Fallback catalog key for roles |
@@ -182,6 +166,7 @@ key, exact provider/model, URL, and concurrency with reviewed values:
 {
   "harnessModelRouting": {
     "schemaVersion": "2.0.0",
+    "providerClassMode": "mixed",
     "defaultMode": "single-model",
     "defaultModel": null,
     "singleModel": { "enabled": false, "model": null },
@@ -243,9 +228,13 @@ implementer: implementation | integration
 validator:   validation | review | artifact-proof | integration-check
 ```
 
-Keep `forceLocalForHarnessSubagents` false. With force-local disabled, local
-selectors remain advisory; the config plugin enforces only non-null native
-`roleOverrides.<role>.model` assignments. External profiles require false.
+`forceLocalForHarnessSubagents` must be true exactly for `local-only` and false
+otherwise. Mixed mode preserves native provider filters and applies validated
+catalog-backed role mappings. Local-only exposes exactly the catalog provider
+set and requires all four roles to be catalog-backed. Cloud-only disables every
+catalog provider and permits no local role mapping. Every mutation is fully
+preflighted before the plugin changes the in-memory native config; provider
+objects and persistent OpenCode configuration are never written.
 
 Normal decision precedence is explicit request, orchestrator command, role
 command, role override, complexity tier, single-model fallback, then default

@@ -1,0 +1,119 @@
+{
+  "schemaVersion": "1.0.0",
+  "orchestrationId": "2026-08-22-nba2k27-bluestacks-blocker-closure",
+  "goal": "Thoroughly close the seven independently proven BlueStacks preparation blockers through authoritative research, an independently proved integrated plan, cohesive implementation, hostile review, and final validation without live host activity.",
+  "deliverables": [
+    "Source-backed closure requirements for Windows identity, capture, input, cancellation, and offline semantic evidence",
+    "One integrated file-level implementation plan mapping every blocker to code, invariants, executable tests, and documentation",
+    "Independent pre-implementation proof that the plan fully addresses all seven blockers and prior attack evidence",
+    "Integrated durable implementation at /home/joshl/projects/nba2k27-myplayer",
+    "Independent hostile review and final acceptance evidence for implementation, host safety, package, and no-live gates"
+  ],
+  "nonGoals": [
+    "Launching, compiling on Windows, deploying, probing, capturing from, or controlling BlueStacks or the Windows host",
+    "Installing SDKs or changing Linux, Windows, BlueStacks, user-global, or account configuration",
+    "Network services, ADB, credentials, game traffic inspection, publication, or Git mutation",
+    "Inventing BlueStacks process paths, titles, selectors, coordinates, templates, or NBA 2K27 UI mechanics",
+    "Accepting token-presence tests, documentation assertions, or passing repository tests as substitutes for adversarial behavioral evidence"
+  ],
+  "workUnits": [
+    {
+      "id": "closure-research",
+      "goal": "Resolve exact authoritative native/API and testability requirements behind all seven final findings.",
+      "deliverable": "Cited closure matrix with facts, invariants, implementation implications, and offline evidence strategy.",
+      "nonGoals": ["No edits to the durable package", "No live/native host execution"],
+      "allowedPaths": ["/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure/roles/researcher"],
+      "acceptanceGateIds": ["gate-closure-research"]
+    },
+    {
+      "id": "integrated-plan",
+      "goal": "Design one coherent state, identity, pixel, preview, approval, input, cancellation, conformance, and documentation solution for all findings.",
+      "deliverable": "Exact dependency-ordered file/function/test plan with a seven-finding traceability matrix.",
+      "nonGoals": ["No implementation edits", "No live/native host execution"],
+      "allowedPaths": ["/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure/roles/planner"],
+      "acceptanceGateIds": ["gate-integrated-plan"]
+    },
+    {
+      "id": "plan-proof",
+      "goal": "Independently prove before implementation that the plan closes every prior reproduction and has meaningful offline evidence for native semantics.",
+      "deliverable": "Blocking/nonblocking plan findings and executable pre-implementation gate matrix.",
+      "nonGoals": ["No implementation or plan edits", "No live/native host execution"],
+      "allowedPaths": ["/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure/roles/validator"],
+      "acceptanceGateIds": ["gate-plan-proof"]
+    },
+    {
+      "id": "integrated-implementation",
+      "goal": "Implement the independently proved plan as one integrated change preserving all accepted offline behavior.",
+      "deliverable": "Closed implementation, generated/shared contracts, semantic conformance vectors, adversarial tests, and consistent documentation.",
+      "nonGoals": ["No live/native host execution", "No unrelated feature expansion"],
+      "allowedPaths": ["/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure/roles/implementer"],
+      "acceptanceGateIds": ["gate-identity", "gate-preview-capture", "gate-input-cancellation", "gate-semantic-parity", "gate-docs"]
+    },
+    {
+      "id": "hostile-review",
+      "goal": "Attack the integrated change using every prior reproduction plus cross-boundary and mutation cases before final acceptance.",
+      "deliverable": "Findings-first focused security and behavioral review.",
+      "nonGoals": ["No fixes", "No live/native host execution"],
+      "allowedPaths": ["/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure/roles/validator"],
+      "acceptanceGateIds": ["gate-hostile-review"]
+    },
+    {
+      "id": "final-acceptance",
+      "goal": "Independently verify complete package integration and all preparation/no-live gates after hostile review passes.",
+      "deliverable": "Final command-backed gate matrix and activation blockers.",
+      "nonGoals": ["No fixes", "No live/native host execution", "No live activation authorization"],
+      "allowedPaths": ["/home/joshl/projects/nba2k27-myplayer", ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure/roles/validator"],
+      "acceptanceGateIds": ["gate-final-integration", "gate-package", "gate-no-live"]
+    }
+  ],
+  "allowedPaths": [
+    "/home/joshl/projects/nba2k27-myplayer",
+    ".memory/orchestrations/2026-08-22-nba2k27-bluestacks-blocker-closure"
+  ],
+  "acceptanceGates": [
+    {"id": "gate-closure-research", "criterion": "Authoritative evidence resolves required Windows identity, capture pixels/provenance, input binding, cancellation, and meaningful offline conformance semantics.", "evidenceCommand": "Inspect citations and claim-to-invariant matrix in the researcher trace.", "workUnitIds": ["closure-research"]},
+    {"id": "gate-integrated-plan", "criterion": "One dependency-ordered plan maps all seven findings and every prior reproduction to exact files, invariants, tests, and docs.", "evidenceCommand": "Inspect planner trace and seven-finding traceability matrix.", "workUnitIds": ["integrated-plan"]},
+    {"id": "gate-plan-proof", "criterion": "An independent validator finds no missing contract, attack, cross-language evidence, or integration step before implementation.", "evidenceCommand": "Inspect plan-proof findings and executable gate matrix.", "workUnitIds": ["plan-proof"]},
+    {"id": "gate-identity", "criterion": "Launcher and companion validate exact expected hello, executable, protocol, session, process, window, geometry, and correlation identity without self-asserted trust.", "evidenceCommand": "Run identity mutation and transcript adversarial tests.", "workUnitIds": ["integrated-implementation"]},
+    {"id": "gate-preview-capture", "criterion": "Fresh bounded pixel bytes and provenance feed deterministic calibrated recognition whose sealed preview derives selector and expected states without caller synthesis.", "evidenceCommand": "Run pixel mutation, stale/replay/provenance, calibration/template, and preview derivation tests.", "workUnitIds": ["integrated-implementation"]},
+    {"id": "gate-input-cancellation", "criterion": "Input is fully bound to capture, preview, approval, canary, identity, geometry, budgets, and cancellation with immediate fail-closed rechecks.", "evidenceCommand": "Run binding omission/mutation, focus/geometry/canary drift, budget, partial input, abort, EOF, and cancellation tests.", "workUnitIds": ["integrated-implementation"]},
+    {"id": "gate-semantic-parity", "criterion": "Shared generated contracts and executable semantic vectors prove Node, fake companion, and C# state/operation agreement beyond token presence, with compiler skip honestly bounded.", "evidenceCommand": "Run generators, stale-output checks, semantic vectors, mutation tests, and offline compile when available.", "workUnitIds": ["integrated-implementation"]},
+    {"id": "gate-docs", "criterion": "Protocol and operator documentation exactly match generated contracts and native behavior without live-readiness overclaim.", "evidenceCommand": "Run documentation contract/link/example checks and inspect staged activation statements.", "workUnitIds": ["integrated-implementation"]},
+    {"id": "gate-hostile-review", "criterion": "Independent hostile review reproduces all prior attacks and finds no gate-linked defect.", "evidenceCommand": "Run focused validator attack suite and inspect findings-first trace.", "workUnitIds": ["hostile-review"]},
+    {"id": "gate-final-integration", "criterion": "All baseline and closure behavior passes together with no schema, CLI, package, or safety regression.", "evidenceCommand": "Run the complete tests, CLI matrices, source/package scans, and integration vectors.", "workUnitIds": ["final-acceptance"]},
+    {"id": "gate-package", "criterion": "Package remains private, dependency-free, source-only, and excludes credentials, local config, evidence, binaries, build output, tests, and lifecycle scripts.", "evidenceCommand": "Run npm ls --all --json and npm pack --dry-run --json and inspect every entry.", "workUnitIds": ["final-acceptance"]},
+    {"id": "gate-no-live", "criterion": "No Windows/BlueStacks/native process, network, ADB, capture, input, account, Git, publication, or global mutation occurs or becomes reachable by default/public CLI.", "evidenceCommand": "Run process/network sentinels, authority scans, and public reachability attacks.", "workUnitIds": ["final-acceptance"]}
+  ],
+  "roleModeTaskMapping": [
+    {"workUnitId": "closure-research", "role": "researcher", "taskMode": "research", "boundedTask": "Research exact closure semantics and meaningful offline evidence."},
+    {"workUnitId": "integrated-plan", "role": "planner", "taskMode": "plan", "boundedTask": "Produce one exact integrated seven-blocker implementation plan."},
+    {"workUnitId": "plan-proof", "role": "validator", "taskMode": "artifact-proof", "boundedTask": "Independently prove plan completeness before implementation."},
+    {"workUnitId": "integrated-implementation", "role": "implementer", "taskMode": "integration", "boundedTask": "Implement the proved closure plan cohesively."},
+    {"workUnitId": "hostile-review", "role": "validator", "taskMode": "review", "boundedTask": "Attack all prior and cross-boundary failure modes."},
+    {"workUnitId": "final-acceptance", "role": "validator", "taskMode": "integration-check", "boundedTask": "Run final full acceptance only after focused review passes."}
+  ],
+  "dag": {
+    "dependencies": [
+      {"workUnitId": "closure-research", "dependsOn": []},
+      {"workUnitId": "integrated-plan", "dependsOn": ["closure-research"]},
+      {"workUnitId": "plan-proof", "dependsOn": ["integrated-plan"]},
+      {"workUnitId": "integrated-implementation", "dependsOn": ["plan-proof"]},
+      {"workUnitId": "hostile-review", "dependsOn": ["integrated-implementation"]},
+      {"workUnitId": "final-acceptance", "dependsOn": ["hostile-review"]}
+    ],
+    "parallelism": {"mode": "serial", "authorization": "not-authorized", "distinctCapacityEvidence": null}
+  },
+  "budgets": {
+    "defaultRemediationCyclesPerWorkUnit": 1,
+    "maxRemediationCyclesPerWorkUnit": 3,
+    "maxTotalLeafAgents": 12,
+    "maxLeafAgentsByRole": {"researcher": 1, "planner": 4, "implementer": 2, "validator": 6}
+  },
+  "scopeExpansion": {"policy": "explicit-only", "requiresUserApproval": true},
+  "authorization": {
+    "liveProviders": false,
+    "userGlobalMutation": false,
+    "git": {"commit": false, "amend": false, "push": false, "otherMutation": false}
+  },
+  "routingMetadataStatus": "absent"
+}
