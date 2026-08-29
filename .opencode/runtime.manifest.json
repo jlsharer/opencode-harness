@@ -1,11 +1,14 @@
 {
   "schemaVersion": "1.0.0",
   "profile": "external-runtime",
-  "packageVersion": "0.1.10",
+  "packageVersion": "0.1.11",
   "compatibility": {
     "platform": "linux",
     "node": ">=24 <25",
-    "opencode": "1.18.18"
+    "opencode": {
+      "minimum": "1.18.18",
+      "maximum": "1.18.25"
+    }
   },
   "fileModes": {
     "directories": "0700",

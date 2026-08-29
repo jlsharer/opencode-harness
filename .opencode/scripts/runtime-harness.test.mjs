@@ -12,11 +12,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const CLI = path.join(ROOT, 'bin/opencode-harness.mjs');
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-harness-runtime-'));
+const defaultOpenCode = path.join(temp, 'default-opencode');
+fs.writeFileSync(defaultOpenCode, '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "1.18.18\\n"; fi\nexit 0\n', { mode: 0o700 });
 const mkfifoAvailable = spawnSync('mkfifo', ['--version'], { stdio: 'ignore' }).error === undefined;
 test.after(() => fs.rmSync(temp, { recursive: true, force: true }));
 
 function run(args, env = {}, cwd = temp) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, ...env } });
+  return spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env: { ...process.env, OPENCODE_BIN: defaultOpenCode, ...env } });
 }
 
 function prepare(name) {
@@ -86,12 +88,16 @@ function canonicalInventory(root) {
   return records.join('\n');
 }
 
-function generatedNodeModulesFixture(name) {
-  const prepared = prepare(name);
+function generatedNodeModulesFixture(name, version = '1.18.18') {
+  const cache = path.join(temp, name);
+  const opencode = fake(`${name}-version`, version);
+  const result = run(['prepare', '--cache-root', cache], { OPENCODE_BIN: opencode.executable });
+  assert.equal(result.status, 0, result.stderr);
+  const prepared = { cache, runtime: result.stdout.trim(), env: { OPENCODE_BIN: opencode.executable } };
   const nodeModules = path.join(prepared.runtime, 'node_modules');
   fs.mkdirSync(path.join(nodeModules, '.bin'), { recursive: true, mode: 0o700 });
   const packages = {
-    '@opencode-ai/plugin': { version: '1.18.18' },
+    '@opencode-ai/plugin': { version },
     'msgpackr-extract': { version: '3.0.3', bin: { 'download-msgpackr-prebuilds': './bin/download.js' } },
     'node-gyp-build-optional-packages': { version: '5.2.2', bin: {
       'node-gyp-build-optional-packages': 'bin.js',
@@ -102,7 +108,7 @@ function generatedNodeModulesFixture(name) {
     uuid: { version: '14.0.1', bin: './dist-node/bin/uuid' },
     yaml: { version: '2.8.1', bin: 'bin.mjs' },
   };
-  const lockPackages = { '': { dependencies: { '@opencode-ai/plugin': '1.18.18' } } };
+  const lockPackages = { '': { dependencies: { '@opencode-ai/plugin': version } } };
   const links = {};
   for (const [packageName, metadata] of Object.entries(packages)) {
     const directory = path.join(nodeModules, ...packageName.split('/'));
@@ -120,7 +126,7 @@ function generatedNodeModulesFixture(name) {
       links[binName] = { packageName, target, targetFile, linkText };
     }
   }
-  writeGeneratedJson(path.join(prepared.runtime, 'package.json'), { dependencies: { '@opencode-ai/plugin': '1.18.18' } });
+  writeGeneratedJson(path.join(prepared.runtime, 'package.json'), { dependencies: { '@opencode-ai/plugin': version } });
   writeGeneratedJson(path.join(prepared.runtime, 'package-lock.json'), { name: 'fixture', lockfileVersion: 3, packages: lockPackages });
   writeGeneratedJson(path.join(nodeModules, '.package-lock.json'), { lockfileVersion: 3, packages: Object.fromEntries(Object.entries(lockPackages).filter(([key]) => key)) });
   return { ...prepared, nodeModules, packages, links };
@@ -169,6 +175,23 @@ test('prepare creates a deterministic owner-only runtime and reuses it', () => {
   assert.equal(second.stdout.trim(), runtime);
 });
 
+test('prepare accepts only the bounded OpenCode range and separates exact-version caches', () => {
+  const cache = path.join(temp, 'version-policy-cache');
+  const maximum = fake('version-maximum', '1.18.25');
+  const accepted = run(['prepare', '--cache-root', cache], { OPENCODE_BIN: maximum.executable });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  assert.match(accepted.stdout.trim(), /\/0\.1\.11\/opencode-1\.18\.25\/runtime$/);
+  const marker = JSON.parse(fs.readFileSync(path.join(accepted.stdout.trim(), '.harness-runtime.json'), 'utf8'));
+  assert.deepEqual(marker, { packageVersion: '0.1.11', opencodeVersion: '1.18.25' });
+
+  for (const version of ['1.18.17', '1.18.26', '1.18.25-beta.1', '01.18.25']) {
+    const unsupported = fake(`version-unsupported-${version.replaceAll('.', '-')}`, version);
+    const result = run(['prepare', '--cache-root', cache], { OPENCODE_BIN: unsupported.executable });
+    assert.notEqual(result.status, 0, version);
+    assert.match(result.stderr, /requires OpenCode 1\.18\.18 through 1\.18\.25|exact stable semantic version/, version);
+  }
+});
+
 test('prepared runtime plugin imports its complete production graph', async () => {
   const prepared = prepare('prepared-plugin-import');
   const plugin = await import(`${pathToFileURL(path.join(prepared.runtime, 'plugins/index.js')).href}?prepared=${Date.now()}`);
@@ -187,7 +210,7 @@ test('prepare refuses managed drift and symlink collisions without repairing the
   assert.notEqual(drift.status, 0);
   assert.match(drift.stderr, /managed runtime drift/);
   const collisionCache = path.join(temp, 'symlink-cache');
-  const runtime = path.join(collisionCache, '0.1.10/opencode-1.18.18/runtime');
+  const runtime = path.join(collisionCache, '0.1.11/opencode-1.18.18/runtime');
   fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
   fs.symlinkSync(temp, runtime);
   const collision = run(['prepare', '--cache-root', collisionCache]);
@@ -223,7 +246,7 @@ test('validate-inputs accepts exactly the three supported combinations with dete
     [['--provider-config', fixture.provider, '--routing-catalog', fixture.catalog, '--routing-profile', fixture.profile], { providerConfig: true, routingCatalog: true, routingProfile: true }],
   ];
   for (const [args, inputs] of cases) {
-    const expected = `${JSON.stringify({ schemaVersion: '1.0.0', valid: true, packageVersion: '0.1.10', inputs })}\n`;
+    const expected = `${JSON.stringify({ schemaVersion: '1.0.0', valid: true, packageVersion: '0.1.11', inputs })}\n`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = run(['validate-inputs', ...args], {}, '/');
       assert.equal(result.status, 0, result.stderr);
@@ -417,16 +440,26 @@ test('recursive runtime inventory rejects undeclared leaves, symlinked intermedi
 test('generated package metadata accepts seven stock-style node_modules bin links twice without mutation', () => {
   const fixture = generatedNodeModulesFixture('generated-bin-positive');
   const before = canonicalInventory(fixture.runtime);
-  const first = run(['prepare', '--cache-root', fixture.cache]);
+  const first = run(['prepare', '--cache-root', fixture.cache], fixture.env);
   assert.equal(first.status, 0, first.stderr);
   assert.equal(canonicalInventory(fixture.runtime), before);
-  const second = run(['prepare', '--cache-root', fixture.cache], {}, '/');
+  const second = run(['prepare', '--cache-root', fixture.cache], fixture.env, '/');
   assert.equal(second.status, 0, second.stderr);
   assert.equal(canonicalInventory(fixture.runtime), before);
   assert.deepEqual(Object.keys(fixture.links).sort(), [
     'download-msgpackr-prebuilds', 'node-gyp-build-optional-packages', 'node-gyp-build-optional-packages-optional',
     'node-gyp-build-optional-packages-test', 'node-which', 'uuid', 'yaml',
   ]);
+});
+
+test('generated plugin metadata must match the exact selected OpenCode version', () => {
+  const fixture = generatedNodeModulesFixture('generated-plugin-version', '1.18.25');
+  const accepted = run(['prepare', '--cache-root', fixture.cache], fixture.env);
+  assert.equal(accepted.status, 0, accepted.stderr);
+  updateJson(path.join(fixture.runtime, 'package.json'), (value) => { value.dependencies['@opencode-ai/plugin'] = '1.18.18'; });
+  const mismatch = run(['prepare', '--cache-root', fixture.cache], fixture.env);
+  assert.notEqual(mismatch.status, 0);
+  assert.match(mismatch.stderr, /sole exact @opencode-ai\/plugin 1\.18\.25 dependency/);
 });
 
 test('symlinked node_modules root rejects before package, lock, or external canary metadata is read', () => {
@@ -482,7 +515,7 @@ test('generated node_modules bin link and package metadata attacks are all rejec
     const fixture = generatedNodeModulesFixture(`generated-bin-attack-${name}`);
     mutate(fixture);
     const before = canonicalInventory(fixture.runtime);
-    const result = run(['prepare', '--cache-root', fixture.cache]);
+    const result = run(['prepare', '--cache-root', fixture.cache], fixture.env);
     assert.notEqual(result.status, 0, name);
     assert.equal(canonicalInventory(fixture.runtime), before, `${name} must not be repaired`);
   }
@@ -491,7 +524,7 @@ test('generated node_modules bin link and package metadata attacks are all rejec
   try { fs.chownSync(owner.links.uuid.targetFile, 65534, 65534); }
   catch { context.diagnostic('different-UID generated bin target fixture skipped: unprivileged chown'); return; }
   const ownerBefore = canonicalInventory(owner.runtime);
-  assert.notEqual(run(['prepare', '--cache-root', owner.cache]).status, 0);
+  assert.notEqual(run(['prepare', '--cache-root', owner.cache], owner.env).status, 0);
   assert.equal(canonicalInventory(owner.runtime), ownerBefore);
 });
 
@@ -779,7 +812,7 @@ test('executable selection rejects relative identities and version mismatch befo
   assert.match(run(['run', '--workspace', workspace, '--cache-root', path.join(temp, 'relative-bin-cache')], { OPENCODE_BIN: './opencode' }).stderr, /must be absolute/);
   const mismatch = fake('mismatch', '1.0.0');
   const result = run(['run', '--workspace', workspace, '--cache-root', path.join(temp, 'mismatch-cache')], { OPENCODE_BIN: mismatch.executable });
-  assert.match(result.stderr, /requires OpenCode 1\.18\.18/);
+  assert.match(result.stderr, /requires OpenCode 1\.18\.18 through 1\.18\.25; found 1\.0\.0/);
   assert.equal(fs.existsSync(mismatch.capture), false);
   const relativeDirectory = path.join(temp, 'relative'); fs.mkdirSync(relativeDirectory); fs.writeFileSync(path.join(relativeDirectory, 'opencode'), '#!/bin/sh\nexit 0\n', { mode: 0o700 });
   const pathResult = run(['run', '--workspace', workspace, '--cache-root', path.join(temp, 'relative-path-cache')], { OPENCODE_BIN: '', PATH: `relative${path.delimiter}/usr/bin${path.delimiter}/bin` });
@@ -832,7 +865,7 @@ test('snapshot construction failure removes every partial launch directory', () 
   const cache = path.join(temp, 'snapshot-failure-cache');
   const result = run(['run', '--workspace', workspace, '--cache-root', cache, '--provider-config', provider], { OPENCODE_BIN: opencode.executable, OPENCODE_HARNESS_TESTING: '1', OPENCODE_HARNESS_TEST_SNAPSHOT_FAIL_AFTER: '1' });
   assert.match(result.stderr, /injected snapshot construction failure/);
-  const launches = path.join(cache, '0.1.10/opencode-1.18.18/launches');
+  const launches = path.join(cache, '0.1.11/opencode-1.18.18/launches');
   assert.deepEqual(fs.readdirSync(launches).filter((name) => name.startsWith('launch-')), []);
   assert.equal(fs.existsSync(opencode.capture), false);
 });

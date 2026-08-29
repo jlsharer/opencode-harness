@@ -160,7 +160,13 @@ function ensurePrivateDirectory(directory) {
 function manifest() {
   const value = readJson(MANIFEST_PATH, 'runtime manifest');
   const expected = ['compatibility', 'fileModes', 'files', 'generatedEntries', 'packageVersion', 'profile', 'schemaVersion'];
-  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.10' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
+  if (Object.keys(value).sort().join(',') !== expected.sort().join(',') || value.schemaVersion !== '1.0.0' || value.profile !== 'external-runtime' || value.packageVersion !== '0.1.11' || !Array.isArray(value.files) || !Array.isArray(value.generatedEntries)) fail('unsupported runtime manifest');
+  const compatibilityKeys = ['node', 'opencode', 'platform'];
+  if (!value.compatibility || Object.keys(value.compatibility).sort().join(',') !== compatibilityKeys.sort().join(',')
+      || !value.compatibility.opencode || Object.keys(value.compatibility.opencode).sort().join(',') !== 'maximum,minimum') fail('unsupported runtime compatibility policy');
+  const minimum = parseOpenCodeVersion(value.compatibility.opencode.minimum, 'minimum OpenCode version');
+  const maximum = parseOpenCodeVersion(value.compatibility.opencode.maximum, 'maximum OpenCode version');
+  if (compareVersions(minimum, maximum) > 0) fail('runtime OpenCode compatibility range is inverted');
   const seenGenerated = new Set();
   for (const entry of value.generatedEntries) {
     const allowed = entry.path === '.harness-runtime.json' ? ['path', 'kind', 'mode', 'recursive', 'required', 'content'] : ['path', 'kind', 'mode', 'recursive', 'required'];
@@ -176,6 +182,28 @@ function manifest() {
 function assertNodeCompatibility(value) {
   if (process.platform !== value.compatibility.platform) fail(`requires ${value.compatibility.platform}`);
   if (Number(process.versions.node.split('.')[0]) !== 24) fail(`requires Node ${value.compatibility.node}; found ${process.version}`);
+}
+
+function parseOpenCodeVersion(value, label = 'OpenCode version') {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/.test(value)) fail(`${label} must be an exact stable semantic version`);
+  return value.split('.').map(Number);
+}
+
+function compareVersions(left, right) {
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] !== right[index]) return left[index] < right[index] ? -1 : 1;
+  }
+  return 0;
+}
+
+function assertOpenCodeCompatibility(value, version) {
+  const parsed = parseOpenCodeVersion(version);
+  const minimum = parseOpenCodeVersion(value.compatibility.opencode.minimum, 'minimum OpenCode version');
+  const maximum = parseOpenCodeVersion(value.compatibility.opencode.maximum, 'maximum OpenCode version');
+  if (compareVersions(parsed, minimum) < 0 || compareVersions(parsed, maximum) > 0) {
+    fail(`requires OpenCode ${value.compatibility.opencode.minimum} through ${value.compatibility.opencode.maximum}; found ${version}`);
+  }
+  return version;
 }
 
 function loadManagedSources(value) {
@@ -231,7 +259,7 @@ function recheckStableGeneratedFile(opened) {
 
 function safeBinName(value) { return typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(value); }
 
-function generatedPackageMetadata(root) {
+function generatedPackageMetadata(root, opencodeVersion) {
   const packageFilename = path.join(root, 'package.json');
   const lockFilename = path.join(root, 'package-lock.json');
   const nodeModules = path.join(root, 'node_modules');
@@ -251,16 +279,16 @@ function generatedPackageMetadata(root) {
   const lockOpened = stableGeneratedJson(lockFilename, nodeModules, 'generated package-lock.json', 0o600); stableFiles.push(lockOpened);
   const packageDocument = packageOpened.document;
   const lockDocument = lockOpened.document;
-  const exactDependency = { '@opencode-ai/plugin': '1.18.18' };
+  const exactDependency = { '@opencode-ai/plugin': opencodeVersion };
   if (!packageDocument || typeof packageDocument !== 'object' || Array.isArray(packageDocument)
-      || JSON.stringify(packageDocument.dependencies) !== JSON.stringify(exactDependency)) fail('generated package.json must have the sole exact @opencode-ai/plugin 1.18.18 dependency');
+      || JSON.stringify(packageDocument.dependencies) !== JSON.stringify(exactDependency)) fail(`generated package.json must have the sole exact @opencode-ai/plugin ${opencodeVersion} dependency`);
   for (const key of ['devDependencies', 'optionalDependencies', 'peerDependencies', 'bundledDependencies', 'bundleDependencies']) {
     if (Object.hasOwn(packageDocument, key)) fail(`generated package.json alternate direct dependency section is forbidden: ${key}`);
   }
   if (!lockDocument || typeof lockDocument !== 'object' || Array.isArray(lockDocument) || lockDocument.lockfileVersion !== 3
       || !lockDocument.packages || typeof lockDocument.packages !== 'object' || Array.isArray(lockDocument.packages)) fail('generated package-lock.json must be a lockfileVersion 3 packages object');
   if (JSON.stringify(lockDocument.packages['']?.dependencies) !== JSON.stringify(exactDependency)) fail('generated package-lock root dependency does not match package.json');
-  if (lockDocument.packages['node_modules/@opencode-ai/plugin']?.version !== '1.18.18') fail('generated package-lock must contain @opencode-ai/plugin 1.18.18');
+  if (lockDocument.packages['node_modules/@opencode-ai/plugin']?.version !== opencodeVersion) fail(`generated package-lock must contain @opencode-ai/plugin ${opencodeVersion}`);
   for (const [location, entry] of Object.entries(lockDocument.packages)) {
     if (location.startsWith('node_modules/') && entry?.link === true) fail(`generated package-lock link entry is forbidden: ${location}`);
   }
@@ -350,7 +378,7 @@ function verifyRecursiveGenerated(root, relative, metadata) {
   }
 }
 
-function verifyRuntime(runtimeRoot, value, sources = loadManagedSources(value)) {
+function verifyRuntime(runtimeRoot, value, opencodeVersion, sources = loadManagedSources(value)) {
   lstatOwned(runtimeRoot, 'runtime root', 'directory', 0o700);
   const root = runtimeRoot;
   const directories = expectedDirectories(sources);
@@ -358,7 +386,7 @@ function verifyRuntime(runtimeRoot, value, sources = loadManagedSources(value)) 
     assertSafeRelative(entry.path, 'generated path');
     return [entry.path, entry];
   }));
-  const packageMetadata = generatedPackageMetadata(root);
+  const packageMetadata = generatedPackageMetadata(root, opencodeVersion);
   function walk(relative = '') {
     const directory = relative ? path.join(root, relative) : root;
     if (relative) lstatOwned(directory, `runtime directory ${relative}`, 'directory', 0o700);
@@ -378,7 +406,7 @@ function verifyRuntime(runtimeRoot, value, sources = loadManagedSources(value)) 
           lstatOwned(child, `generated runtime file ${childRelative}`, 'file', Number.parseInt(rule.mode, 8));
           if (rule.content === 'runtime-marker') {
             const marker = parseJsonBytes(readStableFile(child, 'runtime marker', { exactMode: Number.parseInt(rule.mode, 8) }).bytes, 'runtime marker');
-            if (Object.keys(marker).sort().join(',') !== 'opencodeVersion,packageVersion' || marker.packageVersion !== value.packageVersion || marker.opencodeVersion !== value.compatibility.opencode) fail('runtime marker content mismatch');
+            if (Object.keys(marker).sort().join(',') !== 'opencodeVersion,packageVersion' || marker.packageVersion !== value.packageVersion || marker.opencodeVersion !== opencodeVersion) fail('runtime marker content mismatch');
           }
         }
       } else fail(`undeclared runtime entry: ${childRelative}`);
@@ -402,15 +430,24 @@ function cacheRootFrom(options) {
   assertCanonicalAbsolute(base, 'cache base');
   return path.join(base, 'opencode-harness');
 }
-function runtimePath(value, options) { return path.join(cacheRootFrom(options), value.packageVersion, `opencode-${value.compatibility.opencode}`, 'runtime'); }
+function runtimePath(value, options, opencodeVersion) { return path.join(cacheRootFrom(options), value.packageVersion, `opencode-${opencodeVersion}`, 'runtime'); }
 
-export function prepareRuntime(options = {}) {
+export function prepareRuntime(options = {}, selectedVersion = null) {
   const value = manifest();
   assertNodeCompatibility(value);
+  let selection = null;
+  if (selectedVersion === null) {
+    selection = resolveCompatibleExecutable(value);
+    selectedVersion = selection.version;
+  } else assertOpenCodeCompatibility(value, selectedVersion);
   const sources = loadManagedSources(value);
-  const parent = ensurePrivateDirectory(path.dirname(runtimePath(value, options)));
+  const parent = ensurePrivateDirectory(path.dirname(runtimePath(value, options, selectedVersion)));
   const runtime = path.join(parent, 'runtime');
-  if (fs.existsSync(runtime)) return verifyRuntime(runtime, value, sources);
+  if (fs.existsSync(runtime)) {
+    const verified = verifyRuntime(runtime, value, selectedVersion, sources);
+    if (selection) recheckExecutable(selection.executable, selection.identity, 'runtime verification');
+    return verified;
+  }
   const temporary = path.join(parent, `.prepare-${process.pid}-${randomBytes(8).toString('hex')}`);
   fs.mkdirSync(temporary, { mode: 0o700 });
   try {
@@ -420,7 +457,7 @@ export function prepareRuntime(options = {}) {
       fs.writeFileSync(target, source.bytes, { flag: 'wx', mode: 0o644 });
       fs.chmodSync(target, 0o644);
     }
-    fs.writeFileSync(path.join(temporary, '.harness-runtime.json'), `${JSON.stringify({ packageVersion: value.packageVersion, opencodeVersion: value.compatibility.opencode })}\n`, { flag: 'wx', mode: 0o644 });
+    fs.writeFileSync(path.join(temporary, '.harness-runtime.json'), `${JSON.stringify({ packageVersion: value.packageVersion, opencodeVersion: selectedVersion })}\n`, { flag: 'wx', mode: 0o644 });
     fs.chmodSync(path.join(temporary, '.harness-runtime.json'), 0o644);
     for (const relative of fs.readdirSync(temporary, { recursive: true })) {
       const candidate = path.join(temporary, relative);
@@ -429,7 +466,9 @@ export function prepareRuntime(options = {}) {
     const fd = fs.openSync(temporary, fs.constants.O_RDONLY | fs.constants.O_DIRECTORY); fs.fsyncSync(fd); fs.closeSync(fd);
     try { fs.renameSync(temporary, runtime); } catch (error) { if (error.code !== 'EEXIST' && error.code !== 'ENOTEMPTY') throw error; }
   } finally { fs.rmSync(temporary, { recursive: true, force: true }); }
-  return verifyRuntime(runtime, value, sources);
+  const verified = verifyRuntime(runtime, value, selectedVersion, sources);
+  if (selection) recheckExecutable(selection.executable, selection.identity, 'runtime preparation');
+  return verified;
 }
 
 function git(workspace, args, allowFailure = false) {
@@ -987,6 +1026,16 @@ function resolveExecutable() {
   return { executable, identity: { dev: opened.stat.dev, ino: opened.stat.ino, size: opened.stat.size, mtimeNs: opened.stat.mtimeNs, digest: hash(opened.bytes) } };
 }
 
+function resolveCompatibleExecutable(value) {
+  const selection = resolveExecutable();
+  const result = spawnSync(selection.executable, ['--version'], { encoding: 'utf8', env: process.env });
+  if (result.error) fail(`cannot probe OpenCode version: ${result.error.message}`);
+  if (result.status !== 0) fail(`OpenCode version probe failed with status ${result.status}`);
+  const version = assertOpenCodeCompatibility(value, result.stdout.trim());
+  recheckExecutable(selection.executable, selection.identity, 'version probe');
+  return { ...selection, version };
+}
+
 function parse(argv) {
   const command = argv.shift() ?? 'help';
   if (command === 'validate-inputs') {
@@ -1033,20 +1082,20 @@ function run(options) {
   if (Boolean(options.catalog) !== Boolean(options.profile)) fail('--routing-catalog and --routing-profile are an all-or-none pair');
   const workspace = canonicalWorkspace(options.workspace);
   const projectState = projectPreflight(workspace, Boolean(options.allowProjectPlugins), Boolean(options.providerConfig));
-  const runtimeRoot = prepareRuntime(options);
+  const { inputs } = validateExternalInputs(options);
+  const value = manifest();
+  assertNodeCompatibility(value);
+  const { executable, identity, version } = resolveCompatibleExecutable(value);
+  const runtimeRoot = prepareRuntime(options, version);
   const traceRoot = chooseTraceRoot(workspace, options.traceRoot, runtimeRoot);
   for (const [left, right, label] of [[workspace, runtimeRoot, 'workspace/runtime'], [runtimeRoot, traceRoot, 'runtime/trace']]) if (left === right || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`)) fail(`${label} roots must not overlap`);
   if (traceRoot.startsWith(`${workspace}${path.sep}`) && traceRoot !== path.join(workspace, '.memory')) fail('workspace/trace roots may overlap only at the ignored workspace .memory directory');
 
-  const { inputs } = validateExternalInputs(options);
   let snapshots = null;
   let resultStatus = 1;
   let originalError = null;
   try {
-    const { executable, identity } = resolveExecutable();
-    const version = spawnSync(executable, ['--version'], { encoding: 'utf8', env: process.env });
-    if (version.status !== 0 || version.stdout.trim() !== manifest().compatibility.opencode) fail(`requires OpenCode ${manifest().compatibility.opencode}`);
-    recheckExecutable(executable, identity, 'version probe');
+    recheckExecutable(executable, identity, 'runtime preparation');
     const recheckedProject = projectPreflight(workspace, Boolean(options.allowProjectPlugins), Boolean(options.providerConfig));
     if (recheckedProject.fingerprint !== projectState.fingerprint) fail('project config/plugin/skill surface changed after preflight');
     if (traceRoot !== path.join(workspace, '.memory')) probeTracePermissions(executable, identity, workspace, runtimeRoot, traceRoot, inputs, projectState, options);

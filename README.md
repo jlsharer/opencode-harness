@@ -1,187 +1,334 @@
-# OpenCode Harness Runtime 0.1.10
+# OpenCode Harness Runtime 0.1.11
 
-`opencode-harness-runtime` is a no-copy launcher for the repository's four-role OpenCode delegation harness: `researcher`, `planner`, `implementer`, and `validator`. Planner, implementer, and validator packets carry explicit bounded task modes for synthesis, integration, adversarial review, artifact proof, and integration checks.
+`opencode-harness-runtime` launches the repository's four-role delegation
+harness without copying `.opencode` into the target project. The active roles
+are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration,
+review, synthesis, artifact proof, and integration checks are task modes of
+those roles, not additional agents.
 
-The package supports Linux, Node.js `>=24 <25`, and exactly OpenCode `1.18.18`. Git is required in each target workspace. npm is required only to create a local package tarball; global installation and npm publication are not required.
+Package version `0.1.11` requires Linux, Node.js 24, Git, and OpenCode
+`1.18.18` through `1.18.25`, inclusive. npm is needed only to build a local
+tarball. Global installation and publication are not required. Roll back by
+invoking retained version `0.1.10`.
 
-## Source checkout and local package
+## Prepare and run
 
-Run the source-local CLI from the package checkout:
+From this checkout:
 
 ```sh
 node bin/opencode-harness.mjs --help
 node bin/opencode-harness.mjs prepare
-node bin/opencode-harness.mjs prepare --cache-root /OWNER/ONLY/CACHE
+node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE
+node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- models
+node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- \
+  run --model PROVIDER/MODEL "Use /delegate-orchestration for this task"
 ```
 
-Audit the package contents without publishing:
-
-```sh
-npm pack --dry-run --json
-install -d -m 700 /OWNER/ONLY/PACKS
-npm pack --pack-destination /OWNER/ONLY/PACKS
-mkdir -m 700 /OWNER/ONLY/EXTRACT
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.10.tgz -C /OWNER/ONLY/EXTRACT
-node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
-```
-
-The placeholders above must be replaced with trusted, owner-only absolute paths. A locally extracted tarball is sufficient; do not infer that this version exists in any registry.
-
-## Prepare and run
-
-The complete launcher grammar is:
+Launcher grammar:
 
 ```text
 opencode-harness prepare [--cache-root ABS]
 opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]
 opencode-harness run --workspace ABS [--trace-root ABS] [--cache-root ABS]
-  [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]
+  [--provider-config FILE]
+  [--routing-catalog FILE --routing-profile FILE]
   [--allow-project-plugins] [-- OPENCODE_ARGS...]
 ```
 
-Examples from a source checkout:
+Tokens after `--` are unchanged OpenCode arguments. With none, the TUI opens in
+the workspace. OpenCode and its agents can modify that workspace; use a clean
+disposable clone or verified backup for initial testing and inspect Git status
+and diff afterward.
+
+To inspect a local package without publishing it:
 
 ```sh
-node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE
-node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- models
-node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- run --format json --model PROVIDER/MODEL "Use /delegate-orchestration for this scoped workflow"
-node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- run --command delegate-orchestration "Investigate the setup friction and implement a validated one-command bootstrap"
+npm pack --dry-run --json
+install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
+npm pack --pack-destination /OWNER/ONLY/PACKS
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.11.tgz \
+  -C /OWNER/ONLY/EXTRACT
+node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
 
-Tokens after `--` are passed unchanged as OpenCode arguments. With no forwarded tokens, OpenCode opens its TUI in the workspace. `/delegate-orchestration` accepts an ordinary-language goal. The parent extracts supplied constraints, asks focused follow-ups only when a required user decision is unresolved, and assembles the internal `.opencode/schemas/orchestration-input.schema.json` object itself; callers do not need to write JSON. Mechanical IDs and bounded coordination fields are generated, while live providers, global mutation, Git mutation, scope expansion, and parallel execution default to denied. The parent then delegates and synthesizes only. Direct role commands and direct `@role` subagent dispatch bypass the required fresh-task policy and are rejected. Every fresh role dispatch uses a contract-complete Task packet containing a nonempty unique `delegationTaskId`, a stable `scopeKey`, an explicit allowed `taskMode`, and `dispatchKind: fresh`, with the `task_id` property omitted entirely. A `task_id` is not a general continuation handle: it may appear only once in a matching `dispatchKind: clarification-response` packet for one recorded, unresolved, child-originated clarification. New work, follow-up, retry, remediation, correction, replay, changed scope, mismatch, terminal work, or post-restart handling starts a fresh task without `task_id` or fails closed. `models` and `run` can contact configured providers; local, delegated, and cloud calls are live, may require external authentication, and are not accepted by this package's fixture tests. Cloud calls may also be billable.
+An inspected extraction is sufficient. Do not assume this version exists in a
+registry. `prepare` uses version-separated caches, so retained package versions
+remain independently runnable for rollback.
 
-## Optional provider and routing inputs
+`/delegate-orchestration` is the managed delegation entry point. The parent
+build agent creates bounded fresh tasks and delegates to the four roles. Direct
+role commands and direct `@role` dispatch are rejected because they bypass the
+fresh-task policy.
 
-Provider transport is independently optional. The endpoint catalog and advisory routing profile must be supplied together. All three files must be trusted absolute files, owner-owned, mode `0600`, and credential-free.
+## Local nodes and an external project
 
-Example provider projection:
+The preferred topology keeps inference, harness runtime, and work separate:
+
+| Location | Responsibility |
+|---|---|
+| `ai-infrastructure/llama-server` | llama.cpp nodes, tunnels, context, provider projection |
+| This checkout | pinned OpenCode runtime and harness controls |
+| `/ABSOLUTE/GIT/WORKSPACE` | unrelated target project |
+
+The target project does not need a copied `.opencode` tree or a provider block
+in its `opencode.json`. Follow **Fast path: use local nodes from a separate
+project** in the paired `llama-server/README.md`. That path:
+
+1. Creates owner-only node and projection inputs.
+2. Validates the server, exact model ID, health, and GPU state.
+3. Optionally commits a transactional context increase.
+4. Creates a schema-2 routing profile.
+5. Publishes provider/catalog files and binds them to the target workspace.
+6. Activates remote tunnels and runs this harness against that binding.
+
+The infrastructure wrapper is the normal entry point:
+
+```sh
+INTEGRATION=/OWNER/ONLY/SRC/ai-infrastructure/llama-server/scripts/opencode-harness-integration.sh
+HARNESS_ROOT=/OWNER/ONLY/SRC/opencode-harness
+WORKSPACE=/OWNER/ONLY/SRC/target-project
+PROJECTION_ROOT=/OWNER/ONLY/CONFIG/opencode/ai-infrastructure
+NODES=(--node main --node secondary)
+DEFAULT_NODE=main
+
+PROFILE=$("$INTEGRATION" create-profile "${NODES[@]}" \
+  --default-node "$DEFAULT_NODE" --yes)
+
+"$INTEGRATION" plan "${NODES[@]}" --workspace "$WORKSPACE" \
+  --routing-profile "$PROFILE" --harness-root "$HARNESS_ROOT" \
+  --projection-root "$PROJECTION_ROOT"
+"$INTEGRATION" prepare-harness --harness-root "$HARNESS_ROOT" --yes
+"$INTEGRATION" bind "${NODES[@]}" --workspace "$WORKSPACE" \
+  --routing-profile "$PROFILE" --harness-root "$HARNESS_ROOT" \
+  --projection-root "$PROJECTION_ROOT" --yes
+
+BINDING=/ABSOLUTE/PATH/PRINTED/BY/BIND
+"$INTEGRATION" activate --binding "$BINDING" --yes
+# Fully quit OpenCode before acknowledging the restart boundary.
+"$INTEGRATION" run --binding "$BINDING" \
+  --ack-opencode-restarted -- models "ai-infra-$DEFAULT_NODE"
+```
+
+Bindings pin the workspace, harness identity, provider generation, endpoint
+catalog, profile hash, and node set. Create a new binding after changing context,
+projection, profile, harness version, or workspace. Deactivate managed tunnels
+when finished:
+
+```sh
+"$INTEGRATION" deactivate --binding "$BINDING" --yes
+```
+
+`create-profile` derives the selected default node's exact provider/model from
+the generated catalog, assigns it to all four roles, writes a deterministic
+owner-only profile, and prints only its absolute path. Repeating the same command
+reuses the same file. Generate a new profile instead of editing one already
+recorded by a binding.
+
+## Model routing configuration
+
+Routing policy is project-owned metadata; it does not create provider transport,
+start endpoints, authenticate, or make network calls. Native provider config
+must independently define every selected `provider/model`.
+
+### Which file is loaded
+
+There are two distinct input paths:
+
+| Path | Use |
+|---|---|
+| `.opencode/routing/harness-model-routing.example.json` | committed neutral fallback; local routing disabled |
+| `.opencode/routing/harness-model-routing.json` | ignored source-local operator override |
+| `--routing-catalog` plus `--routing-profile` | preferred external/runtime input pair |
+
+For implicit source loading, the loader searches upward for
+`.opencode/routing/`, chooses `harness-model-routing.json` when present, and
+otherwise chooses the neutral example. It never merges them. A present but
+unreadable, malformed, or invalid custom file fails; it does not fall back.
+
+The packaged runtime does not include the ignored custom file. When the launcher
+receives a catalog/profile pair, it passes both to the runtime and that external
+pair takes precedence over implicit files. The catalog supplies endpoint/model
+entries; the unwrapped profile supplies policy. They are validated and merged
+only in memory.
+
+### Configure `harness-model-routing.json`
+
+Start from the neutral shape, then edit the ignored copy:
+
+```sh
+cp .opencode/routing/harness-model-routing.example.json \
+  .opencode/routing/harness-model-routing.json
+```
+
+The source-local file may be wrapped in `harnessModelRouting`; the external
+profile must be unwrapped. Important fields:
+
+| Field | Meaning |
+|---|---|
+| `localRouting.enabled` | Enables catalog-backed advisory selections |
+| `localRouting.models` | Catalog keys mapped to exact model, URL, and concurrency |
+| `localRouting.defaultLocalModel` | Fallback catalog key for roles |
+| `roleOverrides.<role>.model` | Native `provider/model` override |
+| `roleOverrides.<role>.localModel` | Key from `localRouting.models` |
+| `variant` | Native provider variant; use `null` unless explicitly supported |
+| `commandOverrides` | Locks the four `/delegate-*` commands to matching roles |
+| `orchestratorCommands` | Reserves `/delegate-orchestration` for the parent |
+| `complexityTiers` | Optional model/variant policy selected by request metadata |
+
+A minimal source-local override has this complete shape. Replace the catalog
+key, exact provider/model, URL, and concurrency with reviewed values:
 
 ```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "ai-infra-node": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "LOCAL NODE PLACEHOLDER",
-      "options": { "baseURL": "http://127.0.0.1:18080/v1" },
+  "harnessModelRouting": {
+    "schemaVersion": "2.0.0",
+    "defaultMode": "single-model",
+    "defaultModel": null,
+    "singleModel": { "enabled": false, "model": null },
+    "localRouting": {
+      "enabled": true,
+      "forceLocalForHarnessSubagents": false,
+      "defaultLocalModel": "ai-infra-node",
       "models": {
-        "node-model": {
-          "name": "node-model",
-          "limit": { "context": 32768, "output": 4096 },
-          "options": { "chat_template_kwargs": { "enable_thinking": false } }
+        "ai-infra-node": {
+          "model": "ai-infra-node/exact-model-id",
+          "routingServiceUrl": "http://127.0.0.1:18080/v1",
+          "maxInFlight": 1
         }
       }
-    }
+    },
+    "roleOverrides": {
+      "researcher": { "model": null, "localModel": "ai-infra-node", "variant": null },
+      "planner": { "model": null, "localModel": "ai-infra-node", "variant": null },
+      "implementer": { "model": null, "localModel": "ai-infra-node", "variant": null },
+      "validator": { "model": null, "localModel": "ai-infra-node", "variant": null }
+    },
+    "commandOverrides": {
+      "/delegate-research": { "agent": "researcher", "model": null, "variant": null },
+      "/delegate-plan": { "agent": "planner", "model": null, "variant": null },
+      "/delegate-implement": { "agent": "implementer", "model": null, "variant": null },
+      "/delegate-validate": { "agent": "validator", "model": null, "variant": null }
+    },
+    "orchestratorCommands": {
+      "/delegate-orchestration": {
+        "owner": "orchestrator",
+        "agent": null,
+        "model": null,
+        "variant": null
+      }
+    },
+    "complexityTiers": {}
   }
 }
 ```
 
-Port `18080` is illustrative and does not claim a listening service; replace it with the approved integer from 1 through 65535. The closed schema accepts only canonical loopback HTTP `/v1` URLs. Context and output limits are positive integers, and output must be less than context.
+The URL above is illustrative and does not claim a listening endpoint. Catalog
+keys use lowercase letters, digits, and hyphens. Every model is provider-prefixed
+as `provider/model`; catalog model IDs and endpoints must also agree with native
+provider configuration.
 
-Matching endpoint catalog:
+`roleOverrides` must contain exactly these keys:
 
-```json
-{
-  "schemaVersion": "1.0.0",
-  "models": {
-    "ai-infra-node": {
-      "model": "ai-infra-node/node-model",
-      "routingServiceUrl": "http://127.0.0.1:18080/v1",
-      "maxInFlight": 1
-    }
-  }
-}
+```text
+researcher planner implementer validator
 ```
 
-Matching unwrapped schema-2 advisory profile:
+Do not restore retired `integrator`, `reviewer`, `synthesizer`, or
+`artifact-verifier` entries. Use task modes instead:
 
-```json
-{
-  "schemaVersion": "2.0.0",
-  "defaultMode": "single-model",
-  "defaultModel": null,
-  "singleModel": { "enabled": false, "model": null },
-  "localRouting": {
-    "enabled": true,
-    "forceLocalForHarnessSubagents": false,
-    "defaultLocalModel": "ai-infra-node"
-  },
-  "roleOverrides": {
-    "researcher": { "model": null, "localModel": "ai-infra-node", "variant": "research" },
-    "planner": { "model": null, "localModel": "ai-infra-node", "variant": "planning" },
-    "implementer": { "model": null, "localModel": "ai-infra-node", "variant": null },
-    "validator": { "model": null, "localModel": "ai-infra-node", "variant": "audit" }
-  },
-  "commandOverrides": {},
-  "orchestratorCommands": {},
-  "complexityTiers": {}
-}
+```text
+researcher:  research
+planner:     plan | synthesis
+implementer: implementation | integration
+validator:   validation | review | artifact-proof | integration-check
 ```
 
-The profile cannot contain catalog models, provider options, or credentials, and its required `forceLocalForHarnessSubagents` policy must remain `false`. Catalog/profile routing is advisory: it does not create native provider transport or prove model identity, endpoint health, capacity, or delegation quality. Supply the inputs as follows:
+Keep `forceLocalForHarnessSubagents` false. With force-local disabled, local
+selectors remain advisory; the config plugin enforces only non-null native
+`roleOverrides.<role>.model` assignments. External profiles require false.
+
+Normal decision precedence is explicit request, orchestrator command, role
+command, role override, complexity tier, single-model fallback, then default
+model. An explicit command also fixes its role. The helper reports decisions but
+does not call an endpoint:
 
 ```sh
-node bin/opencode-harness.mjs run \
-  --workspace /ABSOLUTE/GIT/WORKSPACE \
-  --provider-config /OWNER/ONLY/provider.json \
-  --routing-catalog /OWNER/ONLY/catalog.json \
-  --routing-profile /OWNER/ONLY/profile.json
+node .opencode/routing/resolve-model-routing.mjs \
+  --config .opencode/routing/harness-model-routing.json \
+  --metadata-json '{"role":"planner"}'
 ```
 
-Authentication remains native external OpenCode state. Do not place tokens, credentials, auth paths, global configuration, provider secrets, or `OPENCODE_CONFIG_CONTENT` secrets in these files or command examples.
+Validate every routing change, then fully quit and restart OpenCode:
 
-### Offline input validation
+```sh
+node .opencode/routing/routing-policy.test.mjs
+node .opencode/scripts/validate-harness.mjs
+```
 
-`validate-inputs` applies the same closed provider, catalog, profile, metadata, force-local, and cross-document checks used by `run`, without preparing a runtime or selecting a workspace:
+The source validator intentionally checks committed fixtures, not the ignored
+private override. The explicit resolver command above validates that override.
+
+## External provider and routing inputs
+
+`--provider-config` is independently optional. Catalog and profile are all-or-
+none. All supplied files must be credential-free absolute regular JSON files,
+owned by the current user, mode `0600`, no larger than 1 MiB, and beneath trusted
+ancestry. Use concrete projection generation leaves, never a mutable `current`
+symlink.
 
 ```sh
 node bin/opencode-harness.mjs validate-inputs \
-  --provider-config /OWNER/ONLY/provider.json \
-  --routing-catalog /OWNER/ONLY/catalog.json \
-  --routing-profile /OWNER/ONLY/profile.json
+  --provider-config /OWNER/ONLY/generation-ID/opencode.providers.json \
+  --routing-catalog /OWNER/ONLY/generation-ID/harness-endpoints.json \
+  --routing-profile /OWNER/ONLY/advisory-profile.json
+
+node bin/opencode-harness.mjs run \
+  --workspace /ABSOLUTE/GIT/WORKSPACE \
+  --provider-config /OWNER/ONLY/generation-ID/opencode.providers.json \
+  --routing-catalog /OWNER/ONLY/generation-ID/harness-endpoints.json \
+  --routing-profile /OWNER/ONLY/advisory-profile.json -- models
 ```
 
-The accepted combinations are provider alone, catalog plus profile, or all three. No inputs, a partial catalog/profile pair, duplicate or unknown options, workspace/cache/trace/plugin options, positional files, and `--` forwarding are rejected. Each file must be an absolute current-user-owned mode-`0600` regular JSON file of at most 1 MiB beneath trusted resolved ancestry. A caller-supplied symbolic-link leaf is rejected, and reads retain no-follow and before/after stability checks.
+Credentials remain in native external OpenCode state. Never place them in
+provider projections, catalogs, profiles, bindings, prompts, or traces.
 
-Success exits `0`, writes nothing to stderr, and writes exactly one compact JSON line to stdout (shown here for all three inputs):
+## Runtime, trust, and traces
 
-```json
-{"schemaVersion":"1.0.0","valid":true,"packageVersion":"0.1.10","inputs":{"providerConfig":true,"routingCatalog":true,"routingProfile":true}}
-```
+`prepare` resolves and probes the selected trusted OpenCode executable, then
+creates or verifies an owner-only cache separated by package and exact OpenCode
+version. Managed drift, unsafe ownership/modes, symlinks, and collisions fail
+closed. Roll back by invoking the retained prior package version, not a rollback
+command.
 
-A grammar, trust, parse, schema, policy, or cross-document failure exits `1`, writes no stdout, and writes one human-readable error line to stderr. This command performs package compatibility reads and explicit input reads only: it does not inspect a workspace, create cache/trace/snapshot/database state, resolve or run OpenCode, spawn a child, contact a provider, or inspect or mutate global OpenCode/auth state. Ambient OpenCode, harness, HOME, XDG, database, executable, and PATH variables do not select validation inputs. Success proves offline structural and semantic compatibility only, not endpoint health, model identity, authentication, capacity, OpenCode activation, or restart acceptance. Consumers must strictly parse the result and separately pin package/source/entrypoint identity.
+The workspace must be a trusted canonical Git worktree. Project command, agent,
+skill, routing, provider, and harness-plugin collisions reject launch. Project
+plugins are excluded unless `--allow-project-plugins` explicitly acknowledges
+their unsandboxed code.
 
-## Runtime, traces, and rollback
+Trace selection is: explicit `--trace-root`, ignored workspace `.memory`, then
+owner-only XDG state keyed by workspace. Runtime, workspace, trace, snapshots,
+and per-launch database paths stay separate.
 
-`prepare` creates or verifies an owner-only cache under the default versioned cache root, or under an optional canonical absolute `--cache-root`. Package version `0.1.10` and harness adapter version `0.1.0` describe different contracts and intentionally differ. Managed drift, unsafe ownership or modes, symlinks, and collisions fail closed; the launcher does not repair them. Prior package-version caches remain separate and retained. Roll back by invoking retained version `0.1.9`, not by using a rollback subcommand.
+Generated orchestration evidence is written under
+`.memory/orchestrations/<orchestration-id>/`; each role writes beneath its own
+`roles/<role>/` directory. An external trace root receives narrowly scoped role
+permissions after an activation probe. Trace files are coordination evidence,
+not proof that an unrecorded command or validation ran.
 
-Launcher setup does not copy or create workspace `.opencode` and does not itself edit workspace files or Git state. After spawn, OpenCode commands and project plugins explicitly allowed with `--allow-project-plugins` run in the workspace and can modify files or Git state; review their actions and resulting diffs. Runtime, workspace, trace, launch-snapshot, and database roots remain separate. Ambient `OPENCODE_DB` is rejected; each launch receives unique initially absent database, WAL, and SHM paths. `XDG_DATA_HOME` passes through unchanged. Cleanup failures and identity mismatches fail closed and report an absolute retained launch or quarantine path for owner action.
+The launcher resolves one OpenCode executable and requires an exact stable
+version from `1.18.18` through `1.18.25`. Each accepted version has a separate
+cache, runtime marker, and exact generated `@opencode-ai/plugin` metadata
+contract. Ambient `OPENCODE_DB` is rejected, and each child gets an isolated
+database/snapshot lifecycle. Credentials and global OpenCode config remain
+external; the package does not mutate them.
 
-Trace selection is, in order:
+Fully quit OpenCode after package, provider, routing, profile, plugin, agent,
+command, skill, or configuration changes. Running sessions do not reload them.
 
-1. an explicit safe canonical absolute `--trace-root`;
-2. a safe workspace `.memory` that Git already ignores; or
-3. owner-only XDG state keyed by the canonical workspace.
-
-Generated coordination evidence lives under `.memory/orchestrations/<orchestration-id>/` and role evidence under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`. Traces are handoff evidence, not package authority or proof of unrun checks.
-
-When the selected trace root is external to the workspace, the separate trace-permission plugin appends one role-specific absolute `external_directory` allow for each of the four roles. It also appends a workspace-relative, role-specific `*.md` edit allow for exactly the three trace-only roles; implementer retains its existing edit policy unchanged. Sibling-role paths, non-Markdown trace edits, and whole-root grants remain unauthorized. Before the requested OpenCode process starts, the launcher uses a distinct private database/snapshot to run `agent list` and requires an exclusive owner-only marker proving the resolved config contains that exact plan. Missing, malformed, or mismatched activation fails before provider-backed requested work. If the selected root is exactly workspace `.memory`, the plugin performs no mutation and the launcher performs no activation probe.
-
-## Trust and activation boundaries
-
-The workspace must be a trusted canonical absolute Git worktree. Project command, agent, skill, routing, provider, and harness-plugin collisions reject launch. Custom skill roots must be trusted canonical absolute paths. The launcher resolves one OpenCode executable, requires exact version `1.18.18`, and uses that same executable for probing and launch.
-
-Project plugins are unsandboxed same-user code. `--allow-project-plugins` is explicit acknowledgment, not isolation. The package targets accidental and other-UID drift; malicious same-UID replacement, registry compromise, and a compromised package artifact remain outside its boundary.
-
-Fully quit and restart OpenCode after package, provider, routing, plugin, agent, command, skill, or configuration changes. Fixture tests do not establish real provider activation, authentication, network reachability, model identity, endpoint capacity, or recovery behavior.
-
-## Offline source and package checks
-
-Run from the source checkout:
+## Validation and packaging
 
 ```sh
 node --check bin/opencode-harness.mjs
-node bin/opencode-harness.mjs --help
 node .opencode/routing/routing-policy.test.mjs
 node --test .opencode/scripts/runtime-harness.test.mjs
 node --test .opencode/scripts/runtime-foreign-repo.test.mjs
@@ -192,4 +339,5 @@ npm pack --dry-run --json
 git diff --check
 ```
 
-These checks cover source inventory, routing policy, no-copy runtime behavior, foreign-workspace Git isolation, the portable profile, and the exact 40-entry Linux npm payload with fake children and fixtures. The npm package excludes Darwin bootstrap source/binaries, dedicated trace-permission tests, source-only policy tests, private/generated trace state, and custom routing. Inspect any concrete local tarball separately for `package/README.md`, package version `0.1.10`, executable `package/bin/opencode-harness.mjs`, and the same exact allowlist. The activation marker and plugin hooks are startup guardrails, not validator acceptance evidence or proof of provider/model behavior.
+Fixture success does not prove live provider activation, endpoint health, model
+identity, authentication, capacity, routing quality, or recovery behavior.

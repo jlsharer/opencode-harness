@@ -279,6 +279,10 @@ async function validateRoutingAndPlugin(root) {
   await localHooks.config(localNativeConfig);
   if (JSON.stringify(localNativeConfig) !== '{}') fail('advisory local no-provider config hook must be a no-op');
   const traceTest = await regularFile(root, '.opencode/plugin-modules/trace-root-permissions.test.mjs');
+  const traceTestSource = await readFile(traceTest, 'utf8');
+  for (const snippet of ["from './trace-root-permissions.js'", 'absent and exact workspace memory are no-ops', 'four external allows and only three trailing md edit allows are role-isolated', 'probe pair is closed, exclusive, owner-only and exact']) {
+    if (!traceTestSource.includes(snippet)) fail(`trace-root permission tests failed: missing contract fixture ${snippet}`);
+  }
   const traceResult = spawnSync(process.execPath, ['--test', traceTest], { cwd: root, encoding: 'utf8' });
   if (traceResult.status !== 0) fail(`trace-root permission tests failed: ${(traceResult.stderr || traceResult.stdout).trim()}`);
 }

@@ -52,7 +52,7 @@ function fakeOpenCode(capture) {
     "import fs from 'node:fs';",
     "import path from 'node:path';",
     "import { createHash } from 'node:crypto';",
-    "if (process.argv[2] === '--version') { if(process.env.HARNESS_TEST_VERSION_MARKER) fs.writeFileSync(process.env.HARNESS_TEST_VERSION_MARKER,'probed'); if(process.env.HARNESS_TEST_INSERT_CONFIG) fs.writeFileSync(path.join(process.env.HARNESS_TEST_INSERT_CONFIG,'opencode.json'),JSON.stringify({plugin:['inserted-after-preflight']})); if(process.env.HARNESS_TEST_MUTATE_ASSET) fs.appendFileSync(process.env.HARNESS_TEST_MUTATE_ASSET,'changed'); process.stdout.write('1.18.18\\n'); }",
+    "if (process.argv[2] === '--version') { if(process.env.HARNESS_TEST_VERSION_MARKER) fs.writeFileSync(process.env.HARNESS_TEST_VERSION_MARKER,'probed'); if(process.env.HARNESS_TEST_INSERT_CONFIG) fs.writeFileSync(path.join(process.env.HARNESS_TEST_INSERT_CONFIG,'opencode.json'),JSON.stringify({plugin:['inserted-after-preflight']})); if(process.env.HARNESS_TEST_MUTATE_ASSET) fs.appendFileSync(process.env.HARNESS_TEST_MUTATE_ASSET,'changed'); process.stdout.write('1.18.25\\n'); }",
     'else {',
     " const argv=process.argv.slice(2); const commands=new Set(['models','agent','run']);",
     " if(argv.length && !commands.has(argv[0])) { process.stderr.write('fake OpenCode top-level grammar rejected project-before-subcommand argv\\n'); process.exitCode=64; }",
