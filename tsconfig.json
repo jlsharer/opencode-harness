@@ -1,0 +1,40 @@
+{
+  "compilerOptions": {
+    "target": "ES2024",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": [
+      "ES2024",
+      "DOM",
+      "DOM.Iterable"
+    ],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "rewriteRelativeImportExtensions": true,
+    "types": [
+      "node"
+    ],
+    "rootDir": ".",
+    "outDir": ".build/typescript",
+    "sourceMap": false,
+    "inlineSourceMap": false,
+    "declaration": false,
+    "declarationMap": false,
+    "incremental": false,
+    "noEmitOnError": true
+  },
+  "include": [
+    "bin/**/*.ts",
+    ".opencode/src/**/*.ts",
+    ".opencode/scripts/*.mts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".build",
+    "dashboard/node_modules",
+    "dashboard/dist"
+  ]
+}

@@ -41,5 +41,31 @@
   ],
   "engines": {
     "node": ">=24 <25"
+  },
+  "scripts": {
+    "check:format": "prettier --check 'eslint.config.mjs' 'bin/**/*.ts' '.opencode/src/**/*.ts' '.opencode/scripts/*.mts' && eslint 'bin/**/*.ts' '.opencode/src/**/*.ts' '.opencode/scripts/*.mts'",
+    "format": "prettier --write 'eslint.config.mjs' 'bin/**/*.ts' '.opencode/src/**/*.ts' '.opencode/scripts/*.mts' && eslint --fix 'bin/**/*.ts' '.opencode/src/**/*.ts' '.opencode/scripts/*.mts'",
+    "typecheck": "tsc --noEmit",
+    "compile": "tsc --outDir .build/typescript",
+    "build": "node .opencode/scripts/build-typescript.mts",
+    "check:generated": "node .opencode/scripts/build-typescript.mts --check",
+    "check:source-policy": "node .opencode/scripts/check-typescript-policy.mts",
+    "test:harness": "node .opencode/src/routing/routing-policy.test.ts && node --test .opencode/src/plugin-modules/task-thread-policy.test.ts && node --test .opencode/src/plugin-modules/trace-root-permissions.test.ts && node --test .opencode/scripts/darwin-portable-fs.test.mts && node --test .opencode/scripts/runtime-harness.test.mts && node --test .opencode/scripts/runtime-foreign-repo.test.mts && node .opencode/scripts/portable-harness.test.mjs && node .opencode/scripts/validate-harness.mts && node .opencode/scripts/validate-portable-harness.mjs --root .",
+    "test": "npm run check:format && npm run typecheck && npm run check:generated && npm run check:source-policy && npm run test:harness"
+  },
+  "devDependencies": {
+    "@stylistic/eslint-plugin": "5.10.0",
+    "@types/node": "24.12.2",
+    "eslint": "10.9.1",
+    "prettier": "3.8.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.68.0"
+  },
+  "prettier": {
+    "printWidth": 100,
+    "semi": true,
+    "singleQuote": false,
+    "trailingComma": "all",
+    "endOfLine": "lf"
   }
 }

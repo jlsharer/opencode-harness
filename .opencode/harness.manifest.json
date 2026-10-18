@@ -3,76 +3,471 @@
   "adapterVersion": "0.1.0",
   "schemaVersion": "0.1.0",
   "artifacts": [
-    { "path": "package.json", "kind": "npm-package-manifest", "owner": "harness-owned" },
-    { "path": "README.md", "kind": "package-operator-documentation", "owner": "harness-owned" },
-    { "path": "bin/opencode-harness.mjs", "kind": "harness-runtime-cli", "owner": "harness-owned" },
-    { "path": "opencode.json", "kind": "opencode-config", "owner": "harness-owned" },
-    { "path": "AGENTS.md", "kind": "project-instructions", "owner": "harness-owned" },
-    { "path": "opencode-harness.design.md", "kind": "design-doc", "owner": "harness-owned" },
-    { "path": ".memory/INDEX.md", "kind": "harness-memory-index", "owner": "harness-owned" },
-    { "path": ".memory/protocols/memory-management.md", "kind": "harness-memory-protocol", "owner": "harness-owned" },
-    { "path": ".memory/references/opencode-refs.md", "kind": "harness-reference", "owner": "harness-owned" },
-    { "path": ".memory/templates/orchestration-index.md", "kind": "harness-memory-template", "owner": "harness-owned" },
-    { "path": ".memory/templates/role-trace-artifact.md", "kind": "harness-memory-template", "owner": "harness-owned" },
-    { "path": ".opencode/agents/researcher.md", "kind": "opencode-agent", "owner": "harness-owned" },
-    { "path": ".opencode/agents/planner.md", "kind": "opencode-agent", "owner": "harness-owned" },
-    { "path": ".opencode/agents/implementer.md", "kind": "opencode-agent", "owner": "harness-owned" },
-    { "path": ".opencode/agents/validator.md", "kind": "opencode-agent", "owner": "harness-owned" },
-    { "path": ".opencode/commands/delegate-research.md", "kind": "opencode-command", "owner": "harness-owned" },
-    { "path": ".opencode/commands/delegate-orchestration.md", "kind": "opencode-orchestration-command", "owner": "harness-owned" },
-    { "path": ".opencode/commands/delegate-plan.md", "kind": "opencode-command", "owner": "harness-owned" },
-    { "path": ".opencode/commands/delegate-implement.md", "kind": "opencode-command", "owner": "harness-owned" },
-    { "path": ".opencode/commands/delegate-validate.md", "kind": "opencode-command", "owner": "harness-owned" },
-    { "path": ".opencode/skills/delegation-orchestrator/SKILL.md", "kind": "opencode-skill", "owner": "harness-owned" },
-    { "path": ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
-    { "path": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
-    { "path": ".opencode/skills/delegation-orchestrator/references/validation-checklist.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
-    { "path": ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
-    { "path": ".opencode/skills/opencode-skill-authoring/SKILL.md", "kind": "opencode-skill", "owner": "harness-owned" },
-    { "path": ".opencode/skills/opencode-workflow-guidance/SKILL.md", "kind": "opencode-skill", "owner": "harness-owned" },
-    { "path": ".opencode/contracts/role-io-contracts.json", "kind": "harness-contract", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/role-io-contracts.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/memory-trace-artifact.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/orchestration-input.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/harness-model-routing.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/harness-endpoint-catalog.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/harness-routing-profile.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/schemas/opencode-provider-projection.schema.json", "kind": "harness-schema", "owner": "harness-owned" },
-    { "path": ".opencode/routing/harness-model-routing.example.json", "kind": "harness-routing-config", "owner": "harness-owned" },
-    { "path": ".opencode/routing/harness-model-routing.local.example.json", "kind": "harness-routing-fixture", "owner": "harness-owned" },
-    { "path": ".opencode/routing/routing-config-loader.mjs", "kind": "harness-routing-loader", "owner": "harness-owned" },
-    { "path": ".opencode/routing/routing-policy.mjs", "kind": "harness-routing-policy", "owner": "harness-owned" },
-    { "path": ".opencode/routing/routing-policy.test.mjs", "kind": "harness-routing-test", "owner": "harness-owned" },
-    { "path": ".opencode/routing/resolve-model-routing.mjs", "kind": "harness-routing-resolver", "owner": "harness-owned" },
-    { "path": ".opencode/routing/model-routing-helper.mjs", "kind": "harness-routing-helper", "owner": "harness-owned" },
-    { "path": ".opencode/deployments/llama-server/compose.yaml", "kind": "deployment-compose", "owner": "harness-owned" },
-    { "path": ".opencode/deployments/llama-server/instances/research.env.example", "kind": "deployment-env-example", "owner": "harness-owned" },
-    { "path": ".opencode/deployments/llama-server/instances/coder.env.example", "kind": "deployment-env-example", "owner": "harness-owned" },
-    { "path": ".opencode/deployments/llama-server/README.md", "kind": "deployment-guide", "owner": "harness-owned" },
-    { "path": ".opencode/plugins/index.js", "kind": "opencode-plugin-adapter", "owner": "harness-owned" },
-    { "path": ".opencode/plugin-modules/harness-lifecycle.js", "kind": "opencode-plugin-module", "owner": "harness-owned" },
-    { "path": ".opencode/plugin-modules/task-thread-policy.js", "kind": "opencode-plugin-module", "owner": "harness-owned" },
-    { "path": ".opencode/plugin-modules/task-thread-policy.test.mjs", "kind": "opencode-plugin-test", "owner": "harness-owned" },
-    { "path": ".opencode/plugin-modules/role-model-routing-enforcement.js", "kind": "opencode-plugin-module", "owner": "harness-owned" },
-    { "path": ".opencode/plugin-modules/trace-root-permissions.js", "kind": "opencode-plugin-module", "owner": "harness-owned" },
-    { "path": ".opencode/plugin-modules/trace-root-permissions.test.mjs", "kind": "opencode-plugin-test", "owner": "harness-owned" },
-    { "path": ".opencode/bootstrap/memory/INDEX.md", "kind": "harness-memory-seed", "owner": "harness-owned" },
-    { "path": ".opencode/bootstrap/memory/protocols/memory-management.md", "kind": "harness-memory-seed", "owner": "harness-owned" },
-    { "path": ".opencode/bootstrap/memory/templates/orchestration-index.md", "kind": "harness-memory-seed", "owner": "harness-owned" },
-    { "path": ".opencode/bootstrap/memory/templates/role-trace-artifact.md", "kind": "harness-memory-seed", "owner": "harness-owned" },
-    { "path": ".opencode/bootstrap/native/darwin-portable-fs.c", "kind": "portable-native-source", "owner": "harness-owned" },
-    { "path": ".opencode/bootstrap/native/darwin-portable-fs.universal", "kind": "portable-native-binary", "owner": "harness-owned" },
-    { "path": ".opencode/portable.manifest.json", "kind": "portable-harness-manifest", "owner": "harness-owned" },
-    { "path": ".opencode/runtime.manifest.json", "kind": "external-runtime-manifest", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/bootstrap-portable-harness.mjs", "kind": "portable-bootstrap-script", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/build-darwin-portable-fs.mjs", "kind": "native-release-build-script", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/darwin-portable-fs.test.mjs", "kind": "native-release-test", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/portable-harness.test.mjs", "kind": "portable-harness-test", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/runtime-harness.test.mjs", "kind": "external-runtime-test", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/runtime-foreign-repo.test.mjs", "kind": "external-runtime-foreign-git-test", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/validate-portable-harness.mjs", "kind": "portable-validation-script", "owner": "harness-owned" },
-    { "path": ".opencode/scripts/validate-harness.mjs", "kind": "harness-validation-script", "owner": "harness-owned" },
-    { "path": ".opencode/harness.manifest.json", "kind": "harness-manifest", "owner": "harness-owned" }
+    {
+      "path": "package.json",
+      "kind": "npm-package-manifest",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "package-lock.json",
+      "kind": "npm-package-lock",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "eslint.config.mjs",
+      "kind": "typescript-style-config",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "tsconfig.json",
+      "kind": "typescript-config",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "README.md",
+      "kind": "package-operator-documentation",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "bin/opencode-harness.ts",
+      "kind": "harness-runtime-cli-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "bin/opencode-harness.mjs",
+      "kind": "generated-runtime-cli-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "opencode.json",
+      "kind": "opencode-config",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "AGENTS.md",
+      "kind": "project-instructions",
+      "owner": "harness-owned"
+    },
+    {
+      "path": "opencode-harness.design.md",
+      "kind": "design-doc",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".memory/INDEX.md",
+      "kind": "harness-memory-index",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".memory/protocols/memory-management.md",
+      "kind": "harness-memory-protocol",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".memory/references/opencode-refs.md",
+      "kind": "harness-reference",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".memory/templates/orchestration-index.md",
+      "kind": "harness-memory-template",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".memory/templates/role-trace-artifact.md",
+      "kind": "harness-memory-template",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/agents/researcher.md",
+      "kind": "opencode-agent",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/agents/planner.md",
+      "kind": "opencode-agent",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/agents/implementer.md",
+      "kind": "opencode-agent",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/agents/validator.md",
+      "kind": "opencode-agent",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/commands/delegate-research.md",
+      "kind": "opencode-command",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/commands/delegate-orchestration.md",
+      "kind": "opencode-orchestration-command",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/commands/delegate-plan.md",
+      "kind": "opencode-command",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/commands/delegate-implement.md",
+      "kind": "opencode-command",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/commands/delegate-validate.md",
+      "kind": "opencode-command",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/delegation-orchestrator/SKILL.md",
+      "kind": "opencode-skill",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md",
+      "kind": "opencode-skill-reference",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
+      "kind": "opencode-skill-reference",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
+      "kind": "opencode-skill-reference",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
+      "kind": "opencode-skill-reference",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/opencode-skill-authoring/SKILL.md",
+      "kind": "opencode-skill",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/skills/opencode-workflow-guidance/SKILL.md",
+      "kind": "opencode-skill",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/contracts/role-io-contracts.json",
+      "kind": "harness-contract",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/role-io-contracts.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/memory-trace-artifact.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/orchestration-input.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/harness-model-routing.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/harness-endpoint-catalog.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/harness-routing-profile.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/schemas/opencode-provider-projection.schema.json",
+      "kind": "harness-schema",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/harness-model-routing.example.json",
+      "kind": "harness-routing-config",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/harness-model-routing.local.example.json",
+      "kind": "harness-routing-fixture",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/package.json",
+      "kind": "typescript-source-module-boundary",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/routing/routing-config-loader.ts",
+      "kind": "harness-routing-loader-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/routing/routing-policy.ts",
+      "kind": "harness-routing-policy-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/routing/routing-policy.test.ts",
+      "kind": "harness-routing-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/routing/resolve-model-routing.ts",
+      "kind": "harness-routing-resolver-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/routing/model-routing-helper.ts",
+      "kind": "harness-routing-helper-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/routing-config-loader.mjs",
+      "kind": "generated-routing-loader-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/routing-policy.mjs",
+      "kind": "generated-routing-policy-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/routing-policy.test.mjs",
+      "kind": "generated-routing-test-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/resolve-model-routing.mjs",
+      "kind": "generated-routing-resolver-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/routing/model-routing-helper.mjs",
+      "kind": "generated-routing-helper-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/deployments/llama-server/compose.yaml",
+      "kind": "deployment-compose",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/deployments/llama-server/instances/research.env.example",
+      "kind": "deployment-env-example",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/deployments/llama-server/instances/coder.env.example",
+      "kind": "deployment-env-example",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/deployments/llama-server/README.md",
+      "kind": "deployment-guide",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugins/index.ts",
+      "kind": "opencode-plugin-adapter-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugin-modules/harness-lifecycle.ts",
+      "kind": "opencode-plugin-module-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugin-modules/task-thread-policy.ts",
+      "kind": "opencode-plugin-module-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugin-modules/task-thread-policy.test.ts",
+      "kind": "opencode-plugin-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugin-modules/role-model-routing-enforcement.ts",
+      "kind": "opencode-plugin-module-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugin-modules/trace-root-permissions.ts",
+      "kind": "opencode-plugin-module-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/plugin-modules/trace-root-permissions.test.ts",
+      "kind": "opencode-plugin-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugins/index.js",
+      "kind": "generated-plugin-adapter-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugin-modules/harness-lifecycle.js",
+      "kind": "generated-plugin-module-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugin-modules/task-thread-policy.js",
+      "kind": "generated-plugin-module-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugin-modules/task-thread-policy.test.mjs",
+      "kind": "generated-plugin-test-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugin-modules/role-model-routing-enforcement.js",
+      "kind": "generated-plugin-module-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugin-modules/trace-root-permissions.js",
+      "kind": "generated-plugin-module-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/plugin-modules/trace-root-permissions.test.mjs",
+      "kind": "generated-plugin-test-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/bootstrap/memory/INDEX.md",
+      "kind": "harness-memory-seed",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/bootstrap/memory/protocols/memory-management.md",
+      "kind": "harness-memory-seed",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/bootstrap/memory/templates/orchestration-index.md",
+      "kind": "harness-memory-seed",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+      "kind": "harness-memory-seed",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/bootstrap/native/darwin-portable-fs.c",
+      "kind": "portable-native-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/bootstrap/native/darwin-portable-fs.universal",
+      "kind": "portable-native-binary",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/portable.manifest.json",
+      "kind": "portable-harness-manifest",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/runtime.manifest.json",
+      "kind": "external-runtime-manifest",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/scripts/bootstrap-portable-harness.ts",
+      "kind": "portable-bootstrap-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/bootstrap-portable-harness.mjs",
+      "kind": "generated-portable-bootstrap-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/build-darwin-portable-fs.mts",
+      "kind": "native-release-build-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/build-typescript.mts",
+      "kind": "typescript-build-tool",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/check-typescript-policy.mts",
+      "kind": "typescript-source-policy-tool",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/generated-typescript-artifacts.mts",
+      "kind": "typescript-generated-allowlist",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/darwin-portable-fs.test.mts",
+      "kind": "native-release-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/scripts/portable-harness.test.ts",
+      "kind": "portable-harness-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/portable-harness.test.mjs",
+      "kind": "generated-portable-test-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/runtime-harness.test.mts",
+      "kind": "external-runtime-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/runtime-foreign-repo.test.mts",
+      "kind": "external-runtime-foreign-test-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/src/scripts/validate-portable-harness.ts",
+      "kind": "portable-validation-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/validate-portable-harness.mjs",
+      "kind": "generated-portable-validator-compatibility",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/scripts/validate-harness.mts",
+      "kind": "harness-validation-source",
+      "owner": "harness-owned"
+    },
+    {
+      "path": ".opencode/harness.manifest.json",
+      "kind": "harness-manifest",
+      "owner": "harness-owned"
+    }
   ],
   "validationFindings": []
 }

@@ -2,3 +2,5 @@
 .codex/*
 .opencode/deployments/llama-server/instances/*.env
 /.opencode/routing/harness-model-routing.json
+/.build/
+/node_modules/

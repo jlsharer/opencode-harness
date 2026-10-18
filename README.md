@@ -250,8 +250,8 @@ node .opencode/routing/resolve-model-routing.mjs \
 Validate every routing change, then fully quit and restart OpenCode:
 
 ```sh
-node .opencode/routing/routing-policy.test.mjs
-node .opencode/scripts/validate-harness.mjs
+node .opencode/src/routing/routing-policy.test.ts
+node .opencode/scripts/validate-harness.mts
 ```
 
 The source validator intentionally checks committed fixtures, not the ignored
@@ -316,13 +316,32 @@ command, skill, or configuration changes. Running sessions do not reload them.
 
 ## Validation and packaging
 
+The root lock owns exact TypeScript, Prettier, ESLint, ESLint Stylistic, and
+TypeScript-ESLint development tooling. `npm run format` applies Prettier and then
+auto-fixes the narrow readability policy in `eslint.config.mjs`: grouped imports,
+blank lines around function-like declarations and classes, separation between
+type and runtime declarations, spacing between multi-line class members, and no
+duplicate blank lines. Generated compatibility JavaScript is excluded. Install with
+`npm ci --ignore-scripts --offline`; a cache miss fails and does not authorize
+network access. Authored harness TypeScript is separate from checked-in JavaScript
+compatibility outputs. `npm run build` stages compiler output and publishes only
+the explicit allowlist, while `check:generated` compares without modifying the
+worktree. Neither TypeScript source nor build tooling enters runtime, portable,
+or npm payloads.
+
 ```sh
+npm run check:format
+npm run typecheck
+npm run build
+npm run check:generated
+npm run check:source-policy
+npm test
 node --check bin/opencode-harness.mjs
-node .opencode/routing/routing-policy.test.mjs
-node --test .opencode/scripts/runtime-harness.test.mjs
-node --test .opencode/scripts/runtime-foreign-repo.test.mjs
+node .opencode/src/routing/routing-policy.test.ts
+node --test .opencode/scripts/runtime-harness.test.mts
+node --test .opencode/scripts/runtime-foreign-repo.test.mts
 node .opencode/scripts/portable-harness.test.mjs
-node .opencode/scripts/validate-harness.mjs
+node .opencode/scripts/validate-harness.mts
 node .opencode/scripts/validate-portable-harness.mjs --root .
 npm pack --dry-run --json
 git diff --check

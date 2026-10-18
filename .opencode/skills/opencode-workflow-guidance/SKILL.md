@@ -46,7 +46,7 @@ Use this skill when creating or updating workflow guidance, workflow-like proces
 - Confirm workflow docs do not add unknown OpenCode config keys or undocumented frontmatter requirements.
 - Confirm command files, when touched, use `.opencode/commands/*.md` with the prompt in the body and only documented frontmatter fields.
 - Confirm no runtime dependency on reference-only prior projection directories was introduced.
-- For this harness, run `node .opencode/scripts/validate-harness.mjs` after OpenCode asset changes.
+- For this harness, run `node .opencode/scripts/validate-harness.mts` after OpenCode asset changes.
 
 ## Restart Note
 

@@ -41,7 +41,7 @@ When caller-supplied routing metadata is present, preserve these labels exactly:
 
 ## Validation
 
-For this source repository, run `node .opencode/scripts/validate-harness.mjs` and task-specific checks. Source QA requires the source roots, static reference inventory, and indexed orchestration history; it validates only committed routing fixtures and never consumes the private custom override. It also invokes the installed-profile-equivalent portable validator.
+For this source repository, run `node .opencode/scripts/validate-harness.mts` and task-specific checks. Source QA requires the source roots, static reference inventory, and indexed orchestration history; it validates only committed routing fixtures and never consumes the private custom override. It also invokes the installed-profile-equivalent portable validator.
 
 For a bootstrapped installation, run `node .opencode/scripts/validate-portable-harness.mjs --root .`. Portable acceptance requires only portable-manifest managed files and minimal seeded memory, not this file or other source-only roots/history.
 

@@ -44,7 +44,7 @@ Use this skill when creating a new OpenCode skill or updating an existing `SKILL
 - Confirm the description is non-empty, specific, third-person trigger guidance.
 - Confirm optional `license`, `compatibility`, or `metadata` fields are documented and necessary.
 - If OpenCode config was changed, validate it against `https://opencode.ai/config.json`.
-- For this harness, run `node .opencode/scripts/validate-harness.mjs` after skill edits.
+- For this harness, run `node .opencode/scripts/validate-harness.mts` after skill edits.
 
 ## Restart Note
 
