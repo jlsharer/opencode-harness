@@ -115,6 +115,7 @@ function assertRuntimeManifestShape(
 }
 
 interface LauncherOptions {
+  webPort?: string;
   forward: string[];
   opencodeBin?: string;
   allowProjectPlugins?: boolean;
@@ -2226,7 +2227,17 @@ function parse(argv: string[]): ParsedArguments {
   const options: LauncherOptions = { forward: [] };
   while (argv.length) {
     const token = argv.shift()!;
+    if (["web", "source-web"].includes(command) && token === "--port") {
+      if (options.webPort !== undefined || !/^[0-9]{1,5}$/.test(argv[0] ?? ""))
+        fail("web requires one integer --port between 1024 and 65535");
+      options.webPort = argv.shift()!;
+      if (Number(options.webPort) < 1024 || Number(options.webPort) > 65535)
+        fail("web port must be between 1024 and 65535");
+      continue;
+    }
     if (token === "--") {
+      if (["web", "source-web", "source-tui"].includes(command))
+        fail("source/web modes do not accept forwarded native arguments");
       options.forward = argv.splice(0);
       break;
     }
@@ -2265,13 +2276,47 @@ function parse(argv: string[]): ParsedArguments {
       Object.keys(options).some((key) => !["forward", "opencodeBin"].includes(key)))
   )
     fail("doctor accepts only --opencode-bin ABS");
+  if (command === "run" && options.forward.some((arg) => arg === "serve" || arg === "web"))
+    fail("run cannot forward server command tokens serve/web; use authenticated loopback web mode");
+  if (command === "source-web" || command === "source-tui") {
+    if (options.workspace !== undefined && options.workspace !== PACKAGE_ROOT)
+      fail("source profile can only launch its own canonical package root");
+    if (
+      options.traceRoot ||
+      options.providerConfig ||
+      options.catalog ||
+      options.profile ||
+      options.allowProjectPlugins
+    )
+      fail("source profile does not accept external projections, trace roots or plugin overrides");
+    options.workspace = PACKAGE_ROOT;
+  }
+  if (["web", "source-web"].includes(command)) {
+    if (!options.workspace) fail("web requires --workspace ABS");
+    const password = process.env.OPENCODE_SERVER_PASSWORD;
+    if (!password || password.trim().length < 16 || /[\x00-\x1f\x7f]/.test(password))
+      fail(
+        "web requires an owner-supplied OPENCODE_SERVER_PASSWORD of at least 16 non-control characters",
+      );
+    options.forward = [
+      "serve",
+      "--hostname",
+      "127.0.0.1",
+      "--port",
+      options.webPort ?? "4096",
+      "--mdns=false",
+    ];
+  }
   return { command, options };
 }
 
 function usage(): string {
   return [
     "Usage:",
+    "  opencode-harness source-web [--opencode-bin ABS] [--port 4096] [--cache-root ABS]",
+    "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS]",
     "  opencode-harness capabilities",
+    "  opencode-harness web --workspace ABS [--port 4096] [run options; no forwarded arguments]",
     "  opencode-harness doctor [--opencode-bin ABS]",
     "  opencode-harness prepare [--opencode-bin ABS] [--cache-root ABS]",
     "  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
@@ -2303,6 +2348,231 @@ function validateInputs(options: LauncherOptions): string {
     packageVersion: value.packageVersion,
     inputs: validated.presence,
   });
+}
+
+function sourceProfilePreflight(): string {
+  const root = canonicalWorkspace(PACKAGE_ROOT);
+  const sourceManifest = readJson(
+    path.join(root, ".opencode/harness.manifest.json"),
+    "source manifest",
+  );
+  if (
+    !isJsonObject(sourceManifest) ||
+    sourceManifest.target !== "opencode" ||
+    !Array.isArray(sourceManifest.artifacts)
+  )
+    fail("source-web requires a complete harness source checkout");
+  const extras = [
+    "bin",
+    ".opencode/src",
+    ".opencode/scripts",
+    ".opencode/plugin-modules",
+    ".opencode/contracts",
+    ".opencode/schemas",
+    ".opencode/bootstrap",
+    "node_modules/typescript",
+  ];
+  for (const relative of extras)
+    inspectTrustedTree(path.join(root, relative), `source ${relative}`);
+  for (const relative of [
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    ".opencode/harness.manifest.json",
+    ".opencode/portable.manifest.json",
+    ".opencode/runtime.manifest.json",
+    "AGENTS.md",
+    ".memory/protocols/memory-management.md",
+  ]) {
+    const filename = path.join(root, relative);
+    trustedDirectoryPath(path.dirname(filename), `source ${relative} parent`);
+    readStableFile(filename, `source ${relative}`);
+  }
+  const plugins = ["plugins", "plugin"].flatMap((dir) =>
+    recursivePluginFiles(path.join(root, ".opencode", dir)),
+  );
+  if (plugins.length !== 1 || plugins[0] !== path.join(root, ".opencode/plugins/index.js"))
+    fail("source-web requires exactly the source .opencode/plugins/index.js autoload entry");
+  for (const relative of [
+    "opencode.json",
+    "opencode.jsonc",
+    ".opencode/opencode.json",
+    ".opencode/opencode.jsonc",
+  ]) {
+    const filename = path.join(root, relative);
+    if (!fs.existsSync(filename)) continue;
+    const cfg = readProjectConfig(filename, `source ${relative}`);
+    if (!isJsonObject(cfg) || cfg.$schema !== "https://opencode.ai/config.json")
+      fail("source-web config requires the native schema declaration");
+    if (Object.hasOwn(cfg, "plugin") && (!Array.isArray(cfg.plugin) || cfg.plugin.length))
+      fail("source-web uses source plugin autoload only; explicit plugins are unsupported");
+    if (
+      isJsonObject(cfg.skills) &&
+      (Object.hasOwn(cfg.skills, "paths") || Object.hasOwn(cfg.skills, "urls"))
+    )
+      fail("source-web custom skill paths/URLs are unsupported");
+    if (cfg.instructions !== undefined) {
+      if (!Array.isArray(cfg.instructions)) fail("source instructions must be an array");
+      for (const relative of cfg.instructions) {
+        if (typeof relative !== "string" || /[*?]/.test(relative))
+          fail("source-web instructions require explicit local paths");
+        assertSafeRelative(relative, "source instruction");
+        const filename = path.join(root, relative);
+        trustedDirectoryPath(path.dirname(filename), "source instruction parent");
+        readStableFile(filename, "source instruction");
+        extras.push(relative);
+      }
+    }
+  }
+  const dependencyRoot = path.join(root, ".opencode");
+  const pkg = readJson(path.join(dependencyRoot, "package.json"), "source plugin package");
+  const lock = readJson(path.join(dependencyRoot, "package-lock.json"), "source plugin lock");
+  const packages = isJsonObject(lock) && isJsonObject(lock.packages) ? lock.packages : {};
+  const lockedRoot = isJsonObject(packages[""]) ? packages[""] : {};
+  if (
+    !isJsonObject(pkg) ||
+    !isJsonObject(pkg.dependencies) ||
+    typeof pkg.dependencies["@opencode-ai/plugin"] !== "string"
+  )
+    fail("source plugin dependencies must already be installed");
+  for (const category of [
+    "dependencies",
+    "devDependencies",
+    "peerDependencies",
+    "optionalDependencies",
+  ]) {
+    const declared = isJsonObject(pkg[category]) ? pkg[category] : {};
+    const locked = isJsonObject(lockedRoot[category]) ? lockedRoot[category] : {};
+    for (const [name, version] of Object.entries(declared))
+      if (locked[name] !== version)
+        fail("source plugin package/lock mismatch; no dependency installation is performed");
+  }
+  const modules = trustedDirectoryPath(
+    path.join(dependencyRoot, "node_modules"),
+    "source plugin dependencies",
+  );
+  const links: string[] = [];
+  for (const entry of fs.readdirSync(modules)) {
+    const filename = path.join(modules, entry);
+    if (entry === ".bin") {
+      const bin = trustedDirectoryPath(filename, "source dependency bin directory");
+      for (const name of fs.readdirSync(bin)) {
+        const link = path.join(bin, name);
+        const stat = fs.lstatSync(link, { bigint: true });
+        if (!stat.isSymbolicLink() || stat.uid !== BigInt(process.getuid!()))
+          fail("unsafe source dependency bin entry");
+        const target = fs.readlinkSync(link);
+        const resolved = path.resolve(bin, target);
+        if (path.isAbsolute(target) || !resolved.startsWith(modules + path.sep))
+          fail("source dependency bin link escapes dependencies");
+        trustedDirectoryPath(path.dirname(resolved), "source dependency bin target parent");
+        readStableFile(resolved, "source dependency bin target");
+        links.push(`${name}:${target}`);
+      }
+    } else {
+      if (fs.lstatSync(filename).isDirectory())
+        inspectTrustedTree(filename, "source plugin dependency");
+      else readStableFile(filename, "source plugin dependency metadata");
+      extras.push(path.relative(root, filename));
+    }
+  }
+  const installed = readJson(
+    path.join(modules, "@opencode-ai/plugin/package.json"),
+    "installed source plugin metadata",
+  );
+  const lockedPlugin = packages["node_modules/@opencode-ai/plugin"];
+  if (
+    !isJsonObject(installed) ||
+    !isJsonObject(lockedPlugin) ||
+    installed.version !== pkg.dependencies["@opencode-ai/plugin"] ||
+    installed.version !== lockedPlugin.version
+  )
+    fail("source plugin dependency versions disagree");
+  extras.push(
+    ".opencode/package.json",
+    ".opencode/package-lock.json",
+    ".opencode/.gitignore",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    ".opencode/harness.manifest.json",
+    ".opencode/portable.manifest.json",
+    ".opencode/runtime.manifest.json",
+    "AGENTS.md",
+    ".memory/protocols/memory-management.md",
+  );
+  readStableFile(path.join(dependencyRoot, ".gitignore"), "source config gitignore");
+  return hash(
+    Buffer.from(
+      projectSecurityFingerprint(
+        root,
+        extras.map((name) => path.join(root, name)),
+      ) + links.sort().join("\n"),
+    ),
+  );
+}
+
+function runSourceProfile(options: LauncherOptions, mode: "source-web" | "source-tui"): number {
+  for (const name of RESERVED_ENV)
+    if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
+  assertNodeCompatibility(manifest());
+  const fingerprint = sourceProfilePreflight();
+  for (const [script, args] of [
+    [".opencode/scripts/validate-portable-harness.mjs", ["--root", PACKAGE_ROOT]],
+    [".opencode/scripts/build-typescript.mts", ["--check"]],
+  ] as const) {
+    const checked = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, script), ...args], {
+      cwd: PACKAGE_ROOT,
+      encoding: "utf8",
+      timeout: 120000,
+      maxBuffer: 1024 * 1024,
+    });
+    if (checked.error || checked.status !== 0)
+      fail(
+        `source profile preflight failed: ${script}; run the source validator/build check separately`,
+      );
+  }
+  const selected = resolveCompatibleExecutable(options.opencodeBin);
+  if (sourceProfilePreflight() !== fingerprint)
+    fail("source profile changed during validation or version probe");
+  recheckExecutable(selected.executable, selected.identity, "source profile validation");
+  const stateRoot = path.join(cacheRootFrom(options), mode, hash(Buffer.from(PACKAGE_ROOT)));
+  if (
+    stateRoot === PACKAGE_ROOT ||
+    stateRoot.startsWith(PACKAGE_ROOT + path.sep) ||
+    PACKAGE_ROOT.startsWith(stateRoot + path.sep)
+  )
+    fail("source profile state must not overlap the source checkout");
+  ensurePrivateDirectory(stateRoot);
+  const snapshot = createSnapshots(path.join(stateRoot, "unused-runtime-anchor"), []);
+  let resultStatus = 1;
+  let originalError: unknown = null;
+  try {
+    const result = spawnSync(selected.executable, options.forward, {
+      cwd: PACKAGE_ROOT,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        OPENCODE_DB: snapshot.database,
+        OPENCODE_HARNESS_WORKSPACE_ROOT: PACKAGE_ROOT,
+        OPENCODE_HARNESS_TRACE_ROOT: path.join(PACKAGE_ROOT, ".memory"),
+      },
+    });
+    if (result.error) fail(`cannot start source OpenCode: ${result.error.message}`);
+    resultStatus = result.status ?? 1;
+  } catch (error) {
+    originalError = error;
+  }
+  cleanupSnapshot(
+    snapshot,
+    originalError
+      ? errorMessage(originalError)
+      : resultStatus
+        ? `OpenCode child exited with status ${resultStatus}`
+        : null,
+  );
+  if (originalError) throw originalError;
+  return resultStatus;
 }
 
 function run(options: LauncherOptions): number {
@@ -2411,7 +2681,9 @@ try {
     );
   } else if (command === "prepare") process.stdout.write(`${prepareRuntime(options)}\n`);
   else if (command === "validate-inputs") process.stdout.write(`${validateInputs(options)}\n`);
-  else if (command === "run") process.exitCode = run(options);
+  else if (command === "source-web" || command === "source-tui")
+    process.exitCode = runSourceProfile(options, command);
+  else if (command === "run" || command === "web") process.exitCode = run(options);
   else fail(`unknown command: ${command}`);
 } catch (error) {
   process.stderr.write(`${singleLine(errorMessage(error))}\n`);

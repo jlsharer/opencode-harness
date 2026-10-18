@@ -1471,3 +1471,41 @@ test("cloud-only rejects catalogued assignments against final filters atomically
     }
   }
 });
+
+test("combined plugin retains workspace mismatch rejection after native catches config error", async () => {
+  const originalWorkspace = process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
+  const originalTrace = process.env.OPENCODE_HARNESS_TRACE_ROOT;
+  process.env.OPENCODE_HARNESS_WORKSPACE_ROOT = "/fixture/expected";
+  delete process.env.OPENCODE_HARNESS_TRACE_ROOT;
+  try {
+    const hooks = await HarnessPlugin({ directory: "/fixture/other", routingDocument: committed });
+    let caught: unknown;
+    try {
+      await hooks.config({});
+    } catch (error) {
+      caught = error;
+    }
+    assert.ok(caught instanceof Error);
+    assert.match(caught.message, /managed workspace mismatch/);
+    // Native config loading can catch/log the exception and continue invoking hooks.
+    await assert.rejects(
+      () =>
+        hooks["tool.execute.before"](
+          { tool: "task", sessionID: "parent", callID: "call" },
+          { args: {} },
+        ),
+      /Harness dispatch blocked.*managed workspace mismatch/,
+    );
+    const output = { args: { filePath: "input.txt" } };
+    await hooks["tool.execute.before"](
+      { tool: "read", sessionID: "ordinary", callID: "read" },
+      output,
+    );
+    assert.equal(output.args.filePath, "input.txt");
+  } finally {
+    if (originalWorkspace === undefined) delete process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
+    else process.env.OPENCODE_HARNESS_WORKSPACE_ROOT = originalWorkspace;
+    if (originalTrace === undefined) delete process.env.OPENCODE_HARNESS_TRACE_ROOT;
+    else process.env.OPENCODE_HARNESS_TRACE_ROOT = originalTrace;
+  }
+});

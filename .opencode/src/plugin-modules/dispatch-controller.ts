@@ -336,6 +336,7 @@ export function createDispatchController(
   const lastAttemptGeneration = new Map<string, number>();
   let owner: string | null = null;
   let interrupted = false;
+  let continuations = 0;
   const key = (r: DispatchRequest) => `${r.workUnitId}:${r.role}:${r.taskMode}`;
   const active = () =>
     [...attempts.values()].filter((a) =>
@@ -435,7 +436,7 @@ export function createDispatchController(
     )
       fail("remediation budget exhausted");
     if (
-      attempts.size >= spec.budgets.maxTotalLeafAgents ||
+      attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
       counts[request.role] >= spec.budgets.maxLeafAgentsByRole[request.role]
     )
       fail("agent budget exhausted");
@@ -518,6 +519,19 @@ export function createDispatchController(
     attempt.state = "running";
   }
 
+  function chargeContinuation(attemptId: string) {
+    sweep();
+    const attempt = current(attemptId);
+    if (interrupted || attempt.state !== "running") fail("continuation requires a running task");
+    if (
+      attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
+      counts[attempt.role] >= spec.budgets.maxLeafAgentsByRole[attempt.role]
+    )
+      fail("agent budget exhausted");
+    continuations++;
+    counts[attempt.role]++;
+  }
+
   function cancel(attemptId: string) {
     const attempt = current(attemptId);
     if (!["running", "awaiting-guidance"].includes(attempt.state))
@@ -555,6 +569,7 @@ export function createDispatchController(
       resumable: false,
       interrupted,
       active: active().length,
+      continuations,
       attempts: [...attempts.values()].map((a) => ({ ...a })),
       counts: { ...counts },
       gates: Object.fromEntries(gates),
@@ -568,6 +583,7 @@ export function createDispatchController(
     clarification,
     continueClarification,
     cancel,
+    chargeContinuation,
     reconcileCancelled,
     failLaunch,
     sweep,

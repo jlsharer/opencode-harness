@@ -12,6 +12,7 @@ export default async function HarnessPlugin(context) {
         ...guardConfiguredDispatch(lifecycle, async (cfg) => {
             await routing.config(cfg);
             await tracePermissions.config(cfg);
+            await lifecycle.config(cfg);
         }),
     };
 }

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createManagedDispatch } from "./managed-dispatch.ts";
+import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.ts";
 
 type UnknownRecord = Record<string, unknown>;
 
@@ -45,7 +45,10 @@ export type HarnessDispatchFactory = (
 ) => Pick<
   ReturnType<typeof createManagedDispatch>,
   "beforeTask" | "beforeTool" | "afterTool" | "afterTask" | "sessionCreated" | "interrupt"
->;
+> &
+  Partial<
+    Pick<ReturnType<typeof createManagedDispatch>, "reconcileBackground" | "cancelBackground">
+  >;
 
 export const HarnessLifecyclePlugin = async (
   context: HarnessPluginContext = {},
@@ -65,11 +68,86 @@ export const HarnessLifecyclePlugin = async (
   const traceRoot =
     process.env.OPENCODE_HARNESS_TRACE_ROOT ||
     (workspaceRoot ? path.join(workspaceRoot, ".memory") : "");
+
+  function assertWorkspaceIdentity() {
+    if (process.env.OPENCODE_HARNESS_WORKSPACE_ROOT && context.directory !== workspaceRoot)
+      throw new Error("managed workspace mismatch; open the correct project harness instance");
+  }
+
   const managedSessions = new Set<string>();
+  let nativeConfig: UnknownRecord = {};
+  const delegationValue = context.delegationPolicy ?? process.env.OPENCODE_HARNESS_DELEGATION;
+  if (typeof delegationValue === "string" && delegationValue.length > 8192)
+    throw new Error("delegation policy exceeds bound");
+  const delegation = parseDelegationPolicy(delegationValue);
+  const nativeSession = isRecord(client?.session) ? client.session : {};
+  const capable = ["messages", "get", "status", "abort"].every(
+    (name) => typeof nativeSession[name] === "function",
+  );
+
+  async function sessionCall(name: string, child?: string): Promise<unknown> {
+    const method = nativeSession[name];
+    if (typeof method !== "function")
+      throw new Error(`native session.${name} capability unavailable`);
+    const response: unknown = await method.call(
+      nativeSession,
+      child ? { path: { id: child }, query: { limit: 256 } } : {},
+    );
+    if (!isRecord(response) || response.error || response.data === undefined)
+      throw new Error(`native session.${name} failed`);
+    return response.data;
+  }
+
+  async function messages(child: string): Promise<unknown[]> {
+    const data = await sessionCall("messages", child);
+    if (!Array.isArray(data) || data.length > 256)
+      throw new Error("native message list unavailable or oversized");
+    return data;
+  }
+
+  const transport = {
+    enabled: capable && process.env.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS === "true",
+    models: async (parent: string, role: string) => {
+      const list = await messages(parent);
+      const assistant = list
+        .filter(isRecord)
+        .findLast((m) => isRecord(m.info) && m.info.role === "assistant");
+      const info = isRecord(assistant?.info) ? assistant.info : {};
+      if (typeof info.providerID !== "string" || typeof info.modelID !== "string")
+        throw new Error("actual parent model identity unavailable");
+      const parentModel = info.providerID + "/" + info.modelID;
+      const agents = isRecord(nativeConfig.agent) ? nativeConfig.agent : {};
+      const agent = isRecord(agents[role]) ? agents[role] : {};
+      return {
+        parent: parentModel,
+        worker: typeof agent.model === "string" ? agent.model : parentModel,
+      };
+    },
+    inspect: async (child: string) => {
+      const session = await sessionCall("get", child);
+      const status = await sessionCall("status");
+      if (
+        !isRecord(session) ||
+        session.id !== child ||
+        typeof session.parentID !== "string" ||
+        !isRecord(status)
+      )
+        throw new Error("native session identity/status unavailable");
+      const current = status[child];
+      const idle = current === undefined || (isRecord(current) && current.type === "idle");
+      return { parent: session.parentID, idle, messages: await messages(child) };
+    },
+    abort: async (child: string) => {
+      if ((await sessionCall("abort", child)) !== true)
+        throw new Error("native abort acknowledgement unavailable");
+    },
+  };
   const dispatch = dispatchFactory({
     workspaceRoot,
     traceRoot,
     telemetry: (event) => logDiagnostic("Harness task state changed.", event),
+    delegation,
+    backgroundTransport: transport,
   });
 
   function isDelegateCommand(command: string): boolean {
@@ -86,6 +164,19 @@ export const HarnessLifecyclePlugin = async (
   ]);
 
   return {
+    config: async (cfg: unknown) => {
+      assertWorkspaceIdentity();
+      if (!isRecord(cfg)) throw new Error("native config unavailable");
+      nativeConfig = cfg;
+      if (delegation.mode === "background" && !transport.enabled)
+        throw new Error(
+          "background mode requires native session APIs and OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
+        );
+    },
+    "chat.message": async (input: { sessionID?: unknown }) => {
+      if (typeof input.sessionID === "string" && managedSessions.has(input.sessionID))
+        await dispatch.reconcileBackground?.();
+    },
     event: async ({ event }: { event?: unknown }) => {
       const eventRecord = isRecord(event) ? event : {};
       const type = eventRecord.type ?? eventRecord.name ?? "unknown";
@@ -101,6 +192,15 @@ export const HarnessLifecyclePlugin = async (
           )
             managedSessions.add(properties.info.id);
         }
+      }
+      if (type === "session.idle" || type === "session.status") {
+        const properties = isRecord(eventRecord.properties) ? eventRecord.properties : {};
+        if (
+          typeof properties.sessionID === "string" &&
+          (type === "session.idle" ||
+            (isRecord(properties.status) && properties.status.type === "idle"))
+        )
+          await dispatch.reconcileBackground?.(properties.sessionID);
       }
       if (type === "session.error" || type === "session.deleted") {
         const properties = isRecord(eventRecord.properties) ? eventRecord.properties : {};

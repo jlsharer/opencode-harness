@@ -248,6 +248,7 @@ export function createDispatchController(input, options = {}) {
     const lastAttemptGeneration = new Map();
     let owner = null;
     let interrupted = false;
+    let continuations = 0;
     const key = (r) => `${r.workUnitId}:${r.role}:${r.taskMode}`;
     const active = () => [...attempts.values()].filter((a) => ["running", "awaiting-guidance", "cancel-requested"].includes(a.state));
     const unitDone = (unit) => spec.roleModeTaskMapping
@@ -328,7 +329,7 @@ export function createDispatchController(input, options = {}) {
         if (startsCycle &&
             (retries.get(request.workUnitId) ?? 0) >= spec.budgets.maxRemediationCyclesPerWorkUnit)
             fail("remediation budget exhausted");
-        if (attempts.size >= spec.budgets.maxTotalLeafAgents ||
+        if (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
             counts[request.role] >= spec.budgets.maxLeafAgentsByRole[request.role])
             fail("agent budget exhausted");
         // All validation occurs before this synchronous reservation; there is no await race.
@@ -406,6 +407,17 @@ export function createDispatchController(input, options = {}) {
             fail("stale clarification");
         attempt.state = "running";
     }
+    function chargeContinuation(attemptId) {
+        sweep();
+        const attempt = current(attemptId);
+        if (interrupted || attempt.state !== "running")
+            fail("continuation requires a running task");
+        if (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
+            counts[attempt.role] >= spec.budgets.maxLeafAgentsByRole[attempt.role])
+            fail("agent budget exhausted");
+        continuations++;
+        counts[attempt.role]++;
+    }
     function cancel(attemptId) {
         const attempt = current(attemptId);
         if (!["running", "awaiting-guidance"].includes(attempt.state))
@@ -441,6 +453,7 @@ export function createDispatchController(input, options = {}) {
             resumable: false,
             interrupted,
             active: active().length,
+            continuations,
             attempts: [...attempts.values()].map((a) => ({ ...a })),
             counts: { ...counts },
             gates: Object.fromEntries(gates),
@@ -453,6 +466,7 @@ export function createDispatchController(input, options = {}) {
         clarification,
         continueClarification,
         cancel,
+        chargeContinuation,
         reconcileCancelled,
         failLaunch,
         sweep,

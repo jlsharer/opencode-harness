@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { createManagedDispatch } from "./managed-dispatch.js";
+import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.js";
+import { HarnessLifecyclePlugin } from "./harness-lifecycle.js";
 import { captureArtifacts } from "./acceptance-proof.js";
 import { TASK_THREAD_ROLE_PACKET_FIELDS, formatTaskThreadEnvelope, formatTaskResultWrapper, } from "./task-thread-policy.js";
 const roots = [];
@@ -433,4 +434,566 @@ test("malformed role correlation cannot consume a zero-remediation attempt", asy
     assert.equal(fs.existsSync(path.join(f.trace, "orchestrations/fixture/dispatch-started.json")), false);
     await f.managed.beforeTask({ sessionID: "parent", callID: "fixed" }, f.args(f.packet("fixed")));
     assert.equal(f.managed.snapshot().runs[0].attempts.length, 1);
+});
+const backgroundPolicy = {
+    mode: "background",
+    resources: { gpu: { maxConcurrentRequests: 2, orchestratorHeadroom: 1 } },
+    providerResources: { fixture: "gpu" },
+    maxQueuedUpdates: 2,
+    maxUpdateBytes: 256,
+};
+function backgroundFixture(timeoutMs = 60000, role = "researcher") {
+    const f = fixture(role);
+    let idle = false;
+    let messages = [];
+    let aborted = false;
+    let abortError = false;
+    let abortCalls = 0;
+    let abortWait;
+    let inspection;
+    const managed = createManagedDispatch({
+        ...f.options,
+        timeoutMs,
+        delegation: backgroundPolicy,
+        backgroundTransport: {
+            enabled: true,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => {
+                const result = { parent: "parent", idle, messages };
+                if (inspection)
+                    await inspection();
+                return result;
+            },
+            abort: async () => {
+                abortCalls++;
+                if (abortWait)
+                    await abortWait();
+                if (abortError)
+                    throw new Error("abort unavailable");
+                aborted = true;
+                idle = true;
+            },
+        },
+    });
+    const ack = (callID = "call") => managed.afterTask({ callID }, {
+        metadata: {
+            sessionId: "child",
+            jobId: "child",
+            background: true,
+            model: { providerID: "fixture", modelID: "worker" },
+        },
+        output: '<task id="child" state="running">\n<summary>Background task started</summary>',
+    });
+    const start = async () => {
+        await managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+        managed.sessionCreated({ id: "child", parentID: "parent" });
+        ack();
+        await Promise.resolve();
+    };
+    const terminal = (count = 1, result = f.success()) => {
+        idle = true;
+        messages = Array.from({ length: count }, (_, index) => ({
+            info: { id: `u${index}`, role: "user" },
+            parts: [],
+        }));
+        messages.push({
+            info: {
+                id: "answer",
+                parentID: `u${count - 1}`,
+                role: "assistant",
+                time: { completed: 1 },
+                finish: "stop",
+            },
+            parts: [{ type: "text", text: JSON.stringify(result) }],
+        });
+    };
+    const update = (requestId = "update") => ({
+        task_id: "child",
+        subagent_type: "researcher",
+        prompt: formatTaskThreadEnvelope({
+            version: 1,
+            kind: "queued-update",
+            delegationTaskId: "task",
+            requestId,
+            context: "Additional source context; keep scope unchanged",
+        }),
+    });
+    return {
+        ...f,
+        managed,
+        ack,
+        start,
+        terminal,
+        update,
+        setIdle: (value) => {
+            idle = value;
+        },
+        aborted: () => aborted,
+        abortCalls: () => abortCalls,
+        abortWith: (fn) => {
+            abortWait = fn;
+        },
+        failAbort: () => {
+            abortError = true;
+        },
+        inspectWith: (fn) => {
+            inspection = fn;
+        },
+        setMessages: (value) => {
+            messages = value;
+            idle = true;
+        },
+    };
+}
+test("background policy is closed and blocking default refuses native background", async () => {
+    assert.equal(parseDelegationPolicy().mode, "blocking");
+    assert.throws(() => parseDelegationPolicy({ ...backgroundPolicy, extra: true }), /exactly/);
+    const f = fixture();
+    await assert.rejects(() => f.managed.beforeTask({ sessionID: "parent", callID: "call" }, { ...f.args(), background: true }), /disabled/);
+    assert.equal(f.managed.snapshot().runs.length, 0);
+});
+test("background admission reserves physical headroom and auto falls back conservatively", async () => {
+    for (const mode of ["background", "auto"]) {
+        const f = fixture();
+        const managed = createManagedDispatch({
+            ...f.options,
+            delegation: {
+                ...backgroundPolicy,
+                mode,
+                resources: { gpu: { maxConcurrentRequests: 1, orchestratorHeadroom: 1 } },
+            },
+            backgroundTransport: {
+                enabled: true,
+                models: async () => ({ parent: "fixture/a", worker: "fixture/b" }),
+                inspect: async () => {
+                    throw Error("unused");
+                },
+                abort: async () => { },
+            },
+        });
+        const args = { ...f.args(), background: undefined };
+        if (mode === "background") {
+            await assert.rejects(() => managed.beforeTask({ sessionID: "parent", callID: "call" }, args), /headroom/);
+            assert.equal(managed.snapshot().runs.length, 0);
+        }
+        else {
+            await managed.beforeTask({ sessionID: "parent", callID: "call" }, args);
+            assert.equal(args.background, false);
+        }
+    }
+});
+test("background start retains capacity, allows parent questions, and accepts only authoritative terminal evidence", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    assert.equal(f.managed.beforeTool({ sessionID: "parent", tool: "question" }, { questions: [] })
+        .questions instanceof Array, true);
+    assert.throws(() => f.managed.beforeTool({ sessionID: "parent", tool: "write" }, { filePath: "src/a.txt", content: "bad" }), /parent workspace tools/);
+    await assert.rejects(() => f.managed.beforeTask({ sessionID: "parent", callID: "other" }, f.args(f.packet("other"))), /capacity/);
+    assert.throws(() => f.ack(), /duplicate/);
+    f.terminal();
+    await f.managed.reconcileBackground("child");
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "success");
+    await f.managed.reconcileBackground("child");
+    assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+test("queued context update is bounded, charged, ordered, and distinct from clarification", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    const args = f.update();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "update-call" }, args);
+    f.ack("update-call");
+    assert.match(args.prompt, /SAME immutable task/);
+    assert.equal(f.managed.snapshot().runs[0].continuations, 1);
+    assert.equal(f.managed.snapshot().runs[0].counts.researcher, 2);
+    await assert.rejects(() => f.managed.beforeTask({ sessionID: "parent", callID: "duplicate" }, f.update()), /duplicate/);
+    f.terminal(1);
+    await f.managed.reconcileBackground("child");
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    f.setIdle(false);
+    await assert.rejects(() => f.managed.beforeTask({ sessionID: "parent", callID: "over-budget" }, f.update("next")), /budget/);
+    f.terminal(2);
+    await f.managed.reconcileBackground("child");
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "success");
+});
+test("background cancellation retains lease until abort acknowledgement and rejects late completion", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await f.managed.cancelBackground("parent");
+    assert.equal(f.aborted(), true);
+    assert.equal(f.managed.snapshot().stopped, true);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+    f.terminal();
+    await f.managed.reconcileBackground("child");
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+});
+test("background stale workspace proof fails and restart cannot restore reservation", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "external mutation");
+    f.terminal();
+    await assert.rejects(() => f.managed.reconcileBackground("child"), /scope|changed/);
+    assert.equal(f.managed.snapshot().stopped, true);
+    const fresh = createManagedDispatch(f.options);
+    await assert.rejects(() => fresh.beforeTask({ sessionID: "parent", callID: "new" }, f.args()), /already started/);
+});
+test("failed native abort retains uncertain capacity", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    f.failAbort();
+    await assert.rejects(() => f.managed.cancelBackground("parent"), /abort unavailable/);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancel-requested");
+});
+test("native error without finish rejects immediately", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    f.setMessages([
+        { info: { id: "u", role: "user" } },
+        {
+            info: {
+                id: "a",
+                role: "assistant",
+                parentID: "u",
+                time: { completed: 1 },
+                error: { name: "Failure" },
+            },
+            parts: [],
+        },
+    ]);
+    await assert.rejects(() => f.managed.reconcileBackground("child"), /worker failed/);
+    assert.equal(f.managed.snapshot().stopped, true);
+});
+test("idle event during in-flight inspection is reconciled again", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    let release;
+    let entered;
+    const started = new Promise((resolve) => {
+        entered = resolve;
+    });
+    f.inspectWith(() => new Promise((resolve) => {
+        release = resolve;
+        entered();
+    }));
+    const first = f.managed.reconcileBackground("child");
+    await started;
+    f.terminal();
+    f.inspectWith(undefined);
+    await f.managed.reconcileBackground("child");
+    release();
+    await first;
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "success");
+});
+test("actual native model mismatch fails closed", async () => {
+    const f = backgroundFixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    assert.throws(() => f.managed.afterTask({ callID: "call" }, {
+        metadata: {
+            sessionId: "child",
+            jobId: "child",
+            background: true,
+            model: { providerID: "other", modelID: "worker" },
+        },
+        output: '<task id="child" state="running">',
+    }), /acknowledgement/);
+    assert.equal(f.managed.snapshot().stopped, true);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+});
+test("background clarification preserves the original deadline", async () => {
+    const f = backgroundFixture(50);
+    await f.start();
+    const { outputContract: _contract, ...clarification } = f.success();
+    void _contract;
+    f.terminal(1, {
+        ...clarification,
+        outcome: "clarification",
+        summary: "Need choice",
+        requestNonce: "nonce",
+        question: "Which input?",
+        evidence: [],
+        artifacts: [],
+    });
+    await f.managed.reconcileBackground("child");
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "awaiting-guidance");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(f.aborted(), true);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+});
+test("acknowledged update call IDs cannot be replayed with a new request ID", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "update-call" }, f.update());
+    f.ack("update-call");
+    await assert.rejects(() => f.managed.beforeTask({ sessionID: "parent", callID: "update-call" }, f.update("different")), /duplicate/);
+    await f.managed.cancelBackground("parent");
+});
+test("background validator still requires independently observed command proof", async () => {
+    const f = backgroundFixture(60000, "validator");
+    await f.start();
+    f.terminal();
+    await assert.rejects(() => f.managed.reconcileBackground("child"), /trusted command success/);
+    assert.equal(f.managed.snapshot().stopped, true);
+    assert.equal(Object.keys(f.managed.snapshot().runs[0].gates).length, 0);
+});
+test("auto mode falls back when native model lookup is unavailable", async () => {
+    const f = fixture();
+    const managed = createManagedDispatch({
+        ...f.options,
+        delegation: { ...backgroundPolicy, mode: "auto" },
+        backgroundTransport: {
+            enabled: true,
+            models: async () => {
+                throw new Error("unavailable");
+            },
+            inspect: async () => {
+                throw new Error("unused");
+            },
+            abort: async () => { },
+        },
+    });
+    const args = { ...f.args(), background: undefined };
+    await managed.beforeTask({ sessionID: "parent", callID: "call" }, args);
+    assert.equal(args.background, false);
+    assert.equal(managed.snapshot().runs[0].active, 1);
+});
+async function startBackgroundLifecycle(f) {
+    const hooks = await HarnessLifecyclePlugin({ directory: f.workspace }, () => f.managed);
+    await hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "call" }, { args: f.args() });
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    f.ack();
+    await Promise.resolve();
+    return hooks;
+}
+test("idle/status/chat notifications cannot consume a clarification twice and its deadline remains active", async () => {
+    const f = backgroundFixture(200);
+    const hooks = await startBackgroundLifecycle(f);
+    const { outputContract: _contract, ...result } = f.success();
+    void _contract;
+    f.terminal(1, {
+        ...result,
+        outcome: "clarification",
+        summary: "Need choice",
+        requestNonce: "nonce",
+        question: "Which input?",
+        evidence: [],
+        artifacts: [],
+    });
+    await f.managed.reconcileBackground("child");
+    for (let i = 0; i < 3; i++) {
+        await hooks.event({ event: { type: "session.idle", properties: { sessionID: "child" } } });
+        await hooks.event({
+            event: {
+                type: "session.status",
+                properties: { sessionID: "child", status: { type: "idle" } },
+            },
+        });
+        await hooks["chat.message"]({ sessionID: "parent" });
+    }
+    assert.equal(f.managed.snapshot().stopped, false);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "awaiting-guidance");
+    assert.throws(() => f.ack(), /duplicate/);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    assert.equal(f.abortCalls(), 1);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+});
+test("parent error/deletion initiates one native abort and retains capacity until termination", async () => {
+    for (const type of ["session.error", "session.deleted"]) {
+        const f = backgroundFixture();
+        const hooks = await startBackgroundLifecycle(f);
+        let release;
+        const pending = new Promise((resolve) => {
+            release = resolve;
+        });
+        f.abortWith(() => pending);
+        await hooks.event({ event: { type, properties: { sessionID: "parent" } } });
+        const cancellation = f.managed.cancelBackground("parent");
+        f.managed.interrupt("duplicate interruption");
+        await Promise.resolve();
+        assert.equal(f.abortCalls(), 1);
+        assert.equal(f.managed.snapshot().runs[0].active, 1);
+        assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancel-requested");
+        release();
+        await cancellation;
+        assert.equal(f.managed.snapshot().runs[0].active, 0);
+        assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+    }
+});
+test("interrupt abort failure retains capacity without recursive retry", async () => {
+    const f = backgroundFixture(50);
+    await f.start();
+    f.failAbort();
+    f.managed.interrupt("parent failure");
+    await assert.rejects(() => f.managed.cancelBackground("parent"), /abort unavailable/);
+    f.managed.interrupt("duplicate failure");
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(f.abortCalls(), 1);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancel-requested");
+});
+test("model acknowledgement mismatch aborts the actual bound worker", async () => {
+    const f = backgroundFixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    let release;
+    const pending = new Promise((resolve) => {
+        release = resolve;
+    });
+    f.abortWith(() => pending);
+    assert.throws(() => f.managed.afterTask({ callID: "call" }, {
+        metadata: {
+            sessionId: "child",
+            jobId: "child",
+            background: true,
+            model: { providerID: "other", modelID: "worker" },
+        },
+        output: '<task id="child" state="running">',
+    }), /acknowledgement/);
+    const cancellation = f.managed.cancelBackground("parent");
+    await Promise.resolve();
+    assert.equal(f.abortCalls(), 1);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    release();
+    await cancellation;
+    assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+test("interruption before native start cannot release an idle but not-yet-launched child", async () => {
+    const f = backgroundFixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    f.managed.interrupt("parent stopped before child creation");
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    const pending = f.managed.cancelBackground("parent");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(f.abortCalls(), 1);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    assert.throws(() => f.ack(), /termination in progress/);
+    await pending;
+    assert.equal(f.abortCalls(), 2);
+    assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+test("awaiting background clarification still accepts explicit cancellation control", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    const { outputContract: _contract, ...result } = f.success();
+    void _contract;
+    f.terminal(1, {
+        ...result,
+        outcome: "clarification",
+        summary: "Need choice",
+        requestNonce: "nonce",
+        question: "Which input?",
+        evidence: [],
+        artifacts: [],
+    });
+    await f.managed.reconcileBackground("child");
+    await assert.rejects(() => f.managed.beforeTask({ sessionID: "parent", callID: "cancel-call" }, {
+        task_id: "child",
+        subagent_type: "researcher",
+        prompt: formatTaskThreadEnvelope({
+            version: 1,
+            kind: "cancel",
+            delegationTaskId: "task",
+            requestId: "cancel-one",
+        }),
+    }), /cancelled and termination reconciled/);
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+});
+test("launch arriving during an earlier abort still requires a post-launch abort", async () => {
+    const f = backgroundFixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    let release;
+    const pendingAbort = new Promise((resolve) => {
+        release = resolve;
+    });
+    f.abortWith(() => pendingAbort);
+    f.managed.interrupt("before acknowledgement");
+    const cancelled = f.managed.cancelBackground("parent");
+    await Promise.resolve();
+    assert.equal(f.abortCalls(), 1);
+    assert.throws(() => f.ack(), /termination in progress/);
+    release();
+    await cancelled;
+    assert.equal(f.abortCalls(), 2);
+    assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+for (const duringAbort of [false, true])
+    test(`clarification continuation cancellation waits for new launch (during abort: ${duringAbort})`, async () => {
+        const f = backgroundFixture();
+        await f.start();
+        const { outputContract: _contract, ...result } = f.success();
+        void _contract;
+        f.terminal(1, {
+            ...result,
+            outcome: "clarification",
+            summary: "Need choice",
+            requestNonce: "nonce",
+            question: "Which input?",
+            evidence: [],
+            artifacts: [],
+        });
+        await f.managed.reconcileBackground("child");
+        await f.managed.reconcileBackground("child");
+        await f.managed.beforeTask({ sessionID: "parent", callID: "reply" }, {
+            task_id: "child",
+            subagent_type: "researcher",
+            prompt: formatTaskThreadEnvelope({
+                version: 1,
+                kind: "clarification-response",
+                delegationTaskId: "task",
+                requestNonce: "nonce",
+                answer: "fixture",
+            }),
+        });
+        let release;
+        const pending = new Promise((resolve) => {
+            release = resolve;
+        });
+        if (duringAbort)
+            f.abortWith(() => pending);
+        f.managed.interrupt("continuation interrupted before launch");
+        const cancelled = f.managed.cancelBackground("parent");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        assert.equal(f.abortCalls(), 1);
+        assert.equal(f.managed.snapshot().runs[0].active, 1);
+        assert.throws(() => f.ack("reply"), /termination in progress/);
+        release();
+        await cancelled;
+        assert.equal(f.abortCalls(), 2);
+        assert.equal(f.managed.snapshot().runs[0].active, 0);
+    });
+test("queued update cancellation waits for its native admission after aborting the previous turn", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "update-call" }, f.update());
+    f.managed.interrupt("queued update not yet launched");
+    const cancelled = f.managed.cancelBackground("parent");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    assert.throws(() => f.ack("update-call"), /termination in progress/);
+    await cancelled;
+    assert.equal(f.abortCalls(), 2);
+    assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+test("cancellation retains capacity until every pending queued launch is acknowledged", async () => {
+    const f = backgroundFixture();
+    const specPath = path.join(f.trace, "orchestrations/fixture/normalized-spec.json");
+    const spec = JSON.parse(fs.readFileSync(specPath, "utf8"));
+    spec.budgets.maxLeafAgentsByRole.researcher = 3;
+    fs.writeFileSync(specPath, JSON.stringify(spec));
+    await f.start();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "update-one" }, f.update("one"));
+    await f.managed.beforeTask({ sessionID: "parent", callID: "update-two" }, f.update("two"));
+    f.managed.interrupt("two pending native launches");
+    const cancelled = f.managed.cancelBackground("parent");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.throws(() => f.ack("update-one"), /termination in progress/);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.equal(f.abortCalls(), 1);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    assert.throws(() => f.ack("update-two"), /termination in progress/);
+    await cancelled;
+    assert.equal(f.abortCalls(), 2);
+    assert.equal(f.managed.snapshot().runs[0].active, 0);
 });

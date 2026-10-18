@@ -191,7 +191,7 @@ function fake(name: string, version = "1.18.18"): FakeOpenCode {
     "import { spawnSync } from 'node:child_process';",
     `if (process.argv[2] === '--version') process.stdout.write(${JSON.stringify(`${version}\n`)});`,
     "else {",
-    " const argv=process.argv.slice(2); const commands=new Set(['models','agent','run']);",
+    " const argv=process.argv.slice(2); const commands=new Set(['models','agent','run','serve']);",
     " if(argv.length && !commands.has(argv[0])) { process.stderr.write('fake OpenCode top-level grammar rejected project-before-subcommand argv\\n'); process.exitCode=64; }",
     " else if(process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH&&process.env.HARNESS_TEST_PROBE_NONZERO){ process.stderr.write('injected probe failure\\n'); process.exitCode=22; }",
     " else if(process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH&&process.env.HARNESS_TEST_PROBE_MISSING){ }",
@@ -2373,4 +2373,299 @@ test("unavailable version reporting is diagnostic, not a launch compatibility ga
     path.join(temp, "no-version-cache"),
   ]);
   assert.equal(prepared.status, 0, prepared.stderr);
+});
+
+test("web launch requires authentication and closes native exposure arguments", () => {
+  const workspace = repo("web-workspace");
+  const native = fake("web");
+  const args = [
+    "web",
+    "--workspace",
+    workspace,
+    "--cache-root",
+    path.join(temp, "web-cache"),
+    "--trace-root",
+    path.join(temp, "web-trace"),
+    "--port",
+    "4199",
+  ];
+  const env = {
+    OPENCODE_BIN: native.executable,
+    OPENCODE_SERVER_PASSWORD: "offline-fixture-not-a-real-credential",
+  };
+  const denied = run(args, { ...env, OPENCODE_SERVER_PASSWORD: "" });
+  assert.notEqual(denied.status, 0);
+  assert.match(denied.stderr, /owner-supplied/);
+  for (const extra of [
+    ["--", "--hostname", "0.0.0.0"],
+    ["--hostname", "0.0.0.0"],
+    ["--mdns"],
+    ["--port", "4200"],
+  ]) {
+    assert.notEqual(run([...args, ...extra], env).status, 0);
+  }
+  const launched = run(args, env);
+  assert.equal(launched.status, 0, launched.stderr);
+  assert.deepEqual(parseCaptured(native.capture).argv, [
+    "serve",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    "4199",
+    "--mdns=false",
+  ]);
+  assert.equal(
+    parseCaptured(native.capture).env.OPENCODE_SERVER_PASSWORD,
+    env.OPENCODE_SERVER_PASSWORD,
+  );
+  assert.ok(!launched.stderr.includes(env.OPENCODE_SERVER_PASSWORD));
+});
+
+test("run cannot bypass web authentication or binding through forwarded server commands", () => {
+  const native = fake("web-bypass");
+  const cache = path.join(temp, "web-bypass-cache");
+  for (const forwarded of [
+    ["serve"],
+    ["web"],
+    ["serve", "--hostname", "0.0.0.0"],
+    ["web", "--mdns"],
+    ["--print-logs", "serve", "--hostname=0.0.0.0"],
+    ["--log-level", "DEBUG", "web", "--mdns=true"],
+    ["--", "serve"],
+  ]) {
+    const result = run(["run", "--cache-root", cache, "--", ...forwarded], {
+      OPENCODE_BIN: native.executable,
+      OPENCODE_SERVER_PASSWORD: "",
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /run cannot forward server command tokens/);
+    assert.equal(fs.existsSync(native.capture), false);
+    assert.equal(fs.existsSync(cache), false);
+  }
+});
+
+test("source-web validates its own source profile without external injection and preserves source configuration", () => {
+  const source = repo("source-web-profile");
+  const copy = (relative: string) => {
+    const from = path.join(ROOT, relative),
+      to = path.join(source, relative);
+    fs.mkdirSync(path.dirname(to), { recursive: true, mode: 0o700 });
+    fs.cpSync(from, to, { recursive: true, verbatimSymlinks: true });
+  };
+  for (const relative of [
+    "bin",
+    ".opencode/src",
+    ".opencode/scripts",
+    ".opencode/plugin-modules",
+    ".opencode/plugins",
+    ".opencode/agents",
+    ".opencode/commands",
+    ".opencode/skills",
+    ".opencode/contracts",
+    ".opencode/schemas",
+    ".opencode/bootstrap",
+    ".opencode/harness.manifest.json",
+    ".opencode/runtime.manifest.json",
+    ".opencode/portable.manifest.json",
+    "node_modules/typescript",
+    "node_modules/@types/node",
+    "node_modules/undici-types",
+    "package.json",
+    "package-lock.json",
+    "tsconfig.json",
+    "AGENTS.md",
+    "opencode.json",
+    ".gitignore",
+  ]) {
+    if (fs.existsSync(path.join(ROOT, relative))) copy(relative);
+  }
+  // Source launch acceptance must not depend on ignored operator installation files.
+  const dependencies = generatedNodeModulesFixture("source-profile-dependencies");
+  for (const relative of ["package.json", "package-lock.json", "node_modules"]) {
+    fs.cpSync(path.join(dependencies.runtime, relative), path.join(source, ".opencode", relative), {
+      recursive: true,
+      verbatimSymlinks: true,
+    });
+  }
+  fs.writeFileSync(
+    path.join(source, ".opencode/.gitignore"),
+    "node_modules\npackage.json\npackage-lock.json\n",
+  );
+  const routing = path.join(source, ".opencode/routing");
+  fs.mkdirSync(routing, { recursive: true });
+  for (const name of fs.readdirSync(path.join(ROOT, ".opencode/routing")))
+    if (name !== "harness-model-routing.json") copy(".opencode/routing/" + name);
+  const portable = JSON.parse(
+    fs.readFileSync(path.join(ROOT, ".opencode/portable.manifest.json"), "utf8"),
+  );
+  for (const relative of portable.managedFiles as string[])
+    if (!fs.existsSync(path.join(source, relative))) copy(relative);
+  fs.cpSync(path.join(ROOT, ".opencode/bootstrap/memory"), path.join(source, ".memory"), {
+    recursive: true,
+  });
+  const privateRouting = path.join(routing, "harness-model-routing.json");
+  fs.copyFileSync(path.join(routing, "harness-model-routing.example.json"), privateRouting);
+  const preserved = [
+    privateRouting,
+    path.join(source, "opencode.json"),
+    path.join(source, ".memory/protocols/memory-management.md"),
+    path.join(source, ".opencode/package.json"),
+    path.join(source, ".opencode/package-lock.json"),
+  ].map((filename) => [filename, fs.readFileSync(filename, "utf8")] as const);
+  const native = fake("source-web");
+  const cache = path.join(temp, "source-web-cache");
+  const invoke = (extra: string[] = [], env: NodeJS.ProcessEnv = {}) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(source, "bin/opencode-harness.mjs"),
+        "source-web",
+        "--cache-root",
+        cache,
+        ...extra,
+      ],
+      {
+        cwd: temp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCODE_BIN: native.executable,
+          OPENCODE_SERVER_PASSWORD: "offline-fixture-not-a-real-credential",
+          ...env,
+        },
+      },
+    );
+  for (const extra of [
+    ["--workspace", temp],
+    ["--provider-config", "/unused"],
+    ["--routing-catalog", "/unused"],
+    ["--trace-root", "/unused"],
+    ["--", "serve"],
+    ["--hostname", "0.0.0.0"],
+  ])
+    assert.notEqual(invoke(extra).status, 0);
+  assert.notEqual(invoke([], { OPENCODE_SERVER_PASSWORD: "" }).status, 0);
+  assert.notEqual(invoke([], { OPENCODE_CONFIG_CONTENT: "{}" }).status, 0);
+  const duplicate = path.join(source, ".opencode/plugins/duplicate.js");
+  fs.writeFileSync(duplicate, "export default async()=>({})");
+  assert.match(invoke().stderr, /exactly the source/);
+  fs.unlinkSync(duplicate);
+  const configPath = path.join(source, "opencode.json");
+  const originalConfig = fs.readFileSync(configPath, "utf8");
+  const instructionParent = path.join(source, "source-web-instructions");
+  fs.mkdirSync(instructionParent, { mode: 0o700 });
+  fs.writeFileSync(path.join(instructionParent, "guide.md"), "Fixture instruction.");
+  const instructionAlias = path.join(source, "source-web-instruction-alias");
+  fs.symlinkSync(instructionParent, instructionAlias, "dir");
+  const withInstructions = (relative: string) =>
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ ...JSON.parse(originalConfig), instructions: [relative] }),
+    );
+  withInstructions("source-web-instruction-alias/guide.md");
+  assert.match(invoke().stderr, /source instruction parent contains a non-directory or symlink/);
+  fs.unlinkSync(instructionAlias);
+  withInstructions("source-web-instructions/guide.md");
+  for (const mode of [0o770, 0o707]) {
+    fs.chmodSync(instructionParent, mode);
+    assert.match(invoke().stderr, /source instruction parent component is group\/world writable/);
+  }
+  fs.chmodSync(instructionParent, 0o700);
+  fs.writeFileSync(configPath, originalConfig);
+  const protocols = path.join(source, ".memory/protocols");
+  const heldProtocols = path.join(source, ".memory/protocols-held");
+  const protocolMode = fs.statSync(protocols).mode & 0o777;
+  fs.renameSync(protocols, heldProtocols);
+  fs.symlinkSync(heldProtocols, protocols, "dir");
+  assert.match(
+    invoke().stderr,
+    /source .*memory-management.md parent contains a non-directory or symlink/,
+  );
+  fs.unlinkSync(protocols);
+  fs.renameSync(heldProtocols, protocols);
+  for (const mode of [0o770, 0o707]) {
+    fs.chmodSync(protocols, mode);
+    assert.match(
+      invoke().stderr,
+      /source .*memory-management.md parent component is group\/world writable/,
+    );
+  }
+  fs.chmodSync(protocols, protocolMode);
+  const generated = path.join(source, ".opencode/plugin-modules/harness-lifecycle.js");
+  const bytes = fs.readFileSync(generated);
+  fs.appendFileSync(generated, "\n// stale fixture\n");
+  assert.match(invoke().stderr, /preflight failed/);
+  fs.writeFileSync(generated, bytes);
+  const success = invoke([], { HARNESS_TEST_DB_FILES: "1" });
+  assert.equal(success.status, 0, success.stderr);
+  const captured = parseCaptured(native.capture);
+  assert.equal(captured.cwd, source);
+  assert.equal(captured.env.OPENCODE_HARNESS_WORKSPACE_ROOT, source);
+  assert.equal(captured.env.OPENCODE_HARNESS_TRACE_ROOT, path.join(source, ".memory"));
+  for (const key of [
+    "OPENCODE_CONFIG_DIR",
+    "OPENCODE_HARNESS_RUNTIME_ROOT",
+    "OPENCODE_CONFIG",
+    "OPENCODE_HARNESS_ROUTING_CATALOG",
+    "OPENCODE_HARNESS_ROUTING_PROFILE",
+  ])
+    assert.equal(captured.env[key], undefined);
+  assert.deepEqual(captured.argv, [
+    "serve",
+    "--hostname",
+    "127.0.0.1",
+    "--port",
+    "4096",
+    "--mdns=false",
+  ]);
+  assert.equal(fs.existsSync(path.dirname(captured.env.OPENCODE_DB)), false);
+  for (const [filename, content] of preserved)
+    assert.equal(fs.readFileSync(filename, "utf8"), content);
+  const invokeTui = (extra: string[] = [], env: NodeJS.ProcessEnv = {}) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(source, "bin/opencode-harness.mjs"),
+        "source-tui",
+        "--cache-root",
+        cache,
+        ...extra,
+      ],
+      {
+        cwd: temp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCODE_BIN: native.executable,
+          OPENCODE_SERVER_PASSWORD: "",
+          ...env,
+        },
+      },
+    );
+  for (const args of [
+    ["--port", "4096"],
+    ["--", "serve"],
+    ["--", "--prompt", "unrequested task"],
+    ["--workspace", temp],
+    ["--provider-config", "/unused"],
+  ])
+    assert.notEqual(invokeTui(args).status, 0);
+  const tui = invokeTui([], { HARNESS_TEST_DB_FILES: "1" });
+  assert.equal(tui.status, 0, tui.stderr);
+  const tuiCapture = parseCaptured(native.capture);
+  assert.deepEqual(tuiCapture.argv, []);
+  assert.equal(tuiCapture.cwd, source);
+  assert.equal(tuiCapture.env.OPENCODE_HARNESS_WORKSPACE_ROOT, source);
+  assert.equal(tuiCapture.env.OPENCODE_HARNESS_TRACE_ROOT, path.join(source, ".memory"));
+  assert.equal(tuiCapture.env.OPENCODE_CONFIG_DIR, undefined);
+  assert.equal(tuiCapture.env.OPENCODE_HARNESS_RUNTIME_ROOT, undefined);
+  assert.equal(fs.existsSync(path.dirname(tuiCapture.env.OPENCODE_DB)), false);
+  for (const [filename, content] of preserved)
+    assert.equal(fs.readFileSync(filename, "utf8"), content);
+  const tuiFailure = invokeTui([], { HARNESS_TEST_CHILD_FAIL: "1", HARNESS_TEST_DB_FILES: "1" });
+  assert.equal(tuiFailure.status, 23, tuiFailure.stderr);
+  assert.equal(fs.existsSync(path.dirname(parseCaptured(native.capture).env.OPENCODE_DB)), false);
+  const failure = invoke([], { HARNESS_TEST_CHILD_FAIL: "1", HARNESS_TEST_DB_FILES: "1" });
+  assert.equal(failure.status, 23, failure.stderr);
+  assert.equal(fs.existsSync(path.dirname(parseCaptured(native.capture).env.OPENCODE_DB)), false);
 });

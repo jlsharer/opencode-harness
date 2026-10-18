@@ -505,3 +505,19 @@ test("lifecycle forwards managed hook boundaries and relevant session interrupti
         "managed session deleted",
     ]);
 });
+test("managed lifecycle refuses a different native project directory", async () => {
+    const original = process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
+    process.env.OPENCODE_HARNESS_WORKSPACE_ROOT = "/fixture/expected";
+    try {
+        const mismatch = await HarnessLifecyclePlugin({ directory: "/fixture/other" });
+        await assert.rejects(() => mismatch.config({}), /managed workspace mismatch/);
+        const matching = await HarnessLifecyclePlugin({ directory: "/fixture/expected" });
+        await matching.config({});
+    }
+    finally {
+        if (original === undefined)
+            delete process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
+        else
+            process.env.OPENCODE_HARNESS_WORKSPACE_ROOT = original;
+    }
+});
