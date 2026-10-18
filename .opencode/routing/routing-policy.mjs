@@ -276,7 +276,7 @@ function requestModelAlias(request) {
     for (const [name, value] of aliases) {
         const normalized = requestString(value, `$.request.${name}`);
         if (normalized !== null)
-            presentAliases.push([name, normalized]);
+            presentAliases.push([name, model(normalized, `$.request.${name}`, false)]);
     }
     const distinct = new Set(presentAliases.map(([, value]) => value));
     if (distinct.size > 1) {
@@ -428,39 +428,16 @@ export function resolveAllHarnessRoleAssignments(config) {
     const routing = normalizeAndValidateRoutingConfig(config);
     const assignments = {};
     for (const role of FIXED_HARNESS_ROLES) {
-        const override = routing.roleOverrides[role];
-        if (routing.providerClassMode === "mixed" && override.model !== null) {
-            assignments[role] = {
-                model: override.model,
-                catalogName: null,
-                routingServiceUrl: null,
-                maxInFlight: null,
-            };
-        }
-        else if (routing.providerClassMode !== "cloud-only" &&
-            routing.localRouting.enabled &&
-            (override.localModel !== null || routing.localRouting.defaultLocalModel !== null)) {
-            const catalogName = override.localModel ?? routing.localRouting.defaultLocalModel;
-            const catalog = catalogName === null ? null : routing.localRouting.models[catalogName];
-            if (!catalog)
-                fail(`$.harnessModelRouting.roleOverrides.${role}`, "local role mapping requires a catalog-backed role or default selection");
-            assignments[role] = {
-                model: catalog.model,
-                catalogName,
-                routingServiceUrl: catalog.routingServiceUrl,
-                maxInFlight: catalog.maxInFlight,
-            };
-        }
-        else if (routing.providerClassMode !== "cloud-only" && override.model !== null) {
-            assignments[role] = {
-                model: override.model,
-                catalogName: null,
-                routingServiceUrl: null,
-                maxInFlight: null,
-            };
-        }
-        else
-            assignments[role] = null;
+        const decision = resolveRoutingDecision({ config: routing, request: { role } });
+        assignments[role] =
+            decision.model === null
+                ? null
+                : {
+                    model: decision.model,
+                    catalogName: decision.local.catalogName,
+                    routingServiceUrl: decision.local.routingServiceUrl,
+                    maxInFlight: decision.local.maxInFlight,
+                };
     }
     const localProviders = [
         ...new Set(Object.values(routing.localRouting.models).map((entry) => entry.model.split("/")[0] ?? "")),
@@ -498,7 +475,7 @@ export function validateNativeProviderCoherence(nativeConfig, assignmentPlan) {
             ? undefined
             : object(providerValue, `$.nativeConfig.provider.${providerName}`);
         if (!provider)
-            fail(`$.nativeConfig.provider.${providerName}`, `is required by role "${role}"`);
+            fail(`$.nativeConfig.provider.${providerName}`, `is required by configured role "${role}" (${assignment.model}); supply its native provider projection or explicitly remove that routing selection. Omitting a prompt model does not clear configured routing.`);
         if (provider.models !== undefined) {
             const models = object(provider.models, `$.nativeConfig.provider.${providerName}.models`);
             if (!Object.hasOwn(models, modelName))

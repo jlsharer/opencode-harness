@@ -39,7 +39,7 @@ interface RuntimeFile {
 
 interface RuntimeManifest extends Record<string, unknown> {
   packageVersion: string;
-  compatibility?: { opencode?: { minimum: string; maximum: string } };
+  compatibility?: { node?: string; platform?: string; opencode?: unknown };
   generatedEntries: RuntimeGeneratedEntry[];
   files: RuntimeFile[];
 }
@@ -640,11 +640,8 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     runtimeManifest.packageVersion !== packageManifest.version
   )
     fail("Package and runtime manifest versions must both equal 0.1.12");
-  if (
-    JSON.stringify(runtimeManifest.compatibility?.opencode) !==
-    JSON.stringify({ minimum: "1.18.18", maximum: "1.18.25" })
-  )
-    fail("Runtime manifest must contain the bounded OpenCode compatibility policy");
+  if (runtimeManifest.compatibility?.opencode !== undefined)
+    fail("Runtime manifest must not impose an OpenCode version gate");
   if (
     !Array.isArray(packageManifest.files) ||
     packageManifest.files.filter((pathname: string) => pathname === "README.md").length !== 1
@@ -666,9 +663,9 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   if (!/value\.packageVersion\s*!==\s*["']0\.1\.12["']/.test(launcher))
     fail("Runtime launcher must reject package versions other than 0.1.12");
   for (const snippet of [
-    "assertOpenCodeCompatibility",
-    "opencode-${opencodeVersion}",
-    '"@opencode-ai/plugin": opencodeVersion',
+    "diagnosticVersion",
+    "opencode-${encodeURIComponent(opencodeVersion)}",
+    '"@opencode-ai/plugin": pluginVersion',
   ])
     if (!launcher.includes(snippet))
       fail(`Runtime launcher compatibility policy is missing: ${snippet}`);
@@ -704,9 +701,8 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   const design = read("opencode-harness.design.md");
   for (const snippet of [
     "opencode-harness-runtime` 0.1.12",
-    "/0.1.12/opencode-<exact-version>/runtime",
+    "/0.1.12/opencode-<reported-version>/runtime",
     "0.1.11",
-    "1.18.25",
     "validate-inputs",
   ]) {
     if (!design.includes(snippet)) fail(`Runtime release documentation is missing: ${snippet}`);
@@ -717,7 +713,7 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     "opencode-harness-runtime-0.1.12.tgz",
     "Package version `0.1.12`",
     "retained version `0.1.11`",
-    "`1.18.18` through `1.18.25`",
+    "no OpenCode version allowlist",
     "opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
   ]) {
     if (!readme.includes(snippet))

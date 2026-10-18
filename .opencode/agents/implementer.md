@@ -16,7 +16,7 @@ Expected input: explicit `taskMode: implementation | integration`, exact target 
 
 Required output: changed files, rationale, schema or boundary choices, commands run with results, and handoff notes for the parent and validator.
 
-Boundaries: do not broaden scope into research, planning, or final validation. Perform integration edits only in explicit `integration` mode.
+Boundaries: do not broaden scope into research, planning, or final validation. Repair minor defects and keep imports, manifests, schemas, tests and generated outputs coherent within the approved implementation scope before handing off. Use explicit `integration` mode for a separately scoped cross-task stitching deliverable, not as a mandatory cleanup pass. Never self-approve independent acceptance.
 
 Dispatch boundary: accept managed work only from a contract-complete Task packet supplied by the parent. Never load `delegation-orchestrator` or delegate further. If invoked directly with `@implementer` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
 
@@ -33,4 +33,4 @@ Authority and path resolution: the parent-owned `delegation-orchestrator` skill 
 
 ## Structured terminal result
 
-Return one JSON result object using the enforced ephemeral dispatch protocol in the immutable memory-management source: version, exact task identity, outcome, summary, evidence, artifacts, and (for success) the existing role-specific outputContract. A success without artifact digests or required evidence is rejected. Use blocked/failed with a reason rather than claiming an unrun command passed. Existing nonce-bound clarification envelopes remain valid. Native managed shell is read-only and exact-command bounded; do not bypass it with another tool.
+Return one JSON result object using the enforced ephemeral dispatch protocol in the immutable memory-management source: version, exact task identity, outcome, summary, evidence, artifacts, and (for success) the existing role-specific outputContract. Required evidence and artifact references must be present; the adapter computes artifact digests and rejects any supplied mismatch. Use blocked/failed with a reason rather than claiming an unrun command passed. Existing nonce-bound clarification envelopes remain valid. Native managed shell is read-only and exact-command bounded; do not bypass it with another tool.

@@ -6,8 +6,8 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.12` requires Linux, Node.js 24, Git, and OpenCode
-`1.18.18` through `1.18.25`, inclusive. npm is needed only to build a local
+Package version `0.1.12` requires Linux, Node.js 24, Git, and OpenCode. There is
+no OpenCode version allowlist. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
 invoking retained version `0.1.11`.
 
@@ -17,12 +17,17 @@ From this checkout:
 
 ```sh
 node bin/opencode-harness.mjs --help
-node bin/opencode-harness.mjs prepare
 node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE
 node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- models
 node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- \
   run --model PROVIDER/MODEL "Use /delegate-orchestration for this task"
 ```
+
+`run` already prepares and verifies its versioned runtime. A separate `prepare`
+step is optional prewarming, not an installation prerequisite. Consumer repositories
+need neither spelling of the maintainer design document (`opencode-harness.design.md`
+or `opencode-harness-design.md`). Keep source QA in this checkout; use the portable
+validator only for portable consumers.
 
 Launcher grammar:
 
@@ -40,26 +45,26 @@ opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [
 Select the executable per invocation when multiple versions are installed. Selection
 order is `--opencode-bin ABS`, then nonempty `OPENCODE_BIN`, then the first
 executable `opencode` on inherited PATH. The selected executable must pass all
-existing trust and version checks. An unsupported first PATH candidate fails;
+existing executable trust checks. An unsafe first PATH candidate fails;
 the launcher never silently tries a later installation.
 
 ```sh
-node bin/opencode-harness.mjs doctor --opencode-bin /ABSOLUTE/SUPPORTED/opencode
-node bin/opencode-harness.mjs prepare --opencode-bin /ABSOLUTE/SUPPORTED/opencode
-node bin/opencode-harness.mjs run --opencode-bin /ABSOLUTE/SUPPORTED/opencode --workspace /ABSOLUTE/GIT/WORKSPACE
+node bin/opencode-harness.mjs doctor --opencode-bin /ABSOLUTE/TRUSTED/opencode
+node bin/opencode-harness.mjs prepare --opencode-bin /ABSOLUTE/TRUSTED/opencode
+node bin/opencode-harness.mjs run --opencode-bin /ABSOLUTE/TRUSTED/opencode --workspace /ABSOLUTE/GIT/WORKSPACE
 ```
 
 `doctor` validates the executable and invokes only `--version`; it creates no
 runtime/cache and makes no provider call. Its JSON reports the selected path,
-selection source, exact version, supported bounds, and ephemeral/non-resumable
+selection source, reported version, runtime capability verification, and ephemeral/non-resumable
 session policy. Prepare/run report selection to stderr while preserving stdout.
-It is a version/trust check, not proof of plugin activation or provider health.
+It checks executable trust and reports version diagnostics; it does not prove plugin activation or provider health.
 
 Offline native routing checks have passed with OpenCode 1.18.18 and 1.18.34.
 These checks do not guarantee every native capability.
 Recheck with `doctor` after upgrades. No shell startup or global PATH change is
 required. For an existing environment-preserving wrapper, use an invocation-local
-override, for example `OPENCODE_BIN=/ABSOLUTE/SUPPORTED/opencode opencode-local launch`.
+override, for example `OPENCODE_BIN=/ABSOLUTE/TRUSTED/opencode opencode-local launch`.
 External wrappers may have their own argument grammar: do not assume they accept
 the launcher's new flag or edit external infrastructure to add it.
 
@@ -331,10 +336,15 @@ Generated orchestration evidence is written under
 permissions after an activation probe. Trace files are coordination evidence,
 not proof that an unrecorded command or validation ran.
 
-The launcher resolves one OpenCode executable and requires an exact stable
-version from `1.18.18` through `1.18.25`. Each accepted version has a separate
-cache, runtime marker, and exact generated `@opencode-ai/plugin` metadata
-contract. Ambient `OPENCODE_DB` is rejected, and each child gets an isolated
+The launcher resolves one trusted OpenCode executable. Its reported version is
+used only for diagnostics and cache isolation; unavailable version reporting uses
+the executable digest instead. Future and prerelease versions
+are accepted. Generated plugin dependencies must still agree with their lockfile
+and installed bytes, but need not match the CLI version. The plugin requires the
+native config and tool hooks and session/Task APIs it actually uses; missing or
+incompatible APIs fail at that operation. `doctor` checks executable selection
+and version reporting, not end-to-end API compatibility. Future compatibility is
+not guaranteed; run the offline native integration check after changing OpenCode. Ambient `OPENCODE_DB` is rejected, and each child gets an isolated
 database/snapshot lifecycle. Credentials and global OpenCode config remain
 external; the package does not mutate them.
 
@@ -385,3 +395,23 @@ Managed delegation requires a trace-root `orchestrations/<id>/normalized-spec.js
 Read-only shell verification uses an already installed `/usr/bin/bwrap` with working user namespaces. It never falls back to an unrestricted shell or installs dependencies. Write-producing verification, parallel writers, workspaces beneath `/tmp`, and missing native child/exit metadata are explicit unsupported cases. Scope checks are not a general sandbox. See `.memory/protocols/memory-management.md` for the structured result protocol.
 
 Offline evaluation: `node .opencode/scripts/evaluate-controller.mts`. The deterministic thin fixture transport is not a live OpenCode baseline. Live paired model runs and V2 migration remain unexecuted and separate.
+
+
+### Portable consumer installation and upgrade
+
+Prefer the no-copy `run --workspace` path above unless the consumer deliberately needs a checked-in portable projection. For that profile, run `node .opencode/scripts/bootstrap-portable-harness.mjs --target /ABSOLUTE/CONSUMER` from this checkout, then run the installed `.opencode/scripts/validate-portable-harness.mjs --root /ABSOLUTE/CONSUMER`. Repeating bootstrap is idempotent. To upgrade, inspect `--dry-run`, review managed-file collisions, then explicitly use `--overwrite-managed`. This replaces managed assets; it is not a merge of edits to those assets. Consumer configuration, private routing overrides and existing memory seeds are preserved. No maintainer design document, source validator or orchestration history is required in the consumer.
+
+Existing trace seed files are user-owned after first creation. Upgrades, repeat
+launches and rollbacks preserve them and report differing bundled templates;
+review the runtime's bootstrap templates to adopt protocol changes deliberately.
+
+Native role routing uses the same role-only precedence as the routing helper:
+force-local policy, role local selection, role model, enabled single model, then
+default model. With none selected, OpenCode inherits its native model. Command,
+complexity and explicit request overrides are advisory helper inputs: the config
+hook cannot inspect a delegation prompt. A persisted private routing selection
+remains active when the prompt omits a model. Supply its matching native provider
+projection or explicitly change that policy; the neutral external launcher does
+not copy the checkout's private override. Provider restrictions always take
+precedence; malformed IDs and missing configured models fail without fallback.
+A valid configured ID is not proof that the remote service is reachable.

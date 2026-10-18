@@ -420,4 +420,63 @@ test("staged dependent writes invalidate prior gates and permit budgeted revalid
   c.reserve(request("vb", "b", "validator", "validation"));
   c.complete("vb", "success", { treeHash: hash, gateIds: ["gate-b"] });
   assert.equal(Object.keys(c.snapshot().gates).length, 2);
+  assert.equal(c.snapshot().attempts.length, 5);
+});
+
+test("in-scope implementation can proceed directly to independent validation without an integration pass", () => {
+  const spec = validWorkflow();
+  spec.workUnits = spec.workUnits.slice(0, 1);
+  spec.acceptanceGates = spec.acceptanceGates.slice(0, 1);
+  spec.roleModeTaskMapping = [
+    {
+      workUnitId: "a",
+      role: "implementer",
+      taskMode: "implementation",
+      boundedTask: "implement and fix in-scope coherence",
+    },
+    {
+      workUnitId: "a",
+      role: "validator",
+      taskMode: "validation",
+      boundedTask: "independent acceptance",
+    },
+  ];
+  spec.budgets.maxTotalLeafAgents = 2;
+  const c = createDispatchController(spec);
+  c.reserve(request("implementation", "a", "implementer", "implementation"));
+  c.complete("implementation", "success");
+  assert.deepEqual(c.snapshot().gates, {});
+  assert.throws(
+    () => c.reserve(request("unneeded", "a", "implementer", "integration")),
+    /undeclared/,
+  );
+  c.reserve(request("validation", "a", "validator", "validation"));
+  c.complete("validation", "success", { treeHash: hash, gateIds: ["gate-a"] });
+  assert.equal(c.snapshot().attempts.length, 2);
+  assert.equal(c.snapshot().gates["gate-a"], hash);
+});
+
+test("distinct integration deliverable adds one dispatch and still requires independent validation", () => {
+  const spec = validWorkflow();
+  spec.workUnits = spec.workUnits.slice(0, 1);
+  spec.acceptanceGates = spec.acceptanceGates.slice(0, 1);
+  spec.roleModeTaskMapping = [
+    { workUnitId: "a", role: "implementer", taskMode: "implementation", boundedTask: "edit" },
+    {
+      workUnitId: "a",
+      role: "implementer",
+      taskMode: "integration",
+      boundedTask: "stitch independent output",
+    },
+    { workUnitId: "a", role: "validator", taskMode: "validation", boundedTask: "accept" },
+  ];
+  const c = createDispatchController(spec);
+  for (const taskMode of ["implementation", "integration"]) {
+    c.reserve(request(taskMode, "a", "implementer", taskMode));
+    c.complete(taskMode, "success");
+    assert.deepEqual(c.snapshot().gates, {});
+  }
+  c.reserve(request("validate", "a", "validator", "validation"));
+  c.complete("validate", "success", { treeHash: hash, gateIds: ["gate-a"] });
+  assert.equal(c.snapshot().attempts.length, 3);
 });

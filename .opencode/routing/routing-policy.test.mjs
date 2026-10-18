@@ -15,6 +15,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FIXED_HARNESS_ROLES, normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, validateNativeProviderCoherence, } from "./routing-policy.mjs";
+import HarnessPlugin from "../plugins/index.js";
 import { resolveModelForRole } from "./model-routing-helper.mjs";
 import { loadRoutingConfigSelection, mergeExternalRoutingDocuments, selectImplicitRoutingConfig, } from "./routing-config-loader.mjs";
 import { loadRoutingConfig, parseArgs } from "./resolve-model-routing.mjs";
@@ -965,10 +966,10 @@ test("neutral config is inert while mixed local config applies validated mapping
 });
 test("strict provider modes mutate native filters only after full preflight", () => {
     const localCfg = nativeConfig();
-    localCfg.enabled_providers = ["cloud", "llamacpp-research"];
-    localCfg.disabled_providers = ["llamacpp-coder", "other"];
+    localCfg.enabled_providers = ["cloud", "llamacpp-research", "llamacpp-coder"];
+    localCfg.disabled_providers = ["other"];
     applyHarnessRoleModelOverrides(localCfg, { routingDocument: forceConfig() });
-    assert.deepEqual(localCfg.enabled_providers, ["llamacpp-coder", "llamacpp-research"]);
+    assert.deepEqual(localCfg.enabled_providers, ["llamacpp-research", "llamacpp-coder"]);
     assert.deepEqual(localCfg.disabled_providers, ["other"]);
     const cloud = routing();
     cloud.providerClassMode = "cloud-only";
@@ -1006,4 +1007,97 @@ test("file enforcement reports read and parse diagnostics", () => {
     fs.writeFileSync(malformed, "{");
     assert.throws(() => applyHarnessRoleModelOverrides(nativeConfig(), { routingPath: malformed }), /Malformed routing config JSON/);
     fs.rmSync(temp, { recursive: true, force: true });
+});
+test("native role assignments share helper default, single and role precedence", () => {
+    for (const selection of ["none", "default", "single", "role"]) {
+        const config = neutralRouting();
+        if (selection !== "none")
+            config.defaultModel = "fixture/default";
+        if (selection === "single" || selection === "role")
+            config.singleModel = { enabled: true, model: "fixture/single" };
+        if (selection === "role")
+            config.roleOverrides.researcher.model = "fixture/role";
+        const cfg = {
+            model: "fixture/native",
+            provider: { fixture: { models: { default: {}, single: {}, role: {}, native: {} } } },
+            agent: Object.fromEntries(FIXED_HARNESS_ROLES.map((role) => [role, { mode: "subagent", model: "fixture/native" }])),
+        };
+        const plan = applyHarnessRoleModelOverrides(cfg, { routingDocument: config });
+        for (const role of FIXED_HARNESS_ROLES) {
+            const advisory = resolveRoutingDecision({ config, request: { role } });
+            assert.equal(plan.assignments[role]?.model ?? null, advisory.model);
+            assert.equal(cfg.agent[role].model, advisory.model ?? "fixture/native");
+        }
+    }
+});
+test("explicit model aliases reject malformed IDs but do not invent service availability", () => {
+    for (const alias of ["explicitModel", "providerModel", "model"]) {
+        for (const bad of ["not-a-provider-model", "/model", "provider/", "provider/bad model"])
+            assert.throws(() => resolveRoutingDecision({ config: committed, request: { [alias]: bad } }), /provider\/model/);
+        assert.equal(resolveRoutingDecision({ config: committed, request: { [alias]: "unavailable/valid" } })
+            .model, "unavailable/valid");
+    }
+});
+test("selected provider restrictions fail atomically instead of being widened", () => {
+    for (const mode of ["mixed", "local-only"]) {
+        for (const filter of ["enabled_providers", "disabled_providers"]) {
+            const cfg = nativeConfig();
+            cfg[filter] = filter === "enabled_providers" ? ["other"] : ["llamacpp-coder"];
+            const before = clone(cfg);
+            assert.throws(() => applyHarnessRoleModelOverrides(cfg, {
+                routingDocument: mode === "mixed" ? localCommitted : forceConfig(),
+            }), /blocked by native provider restrictions/);
+            assert.deepEqual(cfg, before);
+        }
+    }
+});
+test("persisted local routing without native transport reports policy source and fails atomically", () => {
+    const cfg = nativeConfig();
+    cfg.provider = {};
+    const before = clone(cfg);
+    assert.throws(() => applyHarnessRoleModelOverrides(cfg, { routingDocument: localCommitted }), /Omitting a prompt model does not clear configured routing/);
+    assert.deepEqual(cfg, before);
+});
+test("combined plugin blocks Task after missing or failed config hooks", async () => {
+    const hooks = await HarnessPlugin({ routingDocument: committed });
+    const input = { tool: "task", sessionID: "parent", callID: "call" };
+    await assert.rejects(() => hooks["tool.execute.before"](input, { args: {} }), /configuration hook has not completed/);
+    const invalid = await HarnessPlugin({ routingDocument: { bad: true } });
+    await assert.rejects(() => invalid.config({}), /routing enforcement failed/);
+    await assert.rejects(() => invalid["tool.execute.before"](input, { args: {} }), /Harness dispatch blocked/);
+    await hooks.config({});
+    await assert.rejects(() => hooks["tool.execute.before"](input, { args: {} }), /absolute workspace root/);
+});
+test("cloud-only rejects catalogued assignments against final filters atomically and blocks Task", async () => {
+    for (const selection of ["default", "single", "role"]) {
+        for (const withAllowlist of [false, true]) {
+            const config = routing();
+            config.providerClassMode = "cloud-only";
+            config.localRouting.defaultLocalModel = null;
+            config.defaultModel = null;
+            config.singleModel = { enabled: false, model: null };
+            for (const role of FIXED_HARNESS_ROLES) {
+                config.roleOverrides[role].localModel = null;
+                config.roleOverrides[role].model = null;
+            }
+            const selected = "llamacpp-research/qwen2.5-7b-instruct";
+            if (selection === "default")
+                config.defaultModel = selected;
+            if (selection === "single")
+                config.singleModel = { enabled: true, model: selected };
+            if (selection === "role")
+                config.roleOverrides.researcher.model = selected;
+            const cfg = nativeConfig();
+            if (withAllowlist)
+                cfg.enabled_providers = ["cloud", "llamacpp-research", "llamacpp-coder"];
+            const before = clone(cfg);
+            assert.throws(() => applyHarnessRoleModelOverrides(cfg, { routingDocument: config }), /cloud-only effective filters/);
+            assert.deepEqual(cfg, before);
+            const hooks = await HarnessPlugin({ routingDocument: config });
+            await assert.rejects(() => hooks.config(cfg), /cloud-only effective filters/);
+            assert.deepEqual(cfg, before);
+            await assert.rejects(() => hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "call" }, { args: {} }), /Harness dispatch blocked.*cloud-only effective filters/);
+            assert.deepEqual(cfg, before);
+        }
+    }
 });

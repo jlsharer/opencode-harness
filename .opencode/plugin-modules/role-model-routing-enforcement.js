@@ -66,12 +66,27 @@ export function applyHarnessRoleModelOverrides(cfg, options = {}) {
         const enabled = native.enabled_providers === undefined ? undefined : [...new Set(native.enabled_providers)];
         const disabled = [...new Set(native.disabled_providers ?? [])];
         if (plan.mode === "local-only") {
-            plan.enabledProviders = plan.localProviders;
-            plan.disabledProviders = disabled.filter((provider) => !plan.localProviders.includes(provider));
+            plan.enabledProviders =
+                enabled === undefined
+                    ? plan.localProviders
+                    : enabled.filter((provider) => plan.localProviders.includes(provider));
+            plan.disabledProviders = disabled;
         }
         else if (plan.mode === "cloud-only") {
             plan.enabledProviders = enabled?.filter((provider) => !plan.localProviders.includes(provider));
             plan.disabledProviders = [...new Set([...disabled, ...plan.localProviders])].sort();
+        }
+        // Validate the effective filters after provider-class restrictions are added,
+        // before any agent or native filter mutation.
+        const effectiveEnabled = plan.enabledProviders ?? enabled;
+        const effectiveDisabled = plan.disabledProviders ?? disabled;
+        for (const [role, assignment] of Object.entries(plan.assignments)) {
+            if (assignment === null)
+                continue;
+            const provider = assignment.model.split("/")[0];
+            if (effectiveDisabled.includes(provider) ||
+                (effectiveEnabled !== undefined && !effectiveEnabled.includes(provider)))
+                throw new Error(`configured role ${role} selects provider ${provider} blocked by native provider restrictions (${plan.mode} effective filters)`);
         }
         if (plan.enabledProviders?.some((provider) => plan.disabledProviders?.includes(provider)))
             throw new Error("native provider filters would be contradictory");
@@ -108,3 +123,25 @@ export const HarnessRoleModelRoutingEnforcementPlugin = async (context = {}) => 
         applyHarnessRoleModelOverrides(cfg, context);
     },
 });
+export function guardConfiguredDispatch(lifecycle, configure) {
+    let configurationError = new Error("Harness configuration hook has not completed; native plugin config capability is required");
+    return {
+        "tool.execute.before": async (input, output) => {
+            // Native OpenCode can log config-hook errors and continue. Do not silently
+            // delegate using inherited routing after failed or absent configuration.
+            if (String(input.tool).toLowerCase() === "task" && configurationError)
+                throw new Error(`Harness dispatch blocked: ${configurationError.message}`);
+            await lifecycle["tool.execute.before"](input, output);
+        },
+        config: async (cfg) => {
+            try {
+                await configure(cfg);
+                configurationError = null;
+            }
+            catch (error) {
+                configurationError = error instanceof Error ? error : new Error(String(error));
+                throw configurationError;
+            }
+        },
+    };
+}

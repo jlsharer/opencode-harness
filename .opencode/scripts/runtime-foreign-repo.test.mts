@@ -396,7 +396,13 @@ test("colliding commands, routing shadows, plugins, symlinks, and preset roots f
   fs.writeFileSync(path.join(traceCollision, ".gitignore"), ".memory/\n");
   fs.mkdirSync(path.join(traceCollision, ".memory"), { mode: 0o700 });
   fs.writeFileSync(path.join(traceCollision, ".memory/INDEX.md"), "collision\n", { mode: 0o600 });
-  assert.match(invoke(traceCollision).result.stderr, /trace seed collision/);
+  const preserved = invoke(traceCollision).result;
+  assert.equal(preserved.status, 0, preserved.stderr);
+  assert.match(preserved.stderr, /preserving existing trace seed/);
+  assert.equal(
+    fs.readFileSync(path.join(traceCollision, ".memory/INDEX.md"), "utf8"),
+    "collision\n",
+  );
 });
 
 test("root and config-directory JSON/JSONC collisions and plugins fail closed with bounded acknowledgment", () => {

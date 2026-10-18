@@ -647,3 +647,48 @@ test("installed validator rejects generic Windows drive and UNC absolute paths",
   await writeFile(agent, `${await readFile(agent, "utf8")}\n${forwardUncPath}\n`);
   assert.match(await expectFailure([validator, "--root", repo]), /machine-local absolute path/);
 });
+
+test("consumer install, repeat and reviewed upgrade preserve config without design documents", async () => {
+  const repo = await makeRepo(tempParent, "consumer-upgrade");
+  const preserved: Record<string, string> = {
+    "opencode.json": '{"model":"fixture/remote"}\n',
+    [["AGENTS", "md"].join(".")]: "Consumer-owned guidance\n",
+    ".gitignore": "consumer-private/\n",
+    ".opencode/routing/harness-model-routing.json": "consumer-owned routing bytes\n",
+    ".memory/INDEX.md": "Readable consumer memory\n",
+  };
+  for (const [name, content] of Object.entries(preserved)) {
+    await mkdir(path.dirname(path.join(repo, name)), { recursive: true });
+    await writeFile(path.join(repo, name), content);
+  }
+  await runNode([BOOTSTRAP, "--target", repo]);
+  await runNode([BOOTSTRAP, "--target", repo]);
+  for (const name of [
+    ["opencode-harness", "design", "md"].join("."),
+    ["opencode-harness", "design.md"].join("-"),
+  ])
+    assert.equal((await walk(repo)).includes(name), false);
+  const managed = path.join(repo, ".opencode/agents/implementer.md");
+  await writeFile(managed, "previous-version fixture\n");
+  assert.match(await expectFailure([BOOTSTRAP, "--target", repo]), /managed collisions/);
+  assert.equal(await readFile(managed, "utf8"), "previous-version fixture\n");
+  await runNode([BOOTSTRAP, "--target", repo, "--overwrite-managed"]);
+  assert.equal(
+    await readFile(managed, "utf8"),
+    await readFile(path.join(SOURCE_ROOT, ".opencode/agents/implementer.md"), "utf8"),
+  );
+  for (const [name, content] of Object.entries(preserved))
+    assert.equal(await readFile(path.join(repo, name), "utf8"), content);
+  const validator = path.join(repo, ".opencode/scripts/validate-portable-harness.mjs");
+  assert.match((await runNode([validator, "--root", repo])).stdout, /validation passed/);
+  for (const name of [
+    ["opencode-harness", "design", "md"].join("."),
+    ["opencode-harness", "design.md"].join("-"),
+  ]) {
+    await writeFile(
+      managed,
+      `${await readFile(path.join(SOURCE_ROOT, ".opencode/agents/implementer.md"), "utf8")}\nRead ${name} before working.\n`,
+    );
+    assert.match(await expectFailure([validator, "--root", repo]), /forbidden portable references/);
+  }
+});

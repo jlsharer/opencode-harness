@@ -110,6 +110,7 @@
   "forbiddenReferences": [
     "AGENTS.md",
     "opencode-harness.design.md",
+    "opencode-harness-design.md",
     ".opencode/scripts/validate-harness.mts",
     ".opencode/harness.manifest.json",
     ".agents/",

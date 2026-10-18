@@ -415,7 +415,7 @@ test("prepare creates a deterministic owner-only runtime and reuses it", () => {
   assert.equal(second.stdout.trim(), runtime);
 });
 
-test("prepare accepts only the bounded OpenCode range and separates exact-version caches", () => {
+test("prepare accepts arbitrary releases and separates diagnostic-version caches", () => {
   const cache = path.join(temp, "version-policy-cache");
   const maximum = fake("version-maximum", "1.18.25");
   const accepted = run(["prepare", "--cache-root", cache], { OPENCODE_BIN: maximum.executable });
@@ -426,17 +426,20 @@ test("prepare accepts only the bounded OpenCode range and separates exact-versio
   );
   assert.deepEqual(marker, { packageVersion: "0.1.12", opencodeVersion: "1.18.25" });
 
-  for (const version of ["1.18.17", "1.18.26", "1.18.25-beta.1", "01.18.25"]) {
+  for (const version of [
+    "1.18.17",
+    "1.18.26",
+    "1.18.25-beta.1",
+    "01.18.25",
+    "2.0.0",
+    "development-build",
+  ]) {
     const unsupported = fake(`version-unsupported-${version.replaceAll(".", "-")}`, version);
     const result = run(["prepare", "--cache-root", cache], {
       OPENCODE_BIN: unsupported.executable,
     });
-    assert.notEqual(result.status, 0, version);
-    assert.match(
-      result.stderr,
-      /requires OpenCode 1\.18\.18 through 1\.18\.25|exact stable semantic version/,
-      version,
-    );
+    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.stdout.trim(), accepted.stdout.trim());
   }
 });
 
@@ -519,7 +522,7 @@ test("capabilities is deterministic, closed, offline, and no-write", () => {
     launchContractVersion: "1.0.0",
     routingProfileVersion: "2.0.0",
     supportedModes: ["cloud-only", "local-only", "mixed"],
-    opencode: { minimum: "1.18.18", maximum: "1.18.25" },
+    opencodeVersionGate: false,
   });
   const extra = run(["capabilities", "--cache-root", path.join(temp, "forbidden-cache")], {}, cwd);
   assert.equal(extra.status, 1);
@@ -1030,7 +1033,7 @@ test("generated package metadata accepts seven stock-style node_modules bin link
   ]);
 });
 
-test("generated plugin metadata must match the exact selected OpenCode version", () => {
+test("generated plugin metadata must agree internally without matching the CLI version", () => {
   const fixture = generatedNodeModulesFixture("generated-plugin-version", "1.18.25");
   const accepted = run(["prepare", "--cache-root", fixture.cache], fixture.env);
   assert.equal(accepted.status, 0, accepted.stderr);
@@ -1040,7 +1043,20 @@ test("generated plugin metadata must match the exact selected OpenCode version",
   });
   const mismatch = run(["prepare", "--cache-root", fixture.cache], fixture.env);
   assert.notEqual(mismatch.status, 0);
-  assert.match(mismatch.stderr, /sole exact @opencode-ai\/plugin 1\.18\.25 dependency/);
+  assert.match(mismatch.stderr, /root dependency does not match/);
+  updateJson(path.join(fixture.runtime, "package-lock.json"), (value) => {
+    assert.ok(value.packages);
+    value.packages[""]!.dependencies!["@opencode-ai/plugin"] = "1.18.18";
+    value.packages["node_modules/@opencode-ai/plugin"]!.version = "1.18.18";
+  });
+  updateJson(
+    path.join(fixture.runtime, "node_modules/@opencode-ai/plugin/package.json"),
+    (value) => {
+      value.version = "1.18.18";
+    },
+  );
+  const coherent = run(["prepare", "--cache-root", fixture.cache], fixture.env);
+  assert.equal(coherent.status, 0, coherent.stderr);
 });
 
 test("symlinked node_modules root rejects before package, lock, or external canary metadata is read", () => {
@@ -1234,7 +1250,7 @@ test("generated node_modules bin link and package metadata attacks are all rejec
   assert.equal(canonicalInventory(owner.runtime), ownerBefore);
 });
 
-test("trace roots receive immutable seeds, are idempotent, and reject explicit collisions or unsafe modes", () => {
+test("trace roots seed once, preserve edits on repeat, and reject unsafe modes", () => {
   const workspace = repo("trace-repo");
   const trace = path.join(temp, "explicit-trace");
   const opencode = fake("trace");
@@ -1260,7 +1276,10 @@ test("trace roots receive immutable seeds, are idempotent, and reject explicit c
   }
   assert.equal(run(args, { OPENCODE_BIN: opencode.executable }).status, 0);
   fs.writeFileSync(path.join(trace, "INDEX.md"), "collision\n", { mode: 0o600 });
-  assert.match(run(args, { OPENCODE_BIN: opencode.executable }).stderr, /trace seed collision/);
+  const repeated = run(args, { OPENCODE_BIN: opencode.executable });
+  assert.equal(repeated.status, 0, repeated.stderr);
+  assert.match(repeated.stderr, /preserving existing trace seed/);
+  assert.equal(fs.readFileSync(path.join(trace, "INDEX.md"), "utf8"), "collision\n");
   const unsafe = path.join(temp, "unsafe-trace");
   fs.mkdirSync(unsafe, { mode: 0o755 });
   assert.match(
@@ -1970,7 +1989,7 @@ test("failed child status still removes database companions", () => {
   assert.equal(fs.existsSync(path.dirname(database)), false);
 });
 
-test("executable selection rejects relative identities and version mismatch before launch", () => {
+test("executable selection rejects relative identities but permits older versions", () => {
   const workspace = repo("executable-repo");
   assert.match(
     run(["run", "--workspace", workspace, "--cache-root", path.join(temp, "relative-bin-cache")], {
@@ -1983,8 +2002,8 @@ test("executable selection rejects relative identities and version mismatch befo
     ["run", "--workspace", workspace, "--cache-root", path.join(temp, "mismatch-cache")],
     { OPENCODE_BIN: mismatch.executable },
   );
-  assert.match(result.stderr, /requires OpenCode 1\.18\.18 through 1\.18\.25; found 1\.0\.0/);
-  assert.equal(fs.existsSync(mismatch.capture), false);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(fs.existsSync(mismatch.capture), true);
   const relativeDirectory = path.join(temp, "relative");
   fs.mkdirSync(relativeDirectory);
   fs.writeFileSync(path.join(relativeDirectory, "opencode"), "#!/bin/sh\nexit 0\n", {
@@ -2193,7 +2212,7 @@ test("explicit executable option wins, reports exact selection, and preserves fo
     executable: selected.executable,
     source: "--opencode-bin",
     version: "1.18.18",
-    supported: { minimum: "1.18.18", maximum: "1.18.25" },
+    capabilityVerification: "runtime",
     ephemeral: true,
     resumable: false,
   });
@@ -2231,11 +2250,11 @@ test("explicit executable option wins, reports exact selection, and preserves fo
   assert.equal(fs.existsSync(unsupported.capture), false);
 });
 
-test("doctor enforces bounds and rejects missing, ambiguous, or unsupported explicit selections", () => {
+test("doctor reports arbitrary versions and rejects missing or ambiguous executables", () => {
   for (const version of ["1.18.18", "1.18.25", "1.18.17", "1.18.26", "1.18.34"]) {
     const candidate = fake("doctor-" + version, version);
     const result = run(["doctor", "--opencode-bin", candidate.executable]);
-    assert.equal(result.status === 0, ["1.18.18", "1.18.25"].includes(version), result.stderr);
+    assert.equal(result.status === 0, true, result.stderr);
   }
   for (const args of [
     ["doctor", "--opencode-bin", path.join(temp, "missing-explicit")],
@@ -2250,7 +2269,7 @@ test("doctor enforces bounds and rejects missing, ambiguous, or unsupported expl
   assert.equal(fs.existsSync(path.join(temp, "doctor-must-not-create")), false);
 });
 
-test("environment wrapper selection survives forwarding and PATH never falls back after version rejection", () => {
+test("environment wrapper selection survives forwarding and PATH preserves first executable regardless of version", () => {
   const selected = fake("wrapper-selected");
   const wrapper = path.join(temp, "selection-wrapper.sh");
   fs.writeFileSync(wrapper, '#!/bin/sh\nexec "$HARNESS_TEST_NODE" "$HARNESS_TEST_CLI" "$@"\n', {
@@ -2277,7 +2296,81 @@ test("environment wrapper selection survives forwarding and PATH never falls bac
     mode: 0o700,
   });
   const rejected = run(["doctor"], { OPENCODE_BIN: "", PATH: first + ":" + second });
-  assert.notEqual(rejected.status, 0);
-  assert.match(rejected.stderr, /requires OpenCode/);
+  assert.equal(rejected.status, 0, rejected.stderr);
+  assert.equal(JSON.parse(rejected.stdout).version, "1.18.34");
   assert.match(rejected.stderr, /via PATH/);
+});
+
+test("changed bundled protocol upgrade, repeat and rollback preserve local seeds and evidence", () => {
+  const packageRoot = path.join(temp, "upgrade-package");
+  fs.mkdirSync(packageRoot, { mode: 0o700 });
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(ROOT, ".opencode/runtime.manifest.json"), "utf8"),
+  );
+  for (const relative of [
+    "bin/opencode-harness.mjs",
+    ".opencode/runtime.manifest.json",
+    ...manifest.files.map((entry: { source: string }) => entry.source),
+  ]) {
+    const target = path.join(packageRoot, relative);
+    fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+    fs.copyFileSync(path.join(ROOT, relative), target);
+  }
+  const workspace = repo("upgrade-workspace");
+  const trace = path.join(temp, "upgrade-trace");
+  const opencode = fake("upgrade-native");
+  const launch = (cache: string) =>
+    spawnSync(
+      process.execPath,
+      [
+        path.join(packageRoot, "bin/opencode-harness.mjs"),
+        "run",
+        "--workspace",
+        workspace,
+        "--trace-root",
+        trace,
+        "--cache-root",
+        path.join(temp, cache),
+      ],
+      { encoding: "utf8", env: { ...process.env, OPENCODE_BIN: opencode.executable } },
+    );
+  const first = launch("upgrade-old-cache");
+  assert.equal(first.status, 0, first.stderr);
+  const protocol = path.join(trace, "protocols/memory-management.md");
+  const initial = fs.readFileSync(protocol, "utf8");
+  const seed = path.join(packageRoot, ".opencode/bootstrap/memory/protocols/memory-management.md");
+  fs.writeFileSync(seed, initial + "\nNew bundled protocol revision\n");
+  const evidence = path.join(trace, "evidence.md");
+  fs.writeFileSync(evidence, "existing evidence", { mode: 0o600 });
+  for (const cache of ["upgrade-new-cache", "upgrade-new-cache"]) {
+    const result = launch(cache);
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(fs.readFileSync(protocol, "utf8"), initial);
+  }
+  fs.writeFileSync(protocol, "user-edited protocol\n");
+  assert.equal(launch("upgrade-new-cache").status, 0);
+  fs.writeFileSync(seed, initial);
+  const rollback = launch("upgrade-old-cache");
+  assert.equal(rollback.status, 0, rollback.stderr);
+  assert.equal(fs.readFileSync(protocol, "utf8"), "user-edited protocol\n");
+  assert.equal(fs.readFileSync(evidence, "utf8"), "existing evidence");
+});
+
+test("unavailable version reporting is diagnostic, not a launch compatibility gate", () => {
+  const executable = path.join(temp, "no-version-report");
+  fs.writeFileSync(executable, '#!/bin/sh\nif [ "$1" = "--version" ]; then exit 64; fi\nexit 0\n', {
+    mode: 0o700,
+  });
+  const result = run(["doctor", "--opencode-bin", executable]);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(JSON.parse(result.stdout).version, /^unreported-[a-f0-9]{64}$/);
+  assert.match(result.stderr, /version reporting unavailable/);
+  const prepared = run([
+    "prepare",
+    "--opencode-bin",
+    executable,
+    "--cache-root",
+    path.join(temp, "no-version-cache"),
+  ]);
+  assert.equal(prepared.status, 0, prepared.stderr);
 });

@@ -4,11 +4,7 @@
   "packageVersion": "0.1.12",
   "compatibility": {
     "platform": "linux",
-    "node": ">=24 <25",
-    "opencode": {
-      "minimum": "1.18.18",
-      "maximum": "1.18.25"
-    }
+    "node": ">=24 <25"
   },
   "fileModes": {
     "directories": "0700",
