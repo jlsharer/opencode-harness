@@ -33,6 +33,18 @@
     }
   },
   "managedFiles": [
+    ".opencode/plugin-modules/task-contracts.js",
+    ".opencode/plugin-modules/dispatch-controller.js",
+    ".opencode/plugin-modules/acceptance-proof.js",
+    ".opencode/plugin-modules/context-budget.js",
+    ".opencode/plugin-modules/managed-execution.js",
+    ".opencode/plugin-modules/managed-dispatch.js",
+    ".opencode/plugin-modules/task-contracts.test.mjs",
+    ".opencode/plugin-modules/dispatch-controller.test.mjs",
+    ".opencode/plugin-modules/acceptance-proof.test.mjs",
+    ".opencode/plugin-modules/context-budget.test.mjs",
+    ".opencode/plugin-modules/managed-execution.test.mjs",
+    ".opencode/plugin-modules/managed-dispatch.test.mjs",
     ".opencode/agents/implementer.md",
     ".opencode/agents/planner.md",
     ".opencode/agents/researcher.md",

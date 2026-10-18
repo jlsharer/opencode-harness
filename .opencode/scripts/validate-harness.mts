@@ -197,6 +197,36 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/src/routing/resolve-model-routing.ts",
   ".opencode/src/routing/model-routing-helper.ts",
   ".opencode/plugins/index.js",
+  ".opencode/plugin-modules/task-contracts.js",
+  ".opencode/plugin-modules/dispatch-controller.js",
+  ".opencode/plugin-modules/acceptance-proof.js",
+  ".opencode/plugin-modules/context-budget.js",
+  ".opencode/plugin-modules/managed-execution.js",
+  ".opencode/plugin-modules/managed-dispatch.js",
+  ".opencode/plugin-modules/task-contracts.test.mjs",
+  ".opencode/plugin-modules/dispatch-controller.test.mjs",
+  ".opencode/plugin-modules/acceptance-proof.test.mjs",
+  ".opencode/plugin-modules/context-budget.test.mjs",
+  ".opencode/plugin-modules/managed-execution.test.mjs",
+  ".opencode/plugin-modules/managed-dispatch.test.mjs",
+  ".opencode/src/plugin-modules/task-contracts.ts",
+  ".opencode/src/plugin-modules/dispatch-controller.ts",
+  ".opencode/src/plugin-modules/acceptance-proof.ts",
+  ".opencode/src/plugin-modules/context-budget.ts",
+  ".opencode/src/plugin-modules/managed-execution.ts",
+  ".opencode/src/plugin-modules/managed-dispatch.ts",
+  ".opencode/src/plugin-modules/task-contracts.test.ts",
+  ".opencode/src/plugin-modules/dispatch-controller.test.ts",
+  ".opencode/src/plugin-modules/acceptance-proof.test.ts",
+  ".opencode/src/plugin-modules/context-budget.test.ts",
+  ".opencode/src/plugin-modules/managed-execution.test.ts",
+  ".opencode/src/plugin-modules/managed-dispatch.test.ts",
+  ".opencode/scripts/evaluate-controller.mts",
+  ".opencode/evaluation/paired-tasks.json",
+  ".opencode/scripts/prepare-paired-benchmark.mts",
+  ".opencode/scripts/paired-benchmark.test.mts",
+  ".opencode/evaluation/offline-benchmark.json",
+  "docs/refinement-evaluation.md",
   ".opencode/plugin-modules/harness-lifecycle.js",
   ".opencode/plugin-modules/task-thread-policy.js",
   ".opencode/plugin-modules/task-thread-policy.test.mjs",
@@ -423,6 +453,7 @@ function assertCompleteSourceInventory() {
 
 function assertManifest(manifest: SourceManifest): void {
   const rootOwned = new Set([
+    "docs/refinement-evaluation.md",
     "opencode.json",
     "AGENTS.md",
     "README.md",
@@ -583,15 +614,25 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
       fail(`Only node_modules may be recursive in generated entries: ${entry.path}`);
   }
   const destinations = runtimeManifest.files.map((entry) => entry.destination);
+  for (const module of [
+    "task-contracts.js",
+    "dispatch-controller.js",
+    "acceptance-proof.js",
+    "context-budget.js",
+    "managed-execution.js",
+    "managed-dispatch.js",
+  ])
+    if (!destinations.includes(`plugin-modules/${module}`))
+      fail(`Missing runtime module: ${module}`);
   if (!destinations.includes("schemas/opencode-provider-projection.schema.json"))
     fail("Runtime manifest must include the provider projection schema");
   if (
-    runtimeManifest.files.length !== 36 ||
+    runtimeManifest.files.length !== 42 ||
     !destinations.includes("plugin-modules/task-thread-policy.js") ||
     !destinations.includes("plugin-modules/trace-root-permissions.js")
   )
     fail(
-      "Runtime manifest must contain the exact 36-file external runtime including trace permissions",
+      "Runtime manifest must contain the exact 42-file external runtime including trace permissions",
     );
   const packageManifest = json("package.json");
   if (
@@ -709,9 +750,15 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     devDependencies["typescript-eslint"] !== "8.68.0"
   )
     fail("Package must pin the approved ESLint TypeScript stylistic toolchain");
-  if (packageManifest.files.length !== 27 || new Set(packageManifest.files).size !== 27)
-    fail("Package files selector allowlist must contain exactly 27 unique entries");
+  if (packageManifest.files.length !== 33 || new Set(packageManifest.files).size !== 33)
+    fail("Package files selector allowlist must contain exactly 33 unique entries");
   const selectors = [
+    ".opencode/plugin-modules/task-contracts.js",
+    ".opencode/plugin-modules/dispatch-controller.js",
+    ".opencode/plugin-modules/acceptance-proof.js",
+    ".opencode/plugin-modules/context-budget.js",
+    ".opencode/plugin-modules/managed-execution.js",
+    ".opencode/plugin-modules/managed-dispatch.js",
     "README.md",
     "bin/opencode-harness.mjs",
     ".opencode/runtime.manifest.json",
@@ -772,8 +819,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/runtime.manifest.json",
     ...runtimeManifest.files.map((entry) => entry.source),
   ];
-  if (actual.length !== 40 || new Set(actual).size !== 40)
-    fail(`npm payload must contain exactly 40 unique paths; got ${actual.length}`);
+  if (actual.length !== 46 || new Set(actual).size !== 46)
+    fail(`npm payload must contain exactly 46 unique paths; got ${actual.length}`);
   sameSet(actual, expected, "exact npm payload allowlist");
   const launcher = report.files.find((entry) => entry.path === "bin/opencode-harness.mjs");
   if (!launcher || launcher.mode !== 0o755) fail("npm payload launcher must retain mode 0755");
@@ -1008,8 +1055,8 @@ function assertMemorySeeds() {
   }
   const portableManifest = json(".opencode/portable.manifest.json");
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 43 || mappings.length !== 4)
-    fail("Portable manifest must contain exactly 43 managed files plus four memory seeds");
+  if (portableManifest.managedFiles?.length !== 55 || mappings.length !== 4)
+    fail("Portable manifest must contain exactly 55 managed files plus four memory seeds");
   const expectedTargets = [
     ".memory/INDEX.md",
     ".memory/protocols/memory-management.md",
@@ -1328,6 +1375,7 @@ function assertRecursiveOrchestrationDocs() {
     authorization: "generated",
     routingMetadataStatus: "generated",
     routingMetadata: "user",
+    validationInputs: "user",
   };
   if (
     inputSchema["x-intake"]?.contract !== "normalized-internal" ||
@@ -1413,7 +1461,13 @@ async function assertPluginAdapter() {
     fail("Segmented lifecycle plugin export must remain separate");
   }
   for (const snippet of [
-    'from "./task-thread-policy.js"',
+    'from "./managed-dispatch.js"',
+    "await dispatch.beforeTask(input, args ?? {})",
+    "output.args = dispatch.beforeTool(input, args ?? {})",
+    "dispatch.afterTask(input, output)",
+    "dispatch.afterTool(input, output)",
+    "dispatch.sessionCreated(properties.info)",
+    "dispatch.interrupt",
     "output?.args",
     '"tool.execute.before"',
     '"tool.execute.after"',
@@ -1489,8 +1543,13 @@ async function assertPluginAdapter() {
 
 async function assertTaskThreadPolicy() {
   const policy = read(".opencode/plugin-modules/task-thread-policy.js");
-  if (/\bfrom\s+['"]|\brequire\s*\(/.test(policy))
-    fail("Task-thread policy must remain dependency-free");
+  const policyImports = [...policy.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((match) => match[1]);
+  if (
+    policyImports.length !== 1 ||
+    policyImports[0] !== "./task-contracts.js" ||
+    /\brequire\s*\(|\bimport\s*\(/.test(policy)
+  )
+    fail("Task-thread policy must import only the local typed task contract");
   const policyModule = await import(
     `${pathToFileURL(path.join(ROOT, ".opencode/plugin-modules/task-thread-policy.js")).href}?contract-check=${Date.now()}`
   );
@@ -1553,7 +1612,16 @@ async function assertTaskThreadPolicy() {
     if (!lifecycle.includes(phrase)) fail(`Lifecycle direct-command guard is missing: ${phrase}`);
   const result = spawnSync(
     process.execPath,
-    ["--test", ".opencode/plugin-modules/task-thread-policy.test.mjs"],
+    [
+      "--test",
+      ".opencode/plugin-modules/task-thread-policy.test.mjs",
+      ".opencode/plugin-modules/task-contracts.test.mjs",
+      ".opencode/plugin-modules/dispatch-controller.test.mjs",
+      ".opencode/plugin-modules/acceptance-proof.test.mjs",
+      ".opencode/plugin-modules/context-budget.test.mjs",
+      ".opencode/plugin-modules/managed-execution.test.mjs",
+      ".opencode/plugin-modules/managed-dispatch.test.mjs",
+    ],
     { cwd: ROOT, encoding: "utf8" },
   );
   if (result.status !== 0)

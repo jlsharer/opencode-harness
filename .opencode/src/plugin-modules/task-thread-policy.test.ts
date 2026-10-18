@@ -9,6 +9,24 @@ import {
 } from "./task-thread-policy.ts";
 import type { TaskThreadRole } from "./task-thread-policy.ts";
 
+import type { HarnessDispatchFactory } from "./harness-lifecycle.ts";
+
+// Explicit test-only dependency injection. Production plugin composition never
+// supplies this factory and always uses the managed workflow/proof adapter.
+const standalonePolicyFactory: HarnessDispatchFactory = ({ telemetry }) => {
+  const policy = createTaskThreadPolicy({ telemetry: (event) => telemetry?.({ ...event }) });
+  return {
+    beforeTask: async (input, args) =>
+      policy.beforeTask({ sessionID: input.sessionID, callID: input.callID, args }),
+    beforeTool: (_input, args) => args,
+    afterTool: () => {},
+    afterTask: (input, output) =>
+      policy.afterTask({ callID: input.callID, output: output.output, metadata: output.metadata }),
+    sessionCreated: () => {},
+    interrupt: () => {},
+  };
+};
+
 type Policy = ReturnType<typeof createTaskThreadPolicy>;
 type Packet = Record<string, unknown>;
 type ConsoleMethod = "error" | "log" | "warn" | "info";
@@ -423,26 +441,29 @@ test("lifecycle adapter guards Task and blocks direct role commands", async () =
   const records: unknown[] = [];
   const tuiCalls: string[] = [];
   try {
-    const hooks = await HarnessLifecyclePlugin({
-      client: {
-        app: {
-          log: (record: unknown) => {
-            records.push(record);
-            return Promise.resolve();
+    const hooks = await HarnessLifecyclePlugin(
+      {
+        client: {
+          app: {
+            log: (record: unknown) => {
+              records.push(record);
+              return Promise.resolve();
+            },
           },
-        },
-        tui: {
-          appendPrompt: () => {
-            tuiCalls.push("appendPrompt");
-            throw new Error("TUI must not be called");
-          },
-          showToast: () => {
-            tuiCalls.push("showToast");
-            throw new Error("TUI must not be called");
+          tui: {
+            appendPrompt: () => {
+              tuiCalls.push("appendPrompt");
+              throw new Error("TUI must not be called");
+            },
+            showToast: () => {
+              tuiCalls.push("showToast");
+              throw new Error("TUI must not be called");
+            },
           },
         },
       },
-    });
+      standalonePolicyFactory,
+    );
     await hooks.event({ event: { type: "session.created" } });
     await hooks["tool.execute.before"](
       { tool: "task", sessionID: "parent", callID: "call" },
@@ -532,26 +553,29 @@ test("lifecycle diagnostics contain logger failures without fallback or policy c
   const tuiCalls: string[] = [];
   let logCalls = 0;
   try {
-    const hooks = await HarnessLifecyclePlugin({
-      client: {
-        app: {
-          log: () => {
-            if (++logCalls === 1) throw new Error("logger threw");
-            return Promise.reject(new Error("logger rejected"));
+    const hooks = await HarnessLifecyclePlugin(
+      {
+        client: {
+          app: {
+            log: () => {
+              if (++logCalls === 1) throw new Error("logger threw");
+              return Promise.reject(new Error("logger rejected"));
+            },
           },
-        },
-        tui: {
-          appendPrompt: () => {
-            tuiCalls.push("appendPrompt");
-            throw new Error("TUI must not be called");
-          },
-          showToast: () => {
-            tuiCalls.push("showToast");
-            throw new Error("TUI must not be called");
+          tui: {
+            appendPrompt: () => {
+              tuiCalls.push("appendPrompt");
+              throw new Error("TUI must not be called");
+            },
+            showToast: () => {
+              tuiCalls.push("showToast");
+              throw new Error("TUI must not be called");
+            },
           },
         },
       },
-    });
+      standalonePolicyFactory,
+    );
     await hooks.event({ event: { type: "session.created" } });
     await hooks["tool.execute.before"](
       { tool: "task", sessionID: "parent", callID: "call" },
@@ -580,4 +604,62 @@ test("lifecycle diagnostics contain logger failures without fallback or policy c
   } finally {
     for (const method of methods) console[method] = originals[method];
   }
+});
+
+test("lifecycle forwards managed hook boundaries and relevant session interruption", async () => {
+  const observed: string[] = [];
+  const hooks = await HarnessLifecyclePlugin({}, (options) => ({
+    ...standalonePolicyFactory(options),
+    beforeTask: async () => {
+      observed.push("task-before");
+    },
+    beforeTool: (_input, args) => {
+      observed.push("tool-before");
+      return { ...args, restricted: true };
+    },
+    afterTool: () => {
+      observed.push("tool-after");
+    },
+    afterTask: () => {
+      observed.push("task-after");
+      return { outcome: "rejected" };
+    },
+    sessionCreated: (info) => {
+      observed.push("created:" + String(info.id));
+    },
+    interrupt: (reason) => {
+      observed.push(reason);
+    },
+  }));
+  await hooks["tool.execute.before"](
+    { tool: "task", sessionID: "parent", callID: "call" },
+    { args: freshArgs() },
+  );
+  await hooks.event({
+    event: { type: "session.created", properties: { info: { id: "child", parentID: "parent" } } },
+  });
+  const toolOutput = { args: { command: "safe" } } as { args: Record<string, unknown> };
+  await hooks["tool.execute.before"](
+    { tool: "bash", sessionID: "child", callID: "tool" },
+    toolOutput,
+  );
+  assert.equal(toolOutput.args.restricted, true);
+  await hooks["tool.execute.after"](
+    { tool: "bash", sessionID: "child", callID: "tool" },
+    { metadata: { exit: 0 } },
+  );
+  await hooks["tool.execute.after"]({ tool: "task", sessionID: "parent", callID: "call" }, {});
+  await hooks.event({ event: { type: "session.error", properties: { sessionID: "unrelated" } } });
+  assert.equal(observed.includes("managed session error"), false);
+  await hooks.event({ event: { type: "session.error", properties: { sessionID: "child" } } });
+  await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "parent" } } } });
+  assert.deepEqual(observed, [
+    "task-before",
+    "created:child",
+    "tool-before",
+    "tool-after",
+    "task-after",
+    "managed session error",
+    "managed session deleted",
+  ]);
 });

@@ -1,0 +1,166 @@
+/** Managed worker boundaries. Ordinary edits are scoped; shell is OS-isolated, never regex-filtered. */
+import { execFileSync } from "node:child_process";
+import { lstatSync, realpathSync } from "node:fs";
+import path from "node:path";
+const BWRAP = "/usr/bin/bwrap";
+let sandboxChecked = false;
+const quote = (value) => `'${value.replaceAll("'", "'\\''")}'`;
+function canonicalWorkspace(root) {
+    if (!path.isAbsolute(root) ||
+        root !== path.resolve(root) ||
+        root === path.parse(root).root ||
+        realpathSync(root) !== root)
+        throw new Error("managed workspace must be a canonical non-root directory");
+    let current = path.parse(root).root;
+    for (const component of root.slice(current.length).split(path.sep).filter(Boolean)) {
+        current = path.join(current, component);
+        if (lstatSync(current).isSymbolicLink())
+            throw new Error("symlink ancestry is unsupported");
+    }
+}
+function relativeScope(value) {
+    const directory = value.endsWith("/");
+    const normalized = directory ? value.slice(0, -1) : value;
+    if (!normalized ||
+        path.isAbsolute(normalized) ||
+        normalized.includes("\\") ||
+        normalized.includes("\0") ||
+        normalized.split("/").some((p) => !p || p === "." || p === "..") ||
+        normalized === ".git" ||
+        normalized.startsWith(".git/"))
+        throw new Error("invalid managed edit scope");
+    return { value: normalized, directory };
+}
+function scopedFile(root, value, allowedPaths) {
+    if (typeof value !== "string" ||
+        !value ||
+        value.includes("\0") ||
+        value.includes("\\") ||
+        value.split("/").some((p) => p === "." || p === ".."))
+        throw new Error("managed edit requires a canonical filePath");
+    const absolute = path.isAbsolute(value) ? value : path.join(root, value);
+    const relative = path.relative(root, absolute);
+    if (!relative ||
+        relative.startsWith("../") ||
+        path.isAbsolute(relative) ||
+        relative === ".git" ||
+        relative.startsWith(".git/"))
+        throw new Error("managed edit escapes workspace");
+    const scopes = allowedPaths.map(relativeScope);
+    if (!scopes.some((s) => relative === s.value || (s.directory && relative.startsWith(`${s.value}/`))))
+        throw new Error("managed edit outside allowed scope");
+    let current = root;
+    const pieces = relative.split(path.sep);
+    for (const [index, component] of pieces.entries()) {
+        current = path.join(current, component);
+        try {
+            const stat = lstatSync(current);
+            if (stat.isSymbolicLink())
+                throw new Error("symlink edit paths are unsupported");
+            if (index === pieces.length - 1 ? !stat.isFile() : !stat.isDirectory())
+                throw new Error("managed edit requires regular file ancestry");
+        }
+        catch (error) {
+            if (error.code !== "ENOENT")
+                throw error;
+            // The tool may create missing directories, but no existing ancestry may be a symlink.
+            break;
+        }
+    }
+    return absolute;
+}
+function assertSandboxAvailable() {
+    if (sandboxChecked)
+        return;
+    try {
+        const stat = lstatSync(BWRAP);
+        if (!stat.isFile() ||
+            stat.uid !== 0 ||
+            (stat.mode & 0o022) !== 0 ||
+            realpathSync(BWRAP) !== BWRAP)
+            throw new Error("untrusted bubblewrap executable");
+        execFileSync(BWRAP, [
+            "--unshare-all",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            "--chdir",
+            "/",
+            "/bin/sh",
+            "-c",
+            "true",
+        ], { stdio: "pipe", timeout: 5000 });
+        sandboxChecked = true;
+    }
+    catch {
+        throw new Error("managed shell unavailable: trusted /usr/bin/bwrap with working user namespaces is required; no unrestricted fallback; use separately authorized external verification");
+    }
+}
+export function enforceManagedTool(input) {
+    canonicalWorkspace(input.workspaceRoot);
+    const args = { ...input.args };
+    if (["read", "grep", "glob", "list"].includes(input.tool))
+        return args;
+    if (input.tool === "edit" || input.tool === "write") {
+        if (input.role !== "implementer")
+            throw new Error("managed role cannot edit workspace");
+        args.filePath = scopedFile(input.workspaceRoot, args.filePath, input.allowedPaths);
+        return args;
+    }
+    if (input.tool === "bash") {
+        if (!["implementer", "validator"].includes(input.role))
+            throw new Error("managed role has no shell authorization");
+        if (typeof args.command !== "string" ||
+            !args.command.trim() ||
+            !input.commands.includes(args.command))
+            throw new Error("managed shell command requires exact verification authorization");
+        assertSandboxAvailable();
+        const masks = [];
+        const declared = input.validationInputs ?? [];
+        for (const hidden of input.hiddenPaths ?? []) {
+            const scope = relativeScope(hidden);
+            const absolute = path.join(input.workspaceRoot, scope.value);
+            if (declared.includes(hidden))
+                continue;
+            masks.push(...(scope.directory ? ["--tmpfs", absolute] : ["--ro-bind", "/dev/null", absolute]));
+            if (scope.directory)
+                for (const name of declared.filter((p) => p.startsWith(hidden))) {
+                    const filename = scopedFile(input.workspaceRoot, name, [name]);
+                    const parent = path.dirname(filename);
+                    if (parent !== absolute)
+                        masks.push("--dir", parent);
+                    masks.push("--ro-bind", filename, filename);
+                }
+        }
+        args.command = [
+            BWRAP,
+            "--unshare-all",
+            "--ro-bind",
+            "/",
+            "/",
+            "--dev",
+            "/dev",
+            "--proc",
+            "/proc",
+            "--tmpfs",
+            "/tmp",
+            ...masks,
+            "--chdir",
+            input.workspaceRoot,
+            "/bin/sh",
+            "-c",
+            args.command,
+        ]
+            .map(quote)
+            .join(" ");
+        args.workdir = input.workspaceRoot;
+        return args;
+    }
+    throw new Error(`unsupported managed tool: ${input.tool}; patch, delegation, and unknown mutation surfaces are disabled`);
+}

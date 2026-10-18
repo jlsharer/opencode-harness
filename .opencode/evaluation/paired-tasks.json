@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "description": "Synthetic offline task fixtures. Visible acceptance checks are fixed and must not be modified by benchmark workers.",
+  "tasks": [
+    {
+      "id": "numeric-zero",
+      "category": "bug-fix",
+      "prompt": "Fix total so explicit zero values are not replaced with defaults. Preserve input order and do not mutate inputs.",
+      "files": {
+        "app.mjs": "export const total = values => values.reduce((sum, value) => sum + (value || 10), 0);\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { total } from './app.mjs';\ntest('zero and defaults',()=>{const input=[0,2,undefined];assert.equal(total(input),12);assert.deepEqual(input,[0,2,undefined]);assert.equal(total([]),0);});\n"
+      }
+    },
+    {
+      "id": "multifile-format",
+      "category": "multi-file",
+      "prompt": "Implement cents-to-currency formatting across money.mjs and invoice.mjs. Render USD with exactly two decimals, including zero and negatives.",
+      "files": {
+        "money.mjs": "export const money = cents => String(cents);\n",
+        "invoice.mjs": "import {money} from './money.mjs';\nexport const invoice = cents => money(cents);\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { money } from './money.mjs';\nimport { invoice } from './invoice.mjs';\ntest('formatting contract',()=>{assert.equal(money(125),'1.25');assert.equal(money(-5),'-0.05');assert.equal(invoice(0),'USD 0.00');assert.equal(invoice(1234),'USD 12.34');});\n"
+      }
+    },
+    {
+      "id": "stable-sort",
+      "category": "refactor",
+      "prompt": "Refactor ordered to return ascending numeric values without mutating its input. Preserve duplicate values.",
+      "files": {
+        "app.mjs": "export const ordered = values => values.sort();\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport { ordered } from './app.mjs';\ntest('numeric and immutable',()=>{const values=[10,2,2,1];assert.deepEqual(ordered(values),[1,2,2,10]);assert.deepEqual(values,[10,2,2,1]);assert.deepEqual(ordered([]),[]);});\n"
+      }
+    },
+    {
+      "id": "docs-scope",
+      "category": "documentation",
+      "prompt": "Edit README.md only. Document that startup is ephemeral and cannot resume after interruption; include the exact verification command `node --test acceptance.test.mjs`. Preserve app.mjs byte-for-byte.",
+      "files": {
+        "app.mjs": "export const mode = 'ephemeral';\n",
+        "README.md": "# Example\nRestart behavior is undocumented.\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {readFileSync} from 'node:fs';\ntest('documentation scope',()=>{const text=readFileSync('README.md','utf8');assert.match(text,/ephemeral/i);assert.match(text,/cannot resume/i);assert.match(text,/node --test acceptance\\.test\\.mjs/);assert.equal(readFileSync('app.mjs','utf8'),\"export const mode = 'ephemeral';\\n\");});\n"
+      }
+    },
+    {
+      "id": "evidence-research",
+      "category": "research",
+      "prompt": "Using only supplied sources.json, create answer.json with selected:'local', evidence:['source-a','source-b'], and uncertainty:'quality unmeasured'. Local meets the no-network requirement; source-b cautions that quality is unmeasured. Do not use external research.",
+      "files": {
+        "sources.json": "[{\"id\":\"source-a\",\"claim\":\"local runs offline; remote needs a network\"},{\"id\":\"source-b\",\"claim\":\"No matched quality evaluation has been run\"}]\n",
+        "answer.json": "{}\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {readFileSync} from 'node:fs';\ntest('bounded evidence answer',()=>{const result=JSON.parse(readFileSync('answer.json','utf8'));assert.equal(result.selected,'local');assert.deepEqual(result.evidence,['source-a','source-b']);assert.equal(result.uncertainty,'quality unmeasured');});\n"
+      }
+    },
+    {
+      "id": "cancel-late-result",
+      "category": "policy-simulation",
+      "prompt": "Implement finish(state,result): cancelled state stays cancelled and retains its previous result; running state becomes completed with the result. Return new objects and never mutate inputs. This simulates policy, not process cancellation.",
+      "files": {
+        "app.mjs": "export const finish = (state, result) => ({...state,status:'completed',result});\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {finish} from './app.mjs';\ntest('late results cannot revive cancelled work',()=>{const state={status:'cancelled',result:null};assert.deepEqual(finish(state,'late'),state);assert.deepEqual(state,{status:'cancelled',result:null});assert.deepEqual(finish({status:'running',result:null},'done'),{status:'completed',result:'done'});});\n"
+      }
+    },
+    {
+      "id": "restart-fail-closed",
+      "category": "policy-simulation",
+      "prompt": "Implement recover(snapshot) for an ephemeral runtime. After any restart return {status:'interrupted',authorized:false,replay:false}; never revive earlier approval. This is a policy simulation.",
+      "files": {
+        "app.mjs": "export const recover = snapshot => ({...snapshot,replay:true});\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {recover} from './app.mjs';\ntest('restart revokes old authorization',()=>{for(const status of ['running','clarification','completed'])assert.deepEqual(recover({status,authorized:true}),{status:'interrupted',authorized:false,replay:false});});\n"
+      }
+    },
+    {
+      "id": "duplicate-completion",
+      "category": "idempotency",
+      "prompt": "Implement record(ids,id): return a new array adding id only if absent, preserving input and order. No duplicate completion side effects.",
+      "files": {
+        "app.mjs": "export const record = (ids,id) => [...ids,id];\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {record} from './app.mjs';\ntest('completion records are idempotent',()=>{const ids=['a'];assert.deepEqual(record(ids,'a'),['a']);assert.deepEqual(record(ids,'b'),['a','b']);assert.deepEqual(ids,['a']);assert.deepEqual(record(record([],'x'),'x'),['x']);});\n"
+      }
+    },
+    {
+      "id": "dependency-gate",
+      "category": "scheduling",
+      "prompt": "Implement ready(task,states): true only when every dependency has status 'accepted' and task.gate is true. Missing dependencies fail closed. Empty dependencies with an open gate are ready.",
+      "files": {
+        "app.mjs": "export const ready = (task,states) => task.dependencies.every(id => Boolean(states[id]));\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {ready} from './app.mjs';\ntest('dependencies and gate',()=>{assert.equal(ready({dependencies:['a'],gate:true},{a:'failed'}),false);assert.equal(ready({dependencies:['a'],gate:false},{a:'accepted'}),false);assert.equal(ready({dependencies:['a'],gate:true},{}),false);assert.equal(ready({dependencies:['a'],gate:true},{a:'accepted'}),true);assert.equal(ready({dependencies:[],gate:true},{}),true);});\n"
+      }
+    },
+    {
+      "id": "stale-evidence",
+      "category": "validation",
+      "prompt": "Implement accepted(proof,current): require nonempty matching treeHash and artifactHash, and exitCode exactly zero. Missing or stale evidence fails closed.",
+      "files": {
+        "app.mjs": "export const accepted = (proof,current) => proof.exitCode === 0;\n",
+        "acceptance.test.mjs": "import assert from 'node:assert/strict';\nimport test from 'node:test';\nimport {accepted} from './app.mjs';\ntest('exact evidence binding',()=>{const current={treeHash:'tree',artifactHash:'artifact'};assert.equal(accepted({...current,exitCode:0},current),true);assert.equal(accepted({...current,treeHash:'old',exitCode:0},current),false);assert.equal(accepted({...current,artifactHash:'old',exitCode:0},current),false);assert.equal(accepted({...current,exitCode:1},current),false);assert.equal(accepted({exitCode:0},{}),false);});\n"
+      }
+    }
+  ]
+}

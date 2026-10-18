@@ -68,6 +68,18 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/routing/routing-policy.mjs",
     ".opencode/routing/routing-policy.test.mjs",
     ".opencode/plugins/index.js",
+    ".opencode/plugin-modules/task-contracts.js",
+    ".opencode/plugin-modules/dispatch-controller.js",
+    ".opencode/plugin-modules/acceptance-proof.js",
+    ".opencode/plugin-modules/context-budget.js",
+    ".opencode/plugin-modules/managed-execution.js",
+    ".opencode/plugin-modules/managed-dispatch.js",
+    ".opencode/plugin-modules/task-contracts.test.mjs",
+    ".opencode/plugin-modules/dispatch-controller.test.mjs",
+    ".opencode/plugin-modules/acceptance-proof.test.mjs",
+    ".opencode/plugin-modules/context-budget.test.mjs",
+    ".opencode/plugin-modules/managed-execution.test.mjs",
+    ".opencode/plugin-modules/managed-dispatch.test.mjs",
     ".opencode/plugin-modules/harness-lifecycle.js",
     ".opencode/plugin-modules/task-thread-policy.js",
     ".opencode/plugin-modules/task-thread-policy.test.mjs",
@@ -199,8 +211,8 @@ function validateManifest(manifest) {
         !Array.isArray(manifest.forbiddenReferences))
         fail("manifest inventories must be arrays");
     const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, ".opencode/"));
-    if (managed.length !== 43)
-        fail(`managed inventory must contain exactly 43 files; got ${managed.length}`);
+    if (managed.length !== 55)
+        fail(`managed inventory must contain exactly 55 files; got ${managed.length}`);
     if (new Set(managed).size !== managed.length ||
         !managed.includes(".opencode/portable.manifest.json"))
         fail("managed inventory must be unique and self-containing");
@@ -425,6 +437,7 @@ async function validateTraceAlignment(root) {
         authorization: "generated",
         routingMetadataStatus: "generated",
         routingMetadata: "user",
+        validationInputs: "user",
     };
     if (optionalObject(inputSchemaObject?.["x-intake"])?.contract !== "normalized-internal" ||
         optionalObject(inputSchemaObject?.["x-intake"])?.nestedFieldPolicy !==
@@ -574,8 +587,11 @@ async function validateTaskThreadPolicy(root) {
     const policyPath = ".opencode/plugin-modules/task-thread-policy.js";
     const testPath = ".opencode/plugin-modules/task-thread-policy.test.mjs";
     const policySource = await readFile(await regularFile(root, policyPath), "utf8");
-    if (/\bfrom\s+['"]|\brequire\s*\(/.test(policySource))
-        fail("task-thread policy must remain dependency-free");
+    const policyImports = [...policySource.matchAll(/\bfrom\s+["']([^"']+)["']/g)].map((match) => match[1]);
+    if (policyImports.length !== 1 ||
+        policyImports[0] !== "./task-contracts.js" ||
+        /\brequire\s*\(|\bimport\s*\(/.test(policySource))
+        fail("Task-thread policy must import only the local typed task contract");
     const policyModule = await import(__rewriteRelativeImportExtension(`${pathToFileURL(path.join(root, policyPath)).href}?contract-check=${Date.now()}`));
     const contract = parseJson(await readFile(await regularFile(root, ".opencode/contracts/role-io-contracts.json"), "utf8"));
     const contractRoles = optionalObject(optionalObject(contract)?.roles);
@@ -593,7 +609,13 @@ async function validateTaskThreadPolicy(root) {
     }
     const lifecycle = await readFile(await regularFile(root, ".opencode/plugin-modules/harness-lifecycle.js"), "utf8");
     for (const snippet of [
-        'from "./task-thread-policy.js"',
+        'from "./managed-dispatch.js"',
+        "await dispatch.beforeTask(input, args ?? {})",
+        "output.args = dispatch.beforeTool(input, args ?? {})",
+        "dispatch.afterTask(input, output)",
+        "dispatch.afterTool(input, output)",
+        "dispatch.sessionCreated(properties.info)",
+        "dispatch.interrupt",
         "output?.args",
         '"tool.execute.after"',
         '"command.execute.before"',
@@ -638,7 +660,16 @@ async function validateTaskThreadPolicy(root) {
                 fail(`role command task-thread wording missing from ${file}: ${phrase}`);
     }
     await regularFile(root, testPath);
-    const result = spawnSync(process.execPath, [testPath], { cwd: root, encoding: "utf8" });
+    const result = spawnSync(process.execPath, [
+        "--test",
+        testPath,
+        ".opencode/plugin-modules/task-contracts.test.mjs",
+        ".opencode/plugin-modules/dispatch-controller.test.mjs",
+        ".opencode/plugin-modules/acceptance-proof.test.mjs",
+        ".opencode/plugin-modules/context-budget.test.mjs",
+        ".opencode/plugin-modules/managed-execution.test.mjs",
+        ".opencode/plugin-modules/managed-dispatch.test.mjs",
+    ], { cwd: root, encoding: "utf8" });
     if (result.status !== 0)
         fail(`task-thread policy tests failed: ${(result.stderr || result.stdout).trim()}`);
 }

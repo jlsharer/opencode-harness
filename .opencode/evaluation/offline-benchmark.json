@@ -1,0 +1,89 @@
+{
+  "schemaVersion": 1,
+  "description": "Paired benchmark plan plus offline context-policy probes. These probes do not execute the proposed task or measure model quality.",
+  "proposedRepeats": 3,
+  "liveRunsExecuted": false,
+  "arms": [
+    "thin OpenCode execution",
+    "refined controller with same OpenCode worker"
+  ],
+  "controls": [
+    "same starting tree and model",
+    "same permissions and task prompt",
+    "independent acceptance commands",
+    "capture exact tree and artifact hashes",
+    "randomize paired arm order"
+  ],
+  "measurements": [
+    "acceptance rate",
+    "regressions",
+    "human interventions",
+    "elapsed milliseconds",
+    "reported input/output tokens or null",
+    "reported cost USD or null",
+    "duplicate effects",
+    "recovery correctness"
+  ],
+  "tasks": [
+    {
+      "id": "small-fix",
+      "prompt": "Repair an off-by-one pagination bug without changing public signatures.",
+      "probe": "valid-reference",
+      "acceptance": "Targeted boundary tests pass; unrelated files unchanged."
+    },
+    {
+      "id": "multi-file",
+      "prompt": "Add one request field through parser, handler and response serialization.",
+      "probe": "unknown-reference",
+      "acceptance": "Schema and round-trip tests pass; all changed paths are in scope."
+    },
+    {
+      "id": "research-plan",
+      "prompt": "Compare two existing cache implementations using repository evidence.",
+      "probe": "stale-reference",
+      "acceptance": "Every conclusion cites a current indexed source; uncertainty is explicit."
+    },
+    {
+      "id": "ambiguous-input",
+      "prompt": "Resolve an unclear time-zone requirement before implementation.",
+      "probe": "duplicate-reference",
+      "acceptance": "Request clarification; do not modify production code before the answer."
+    },
+    {
+      "id": "integration",
+      "prompt": "Integrate two prevalidated nonoverlapping changes and rerun combined checks.",
+      "probe": "aggregate-budget",
+      "acceptance": "Combined tree is tested and validation hashes match the integrated result."
+    },
+    {
+      "id": "failed-worker",
+      "prompt": "Recover from a deterministic worker launch error without duplicate mutation.",
+      "probe": "oversized-reference",
+      "acceptance": "Capacity is released; attempt budget consumed once; retry gets a fresh identity."
+    },
+    {
+      "id": "cancelled-worker",
+      "prompt": "Cancel a running task and receive a late result.",
+      "probe": "traversal-reference",
+      "acceptance": "Late result cannot accept work or restore a cancelled task."
+    },
+    {
+      "id": "stale-validation",
+      "prompt": "Reject validator evidence after a target file changes.",
+      "probe": "symlink-reference",
+      "acceptance": "Changed artifact invalidates acceptance; a fresh independent validation is required."
+    },
+    {
+      "id": "scope-violation",
+      "prompt": "Detect an implementation that changes an unrelated file.",
+      "probe": "reported-usage",
+      "acceptance": "Out-of-scope change blocks acceptance; supplied native usage remains exact."
+    },
+    {
+      "id": "unknown-cost",
+      "prompt": "Complete a valid local fixture without provider usage metadata.",
+      "probe": "unknown-usage",
+      "acceptance": "Report tokens and cost as unknown, never infer them from characters."
+    }
+  ]
+}

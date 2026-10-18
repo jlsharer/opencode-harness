@@ -27,14 +27,41 @@ node bin/opencode-harness.mjs run --workspace /ABSOLUTE/GIT/WORKSPACE -- \
 Launcher grammar:
 
 ```text
-opencode-harness prepare [--cache-root ABS]
+opencode-harness prepare [--opencode-bin ABS] [--cache-root ABS]
 opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]
 opencode-harness capabilities
-opencode-harness run [--workspace ABS] [--trace-root ABS] [--cache-root ABS]
+opencode-harness doctor [--opencode-bin ABS]
+opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]
   [--provider-config FILE]
   [--routing-catalog FILE --routing-profile FILE]
   [--allow-project-plugins] [-- OPENCODE_ARGS...]
 ```
+
+Select the executable per invocation when multiple versions are installed. Selection
+order is `--opencode-bin ABS`, then nonempty `OPENCODE_BIN`, then the first
+executable `opencode` on inherited PATH. The selected executable must pass all
+existing trust and version checks. An unsupported first PATH candidate fails;
+the launcher never silently tries a later installation.
+
+```sh
+node bin/opencode-harness.mjs doctor --opencode-bin /ABSOLUTE/SUPPORTED/opencode
+node bin/opencode-harness.mjs prepare --opencode-bin /ABSOLUTE/SUPPORTED/opencode
+node bin/opencode-harness.mjs run --opencode-bin /ABSOLUTE/SUPPORTED/opencode --workspace /ABSOLUTE/GIT/WORKSPACE
+```
+
+`doctor` validates the executable and invokes only `--version`; it creates no
+runtime/cache and makes no provider call. Its JSON reports the selected path,
+selection source, exact version, supported bounds, and ephemeral/non-resumable
+session policy. Prepare/run report selection to stderr while preserving stdout.
+It is a version/trust check, not proof of plugin activation or provider health.
+
+Offline native routing checks have passed with OpenCode 1.18.18 and 1.18.34.
+These checks do not guarantee every native capability.
+Recheck with `doctor` after upgrades. No shell startup or global PATH change is
+required. For an existing environment-preserving wrapper, use an invocation-local
+override, for example `OPENCODE_BIN=/ABSOLUTE/SUPPORTED/opencode opencode-local launch`.
+External wrappers may have their own argument grammar: do not assume they accept
+the launcher's new flag or edit external infrastructure to add it.
 
 Tokens after `--` are unchanged OpenCode arguments. With none, the TUI opens in
 the enclosing trusted Git worktree; an explicit `--workspace` must still be the
@@ -349,3 +376,12 @@ git diff --check
 
 Fixture success does not prove live provider activation, endpoint health, model
 identity, authentication, capacity, routing quality, or recovery behavior.
+
+
+## Refined managed execution
+
+Managed delegation requires a trace-root `orchestrations/<id>/normalized-spec.json`; arbitrary Task prompts are rejected. The runtime is ephemeral and cannot resume interrupted work. The adapter serializes tasks, enforces declared attempt budgets, and binds independent validator acceptance to the exact resulting tree and artifact hashes. Use fresh workflows for post-acceptance changes.
+
+Read-only shell verification uses an already installed `/usr/bin/bwrap` with working user namespaces. It never falls back to an unrestricted shell or installs dependencies. Write-producing verification, parallel writers, workspaces beneath `/tmp`, and missing native child/exit metadata are explicit unsupported cases. Scope checks are not a general sandbox. See `.memory/protocols/memory-management.md` for the structured result protocol.
+
+Offline evaluation: `node .opencode/scripts/evaluate-controller.mts`. The deterministic thin fixture transport is not a live OpenCode baseline. Live paired model runs and V2 migration remain unexecuted and separate.

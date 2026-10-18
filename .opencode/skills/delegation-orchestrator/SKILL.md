@@ -43,7 +43,7 @@ Every leaf packet must name exactly one `taskMode`, one work-unit ID/scope key, 
 4. Resolve routing before each dispatch using the runtime resolver and include the decision as packet context only when the role contract permits it. Routing remains subject to the documented provider boundary.
 5. Use one fresh child thread per scoped task. The exact Task envelope and clarification grammar are normative in `.memory/protocols/memory-management.md`. Fresh tasks omit `task_id`; the only reuse is an authorized matching clarification response.
 6. Require each packet to match `.opencode/contracts/role-io-contracts.json` exactly, including explicit `taskMode`, `orchestrationId`, `delegationTaskId`, `scopeKey`, `dispatchKind: fresh`, and `routingMetadataStatus`.
-7. Default to one remediation cycle per scoped work unit. Each remediation is a fresh task charged to that work unit's declared loop budget. When exhausted, stop and report the blocker or follow the explicit scope-expansion policy; do not create an endless loop.
+7. Default to one remediation cycle per scoped work unit. Each remediation cycle uses fresh tasks and consumes one work-unit loop allowance; implementation and its revalidation share that cycle, while every agent call consumes an attempt. When exhausted, stop and report the blocker or follow the explicit scope-expansion policy; do not create an endless loop.
 8. Enforce the declared total and per-role agent budgets. Do not spawn extra agents to compensate for unresolved intent or weak evidence.
 9. Scope expansion requires the normalized specification's policy and any required user approval. Live providers, user-global mutation, commit, amend, push, publication, or other Git mutation require matching explicit authorization.
 10. Synthesize returned evidence only after checking packet outputs and trace links. Progress artifacts and lifecycle telemetry never independently block or prove acceptance.
@@ -68,3 +68,10 @@ Every leaf packet must name exactly one `taskMode`, one work-unit ID/scope key, 
 - `references/validation-checklist.md`
 - `references/trust-and-restart-guide.md`
 - `references/llama-cpp-integration-guide.md`
+
+
+## Runtime enforcement and recovery
+
+Before Task dispatch, write the normalized specification to the selected trace root's `orchestrations/<orchestrationId>/normalized-spec.json`. It is immutable after registration. Use the exact work-unit ID as `scopeKey`; order each work unit's role/mode mapping as intended execution order. Dependencies and assigned gates must be ready. The native adapter is serial, with a five-minute task deadline and no parallel writers. Follow the enforced ephemeral dispatch and structured-result protocol in the immutable memory-management source. Any interruption is non-resumable; do not retry uncertain side effects or restore clarification authorization.
+
+Give leaves the full structured JSON result shape and artifact-proof convention. Check exact tree-bound validator command evidence; unstructured outputs are failed tasks. Managed shell uses existing bubblewrap read-only isolation and has no unrestricted fallback. Unsupported write-producing verification is an explicit blocker, not an implicit permission to bypass the controller. Context expansion uses only an explicitly hashed index, and usage stays unknown unless native measurements exist.

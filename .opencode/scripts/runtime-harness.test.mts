@@ -149,7 +149,12 @@ function parseCaptured(filename: string): CapturedFixture {
 }
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const CLI = path.join(ROOT, "bin/opencode-harness.mjs");
+const CLI = path.join(
+  ROOT,
+  process.env.HARNESS_TEST_SOURCE_CLI === "1"
+    ? "bin/opencode-harness.ts"
+    : "bin/opencode-harness.mjs",
+);
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), "opencode-harness-runtime-"));
 const defaultOpenCode = path.join(temp, "default-opencode");
 fs.writeFileSync(
@@ -489,7 +494,7 @@ test("help is available from arbitrary working directories", () => {
     result.stdout,
     /validate-inputs \[--provider-config FILE\] \[--routing-catalog FILE --routing-profile FILE\]/,
   );
-  assert.match(result.stdout, /run \[--workspace ABS\]/);
+  assert.match(result.stdout, /run \[--opencode-bin ABS\] \[--workspace ABS\]/);
 });
 
 test("capabilities is deterministic, closed, offline, and no-write", () => {
@@ -2175,4 +2180,104 @@ test("PATH and explicit executable selection enforce trusted ownership, modes, a
     }).stderr,
     /trusted non-writable|allowed-owner/,
   );
+});
+
+test("explicit executable option wins, reports exact selection, and preserves forwarding", () => {
+  const selected = fake("cli-selected", "1.18.18");
+  const unsupported = fake("cli-ambient", "1.18.34");
+  const diagnosed = run(["doctor", "--opencode-bin", selected.executable], {
+    OPENCODE_BIN: unsupported.executable,
+  });
+  assert.equal(diagnosed.status, 0, diagnosed.stderr);
+  assert.deepEqual(JSON.parse(diagnosed.stdout), {
+    executable: selected.executable,
+    source: "--opencode-bin",
+    version: "1.18.18",
+    supported: { minimum: "1.18.18", maximum: "1.18.25" },
+    ephemeral: true,
+    resumable: false,
+  });
+  assert.equal(fs.existsSync(selected.capture), false, "doctor only probes version");
+  const prepared = run(
+    [
+      "prepare",
+      "--opencode-bin",
+      selected.executable,
+      "--cache-root",
+      path.join(temp, "cli-selection-prepare"),
+    ],
+    { OPENCODE_BIN: unsupported.executable },
+  );
+  assert.equal(prepared.status, 0, prepared.stderr);
+  assert.ok(fs.existsSync(prepared.stdout.trim()));
+  const workspace = repo("cli-selection-workspace");
+  const result = run(
+    [
+      "run",
+      "--opencode-bin",
+      selected.executable,
+      "--workspace",
+      workspace,
+      "--cache-root",
+      path.join(temp, "cli-selection-cache"),
+      "--",
+      "models",
+      "test-provider",
+    ],
+    { OPENCODE_BIN: unsupported.executable },
+  );
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(parseCaptured(selected.capture).argv, ["models", "test-provider"]);
+  assert.equal(fs.existsSync(unsupported.capture), false);
+});
+
+test("doctor enforces bounds and rejects missing, ambiguous, or unsupported explicit selections", () => {
+  for (const version of ["1.18.18", "1.18.25", "1.18.17", "1.18.26", "1.18.34"]) {
+    const candidate = fake("doctor-" + version, version);
+    const result = run(["doctor", "--opencode-bin", candidate.executable]);
+    assert.equal(result.status === 0, ["1.18.18", "1.18.25"].includes(version), result.stderr);
+  }
+  for (const args of [
+    ["doctor", "--opencode-bin", path.join(temp, "missing-explicit")],
+    ["doctor", "--opencode-bin", "./relative"],
+    ["doctor", "--opencode-bin", ""],
+    ["doctor", "--opencode-bin"],
+    ["doctor", "--opencode-bin", "--cache-root"],
+    ["doctor", "--opencode-bin", defaultOpenCode, "--opencode-bin", defaultOpenCode],
+    ["doctor", "--cache-root", path.join(temp, "doctor-must-not-create")],
+  ])
+    assert.notEqual(run(args).status, 0, args.join(" "));
+  assert.equal(fs.existsSync(path.join(temp, "doctor-must-not-create")), false);
+});
+
+test("environment wrapper selection survives forwarding and PATH never falls back after version rejection", () => {
+  const selected = fake("wrapper-selected");
+  const wrapper = path.join(temp, "selection-wrapper.sh");
+  fs.writeFileSync(wrapper, '#!/bin/sh\nexec "$HARNESS_TEST_NODE" "$HARNESS_TEST_CLI" "$@"\n', {
+    mode: 0o700,
+  });
+  const result = spawnSync(wrapper, ["doctor"], {
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HARNESS_TEST_NODE: process.execPath,
+      HARNESS_TEST_CLI: CLI,
+      OPENCODE_BIN: selected.executable,
+    },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).source, "OPENCODE_BIN");
+  const first = path.join(temp, "path-first");
+  const second = path.join(temp, "path-second");
+  for (const directory of [first, second]) fs.mkdirSync(directory, { mode: 0o700 });
+  fs.writeFileSync(path.join(first, "opencode"), '#!/bin/sh\nprintf "1.18.34\\n"\n', {
+    mode: 0o700,
+  });
+  fs.writeFileSync(path.join(second, "opencode"), '#!/bin/sh\nprintf "1.18.18\\n"\n', {
+    mode: 0o700,
+  });
+  const rejected = run(["doctor"], { OPENCODE_BIN: "", PATH: first + ":" + second });
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /requires OpenCode/);
+  assert.match(rejected.stderr, /via PATH/);
 });

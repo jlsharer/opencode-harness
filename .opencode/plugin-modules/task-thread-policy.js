@@ -1,3 +1,4 @@
+import { validateTaskPacket, validateTaskResult } from "./task-contracts.js";
 const ENVELOPE_START = "<<<HARNESS_TASK_THREAD_POLICY_V1>>>";
 const ENVELOPE_END = "<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>";
 const ROLES = ["researcher", "planner", "implementer", "validator"];
@@ -206,6 +207,7 @@ function parseEnvelope(value, expectedKind) {
         if (typeof packet.routingMetadataStatus !== "string" ||
             !["present", "absent"].includes(packet.routingMetadataStatus))
             throw policyError("invalid routingMetadataStatus");
+        validateTaskPacket(envelope.role, packet);
         return { kind: "fresh", version: 1, role: envelope.role, packet };
     }
     else {
@@ -278,7 +280,7 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
         task.seenNonceDigests.clear();
         tasksByChildId.delete(childId);
     };
-    function beforeTask({ sessionID, callID, args }) {
+    function beforeTask({ sessionID, callID, args }, validateOnly = false) {
         const parentId = sanitizedIdentifier(boundedString(sessionID, "parent session ID", LIMITS.id));
         const callKey = sanitizedIdentifier(boundedString(callID, "call ID", LIMITS.id));
         if (!isRecord(args))
@@ -298,9 +300,18 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
                 throw policyError("delegationTaskId must identify exactly one fresh child task");
             if (delegationTaskIds.size >= cap.delegationIds || tasksByChildId.size >= cap.tasks)
                 throw policyError("task policy state capacity reached");
+            if (validateOnly)
+                return;
             delegationTaskIds.add(delegationKey);
             callsByCallId.set(callKey, {
                 kind: "fresh",
+                context: {
+                    orchestrationId: packet.orchestrationId,
+                    delegationTaskId: packet.delegationTaskId,
+                    scopeKey: packet.scopeKey,
+                    role: envelope.role,
+                    taskMode: packet.taskMode,
+                },
                 sessionID: parentId,
                 delegationTaskId: delegationKey,
                 scopeKey,
@@ -321,6 +332,8 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
             task.requestNonceDigest !== nonceDigest ||
             args.subagent_type !== task.role)
             throw policyError("clarification response does not match the recorded task");
+        if (validateOnly)
+            return;
         task.state = "continuation-in-flight";
         task.requestNonceDigest = null;
         callsByCallId.set(callKey, { kind: "clarification-response", childId, task });
@@ -345,13 +358,14 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
                 delegationTaskId: call.kind === "fresh" ? call.delegationTaskId : call.task.delegationTaskId,
                 reason: error ? "execution-error" : "missing-or-mismatched-child-metadata",
             });
-            return;
+            return { outcome: "rejected" };
         }
         let task = call.kind === "clarification-response" ? call.task : undefined;
         if (call.kind === "fresh") {
             if (tasksByChildId.has(childId))
                 throw policyError("child session ID was already recorded");
             task = {
+                context: call.context,
                 parentSessionID: call.sessionID,
                 delegationTaskId: call.delegationTaskId,
                 scopeKey: call.scopeKey,
@@ -366,7 +380,31 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
         if (!task)
             throw policyError("uncorrelatable Task completion");
         try {
-            const request = parseEnvelope(parseTaskResult(output, childId), "clarification-request");
+            const body = parseTaskResult(output, childId);
+            let validated;
+            let request;
+            if (body.startsWith(ENVELOPE_START)) {
+                request = parseEnvelope(body, "clarification-request");
+            }
+            else {
+                validated = validateTaskResult(body, task.context);
+                if (validated.outcome !== "clarification") {
+                    removeTask(childId, task);
+                    notice("terminal", {
+                        delegationTaskId: task.delegationTaskId,
+                        scopeKey: task.scopeKey,
+                        reason: validated.outcome,
+                    });
+                    return { outcome: validated.outcome, result: validated };
+                }
+                request = {
+                    kind: "clarification-request",
+                    version: 1,
+                    delegationTaskId: validated.delegationTaskId,
+                    requestNonce: validated.requestNonce,
+                    question: validated.question,
+                };
+            }
             const nonceDigest = digest(request.requestNonce);
             if (sanitizedIdentifier(request.delegationTaskId) !== task.delegationTaskId)
                 throw policyError("clarification request does not match the recorded task");
@@ -381,6 +419,7 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
                 delegationTaskId: task.delegationTaskId,
                 scopeKey: task.scopeKey,
             });
+            return { outcome: "clarification", result: validated };
         }
         catch {
             removeTask(childId, task);
@@ -389,6 +428,7 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
                 scopeKey: task.scopeKey,
                 reason: "ordinary-or-invalid-result",
             });
+            return { outcome: "rejected" };
         }
     }
     const stateSnapshot = () => Object.freeze({
@@ -396,5 +436,10 @@ export function createTaskThreadPolicy({ telemetry = () => { }, limits = {}, } =
         tasks: tasksByChildId.size,
         delegationIds: delegationTaskIds.size,
     });
-    return { beforeTask, afterTask, stateSnapshot };
+    return {
+        beforeTask,
+        validateBeforeTask: (input) => beforeTask(input, true),
+        afterTask,
+        stateSnapshot,
+    };
 }

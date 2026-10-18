@@ -310,3 +310,10 @@ Required validation includes:
 - Which concrete provider/model IDs should be configured for a given installation.
 - Whether local model preference is selected by explicit user metadata, orchestrator policy, or future runtime UI.
 - Whether release packaging should compute and store content hashes in the manifest as a separate validation step.
+
+
+## October 2026 local refinement
+
+The implemented refinement retains V1, four roles, and ephemeral operation. `dispatch-controller` validates the normalized workflow and owns atomic serial/capacity, dependency/gate, per-role/total attempt, remediation and deadline enforcement. `managed-dispatch` binds parent/child sessions, typed Task envelopes and results, immutable specs, scoped tool use and tree/artifact acceptance evidence. No persistent store, restart recovery, new roles, V2 adapter or framework is introduced.
+
+`acceptance-proof` is a post-diff and evidence guard, not a sandbox. `managed-execution` uses existing trusted bubblewrap for read-only shell verification; unsupported shell paths fail closed. Commands requiring workspace writes are explicitly excluded from this managed surface. Interrupted/uncertain work cannot be replayed. The temporary database lifecycle is unchanged. See the memory protocol for exact inputs, artifact hashes, limits and unsupported cases, and `docs/refinement-evaluation.md` for the distinction between deterministic offline policy tests and unexecuted matched model evaluation.

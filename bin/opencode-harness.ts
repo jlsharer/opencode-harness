@@ -120,6 +120,7 @@ function assertRuntimeManifestShape(
 
 interface LauncherOptions {
   forward: string[];
+  opencodeBin?: string;
   allowProjectPlugins?: boolean;
   workspace?: string;
   traceRoot?: string;
@@ -980,7 +981,7 @@ export function prepareRuntime(
   assertNodeCompatibility(value);
   let selection = null;
   if (selectedVersion === null) {
-    selection = resolveCompatibleExecutable(value);
+    selection = resolveCompatibleExecutable(value, options.opencodeBin);
     selectedVersion = selection.version;
   } else assertOpenCodeCompatibility(value, selectedVersion);
   const sources = loadManagedSources(value);
@@ -2127,11 +2128,14 @@ function probeTracePermissions(
     fail("project config/plugin/skill surface changed after trace permission activation probe");
 }
 
-function resolveExecutable(): ExecutableSelection {
-  let candidate = process.env.OPENCODE_BIN;
+function resolveExecutable(explicit?: string): ExecutableSelection {
+  const source =
+    explicit !== undefined ? "--opencode-bin" : process.env.OPENCODE_BIN ? "OPENCODE_BIN" : "PATH";
+  if (explicit === "") fail("--opencode-bin must be a nonempty absolute path");
+  let candidate = explicit ?? process.env.OPENCODE_BIN;
   if (candidate) {
-    if (!path.isAbsolute(candidate)) fail("OPENCODE_BIN must be absolute");
-    assertCanonicalAbsolute(candidate, "OPENCODE_BIN");
+    if (!path.isAbsolute(candidate)) fail(`${source} must be absolute`);
+    assertCanonicalAbsolute(candidate, source);
   } else {
     const entries = (process.env.PATH ?? "").split(path.delimiter);
     if (entries.length === 0) fail("PATH must contain an executable search path");
@@ -2150,7 +2154,14 @@ function resolveExecutable(): ExecutableSelection {
     }
     if (!candidate) fail("opencode executable not found on absolute PATH");
   }
-  const executable = fs.realpathSync(candidate);
+  let executable: string;
+  try {
+    executable = fs.realpathSync(candidate);
+  } catch {
+    fail(
+      `selected OpenCode executable from ${source} is missing or inaccessible: ${singleLine(candidate)}`,
+    );
+  }
   trustedDirectoryPath(path.dirname(executable), "OpenCode executable ancestry");
   const stat = fs.lstatSync(executable, { bigint: true });
   if (
@@ -2167,6 +2178,7 @@ function resolveExecutable(): ExecutableSelection {
   });
   return {
     executable,
+    source,
     identity: {
       dev: opened.stat.dev,
       ino: opened.stat.ino,
@@ -2179,20 +2191,26 @@ function resolveExecutable(): ExecutableSelection {
 
 interface ExecutableSelection {
   executable: string;
+  source: string;
   identity: ExecutableIdentity;
 }
 
 function resolveCompatibleExecutable(
   value: RuntimeManifest,
+  explicit?: string,
 ): ExecutableSelection & { version: string } {
-  const selection = resolveExecutable();
+  const selection = resolveExecutable(explicit);
   const result = spawnSync(selection.executable, ["--version"], {
     encoding: "utf8",
     env: process.env,
   });
   if (result.error) fail(`cannot probe OpenCode version: ${result.error.message}`);
   if (result.status !== 0) fail(`OpenCode version probe failed with status ${result.status}`);
-  const version = assertOpenCodeCompatibility(value, result.stdout.trim());
+  const reported = result.stdout.trim();
+  process.stderr.write(
+    `opencode-harness: selected OpenCode ${JSON.stringify(selection.executable)} via ${selection.source}; reported version ${JSON.stringify(singleLine(reported).slice(0, 128))}\n`,
+  );
+  const version = assertOpenCodeCompatibility(value, reported);
   recheckExecutable(selection.executable, selection.identity, "version probe");
   return { ...selection, version };
 }
@@ -2248,9 +2266,16 @@ function parse(argv: string[]): ParsedArguments {
       string,
       keyof Pick<
         LauncherOptions,
-        "workspace" | "traceRoot" | "cacheRoot" | "providerConfig" | "catalog" | "profile"
+        | "workspace"
+        | "traceRoot"
+        | "cacheRoot"
+        | "providerConfig"
+        | "catalog"
+        | "profile"
+        | "opencodeBin"
       >
     >([
+      ["--opencode-bin", "opencodeBin"],
       ["--workspace", "workspace"],
       ["--trace-root", "traceRoot"],
       ["--cache-root", "cacheRoot"],
@@ -2258,9 +2283,16 @@ function parse(argv: string[]): ParsedArguments {
       ["--routing-catalog", "catalog"],
       ["--routing-profile", "profile"],
     ]).get(token);
-    if (!key || argv.length === 0) fail(`unknown or incomplete option: ${token}`);
+    if (!key || argv.length === 0 || argv[0]!.startsWith("--") || options[key] !== undefined)
+      fail(`unknown, duplicate, or incomplete option: ${token}`);
     options[key] = argv.shift()!;
   }
+  if (
+    command === "doctor" &&
+    (options.forward.length ||
+      Object.keys(options).some((key) => !["forward", "opencodeBin"].includes(key)))
+  )
+    fail("doctor accepts only --opencode-bin ABS");
   return { command, options };
 }
 
@@ -2268,9 +2300,10 @@ function usage(): string {
   return [
     "Usage:",
     "  opencode-harness capabilities",
-    "  opencode-harness prepare [--cache-root ABS]",
+    "  opencode-harness doctor [--opencode-bin ABS]",
+    "  opencode-harness prepare [--opencode-bin ABS] [--cache-root ABS]",
     "  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
-    "  opencode-harness run [--workspace ABS] [--trace-root ABS] [--cache-root ABS]",
+    "  opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]",
     "    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "    [--allow-project-plugins] [-- OPENCODE_ARGS...]",
     "",
@@ -2301,6 +2334,9 @@ function validateInputs(options: LauncherOptions): string {
 }
 
 function run(options: LauncherOptions): number {
+  process.stderr.write(
+    "opencode-harness: ephemeral execution; interrupted runs cannot resume; launch database is removed after exit.\n",
+  );
   for (const name of RESERVED_ENV)
     if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
   for (const arg of options.forward)
@@ -2323,7 +2359,7 @@ function run(options: LauncherOptions): number {
   const { inputs } = validateExternalInputs(options);
   const value = manifest();
   assertNodeCompatibility(value);
-  const { executable, identity, version } = resolveCompatibleExecutable(value);
+  const { executable, identity, version } = resolveCompatibleExecutable(value, options.opencodeBin);
   const runtimeRoot = prepareRuntime(options, version);
   const traceRoot = chooseTraceRoot(workspace, options.traceRoot, runtimeRoot);
   const rootPairs: readonly (readonly [string, string, string])[] = [
@@ -2394,7 +2430,14 @@ try {
     process.stdout.write(usage());
     process.exitCode = 0;
   } else if (command === "capabilities") process.stdout.write(`${capabilities()}\n`);
-  else if (command === "prepare") process.stdout.write(`${prepareRuntime(options)}\n`);
+  else if (command === "doctor") {
+    const value = manifest();
+    assertNodeCompatibility(value);
+    const selected = resolveCompatibleExecutable(value, options.opencodeBin);
+    process.stdout.write(
+      `${JSON.stringify({ executable: selected.executable, source: selected.source, version: selected.version, supported: value.compatibility.opencode, ephemeral: true, resumable: false })}\n`,
+    );
+  } else if (command === "prepare") process.stdout.write(`${prepareRuntime(options)}\n`);
   else if (command === "validate-inputs") process.stdout.write(`${validateInputs(options)}\n`);
   else if (command === "run") process.exitCode = run(options);
   else fail(`unknown command: ${command}`);

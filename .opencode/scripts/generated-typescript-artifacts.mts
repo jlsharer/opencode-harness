@@ -7,6 +7,66 @@ export type GeneratedArtifact = Readonly<{
 
 export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
   {
+    source: ".opencode/src/plugin-modules/task-contracts.js",
+    output: ".opencode/plugin-modules/task-contracts.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/task-contracts.test.js",
+    output: ".opencode/plugin-modules/task-contracts.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/dispatch-controller.js",
+    output: ".opencode/plugin-modules/dispatch-controller.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/dispatch-controller.test.js",
+    output: ".opencode/plugin-modules/dispatch-controller.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/acceptance-proof.js",
+    output: ".opencode/plugin-modules/acceptance-proof.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/acceptance-proof.test.js",
+    output: ".opencode/plugin-modules/acceptance-proof.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/context-budget.js",
+    output: ".opencode/plugin-modules/context-budget.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/context-budget.test.js",
+    output: ".opencode/plugin-modules/context-budget.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/managed-execution.js",
+    output: ".opencode/plugin-modules/managed-execution.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/managed-execution.test.js",
+    output: ".opencode/plugin-modules/managed-execution.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/managed-dispatch.js",
+    output: ".opencode/plugin-modules/managed-dispatch.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/managed-dispatch.test.js",
+    output: ".opencode/plugin-modules/managed-dispatch.test.mjs",
+    mode: 0o644,
+  },
+  {
     source: "bin/opencode-harness.js",
     output: "bin/opencode-harness.mjs",
     mode: 0o755,

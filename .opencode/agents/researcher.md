@@ -32,3 +32,8 @@ Authority and path resolution: the parent-owned `delegation-orchestrator` skill 
 - Shape trace artifacts according to `.opencode/schemas/memory-trace-artifact.schema.json`.
 - Write or reference the required trace artifact at `.memory/orchestrations/<orchestration-id>/roles/researcher/<artifact-id>.md`.
 - Preserve caller-supplied routing metadata labels exactly when present; when absent, record the routing metadata status as absent and do not invent values.
+
+
+## Structured terminal result
+
+Return one JSON result object using the enforced ephemeral dispatch protocol in the immutable memory-management source: version, exact task identity, outcome, summary, evidence, artifacts, and (for success) the existing role-specific outputContract. A success without artifact digests or required evidence is rejected. Use blocked/failed with a reason rather than claiming an unrun command passed. Existing nonce-bound clarification envelopes remain valid. Native managed shell is read-only and exact-command bounded; do not bypass it with another tool.

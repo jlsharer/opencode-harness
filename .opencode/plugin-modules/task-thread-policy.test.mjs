@@ -2,6 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.js";
 import { TASK_THREAD_ROLE_PACKET_FIELDS, createTaskThreadPolicy, formatTaskResultWrapper, formatTaskThreadEnvelope, } from "./task-thread-policy.js";
+// Explicit test-only dependency injection. Production plugin composition never
+// supplies this factory and always uses the managed workflow/proof adapter.
+const standalonePolicyFactory = ({ telemetry }) => {
+    const policy = createTaskThreadPolicy({ telemetry: (event) => telemetry?.({ ...event }) });
+    return {
+        beforeTask: async (input, args) => policy.beforeTask({ sessionID: input.sessionID, callID: input.callID, args }),
+        beforeTool: (_input, args) => args,
+        afterTool: () => { },
+        afterTask: (input, output) => policy.afterTask({ callID: input.callID, output: output.output, metadata: output.metadata }),
+        sessionCreated: () => { },
+        interrupt: () => { },
+    };
+};
 const roleValues = {
     researcher: ["question", ["sources"], "current", "plan"],
     planner: ["goal", ["scope"], ["research"], ["paths"], ["criteria"]],
@@ -339,7 +352,7 @@ test("lifecycle adapter guards Task and blocks direct role commands", async () =
                     },
                 },
             },
-        });
+        }, standalonePolicyFactory);
         await hooks.event({ event: { type: "session.created" } });
         await hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "call" }, { args: freshArgs() });
         await hooks["tool.execute.after"]({ tool: "task", sessionID: "parent", callID: "call" }, { output: wrapped("raw-output-secret", "child"), metadata: { sessionId: "child" } });
@@ -428,7 +441,7 @@ test("lifecycle diagnostics contain logger failures without fallback or policy c
                     },
                 },
             },
-        });
+        }, standalonePolicyFactory);
         await hooks.event({ event: { type: "session.created" } });
         await hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "call" }, { args: freshArgs() });
         await hooks["tool.execute.after"]({ tool: "task", callID: "call" }, { output: wrapped("done", "child"), metadata: { sessionId: "child" } });
@@ -443,4 +456,52 @@ test("lifecycle diagnostics contain logger failures without fallback or policy c
         for (const method of methods)
             console[method] = originals[method];
     }
+});
+test("lifecycle forwards managed hook boundaries and relevant session interruption", async () => {
+    const observed = [];
+    const hooks = await HarnessLifecyclePlugin({}, (options) => ({
+        ...standalonePolicyFactory(options),
+        beforeTask: async () => {
+            observed.push("task-before");
+        },
+        beforeTool: (_input, args) => {
+            observed.push("tool-before");
+            return { ...args, restricted: true };
+        },
+        afterTool: () => {
+            observed.push("tool-after");
+        },
+        afterTask: () => {
+            observed.push("task-after");
+            return { outcome: "rejected" };
+        },
+        sessionCreated: (info) => {
+            observed.push("created:" + String(info.id));
+        },
+        interrupt: (reason) => {
+            observed.push(reason);
+        },
+    }));
+    await hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "call" }, { args: freshArgs() });
+    await hooks.event({
+        event: { type: "session.created", properties: { info: { id: "child", parentID: "parent" } } },
+    });
+    const toolOutput = { args: { command: "safe" } };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "child", callID: "tool" }, toolOutput);
+    assert.equal(toolOutput.args.restricted, true);
+    await hooks["tool.execute.after"]({ tool: "bash", sessionID: "child", callID: "tool" }, { metadata: { exit: 0 } });
+    await hooks["tool.execute.after"]({ tool: "task", sessionID: "parent", callID: "call" }, {});
+    await hooks.event({ event: { type: "session.error", properties: { sessionID: "unrelated" } } });
+    assert.equal(observed.includes("managed session error"), false);
+    await hooks.event({ event: { type: "session.error", properties: { sessionID: "child" } } });
+    await hooks.event({ event: { type: "session.deleted", properties: { info: { id: "parent" } } } });
+    assert.deepEqual(observed, [
+        "task-before",
+        "created:child",
+        "tool-before",
+        "tool-after",
+        "task-after",
+        "managed session error",
+        "managed session deleted",
+    ]);
 });

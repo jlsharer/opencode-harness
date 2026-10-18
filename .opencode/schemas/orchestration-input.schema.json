@@ -22,7 +22,8 @@
       "scopeExpansion": "generated",
       "authorization": "generated",
       "routingMetadataStatus": "generated",
-      "routingMetadata": "user"
+      "routingMetadata": "user",
+      "validationInputs": "user"
     }
   },
   "type": "object",
@@ -111,6 +112,7 @@
         "git": { "type": "object", "additionalProperties": false, "required": ["commit", "amend", "push", "otherMutation"], "properties": { "commit": { "type": "boolean" }, "amend": { "type": "boolean" }, "push": { "type": "boolean" }, "otherMutation": { "type": "boolean" } } }
       }
     },
+    "validationInputs": { "type": "array", "maxItems": 64, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
     "routingMetadataStatus": { "enum": ["present", "absent"] },
     "routingMetadata": { "type": "object" }
   },
