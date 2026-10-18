@@ -2650,10 +2650,14 @@ test("source-web validates its own source profile without external injection and
     ["--provider-config", "/unused"],
   ])
     assert.notEqual(invokeTui(args).status, 0);
-  const tui = invokeTui([], { HARNESS_TEST_DB_FILES: "1" });
+  const tui = invokeTui([], {
+    HARNESS_TEST_DB_FILES: "1",
+    OPENCODE_HARNESS_LOCAL_READINESS: "required",
+  });
   assert.equal(tui.status, 0, tui.stderr);
   const tuiCapture = parseCaptured(native.capture);
   assert.deepEqual(tuiCapture.argv, []);
+  assert.equal(tuiCapture.env.OPENCODE_HARNESS_LOCAL_READINESS, "required");
   assert.equal(tuiCapture.cwd, source);
   assert.equal(tuiCapture.env.OPENCODE_HARNESS_WORKSPACE_ROOT, source);
   assert.equal(tuiCapture.env.OPENCODE_HARNESS_TRACE_ROOT, path.join(source, ".memory"));

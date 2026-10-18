@@ -1981,6 +1981,8 @@ function runSourceProfile(options, mode) {
         const checked = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, script), ...args], {
             cwd: PACKAGE_ROOT,
             encoding: "utf8",
+            // Source QA validates fixtures offline; readiness applies only to the native child.
+            env: { ...process.env, OPENCODE_HARNESS_LOCAL_READINESS: undefined },
             timeout: 120000,
             maxBuffer: 1024 * 1024,
         });

@@ -172,13 +172,108 @@ export function applyHarnessRoleModelOverrides(
   return plan;
 }
 
+/** Explicit session-start readiness gate. Never probes remote hosts or sends credentials. */
+export async function assertLocalAssignmentsReady(
+  document: unknown,
+  cfg: unknown,
+  fetcher: typeof fetch = fetch,
+  timeoutMs = 1500,
+): Promise<void> {
+  const plan = resolveAllHarnessRoleAssignments(document);
+  validateNativeProviderCoherence(cfg, plan);
+  const selected = new Map<string, string>();
+  for (const assignment of Object.values(plan.assignments)) {
+    if (!assignment?.catalogName || !assignment.routingServiceUrl) continue;
+    selected.set(assignment.model, assignment.routingServiceUrl);
+  }
+  for (const [model, base] of selected) {
+    const url = new URL(base);
+    if (
+      url.protocol !== "http:" ||
+      !["127.0.0.1", "[::1]", "localhost"].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error("Local readiness requires a credential-free loopback HTTP catalog endpoint");
+    const signal = AbortSignal.timeout(timeoutMs);
+    const read = async (endpoint: string): Promise<unknown> => {
+      const response = await fetcher(endpoint, {
+        method: "GET",
+        headers: { Accept: "application/json" },
+        redirect: "error",
+        credentials: "omit",
+        signal,
+      });
+      if (!response.ok || !response.body) throw new Error("local endpoint is not healthy");
+      const reader = response.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      try {
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          size += part.value.byteLength;
+          if (size > 65536) throw new Error("local readiness response exceeds 64 KiB");
+          chunks.push(part.value);
+        }
+      } finally {
+        await reader.cancel();
+      }
+      return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    };
+    try {
+      const health = await read(new URL("/health", url).href);
+      if (!isRecord(health) || health.status !== "ok")
+        throw new Error("local health status is not ok");
+      const models = await read(base.replace(/\/$/, "") + "/models");
+      const wanted = model.slice(model.indexOf("/") + 1);
+      if (
+        !isRecord(models) ||
+        !Array.isArray(models.data) ||
+        !models.data.some((entry) => isRecord(entry) && entry.id === wanted)
+      )
+        throw new Error("configured model is absent");
+    } catch {
+      throw new Error(
+        `Local model ${model} is unavailable, unhealthy, missing, or timed out; managed delegation is blocked without remote fallback. Restart after the configured endpoint is ready.`,
+      );
+    }
+  }
+}
+
 export const HarnessRoleModelRoutingEnforcementPlugin = async (
   context: HarnessRoutingContext = {},
-) => ({
-  config: async (cfg: unknown) => {
-    applyHarnessRoleModelOverrides(cfg, context);
-  },
-});
+) => {
+  // Freeze the explicit readiness decision and document for this plugin instance.
+  // Neither success nor failure is re-probed mid-task or switched to another route.
+  let selectedDocument: unknown;
+  let readiness: Promise<void> | undefined;
+  return {
+    config: async (cfg: unknown) => {
+      const policy = process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+      if (policy === undefined) {
+        applyHarnessRoleModelOverrides(cfg, context);
+        return;
+      }
+      if (policy !== "required")
+        throw new Error("OPENCODE_HARNESS_LOCAL_READINESS must be required when set");
+      if (!readiness) {
+        readiness = (async () => {
+          selectedDocument = structuredClone(
+            context.routingDocument ??
+              loadRoutingConfigSelection({ configPath: resolveHarnessRoutingPath(context) })
+                .document,
+          );
+          await assertLocalAssignmentsReady(selectedDocument, cfg);
+        })();
+      }
+      await readiness;
+      applyHarnessRoleModelOverrides(cfg, { ...context, routingDocument: selectedDocument });
+    },
+  };
+};
 
 export function guardConfiguredDispatch(
   lifecycle: Awaited<ReturnType<typeof HarnessLifecyclePlugin>>,

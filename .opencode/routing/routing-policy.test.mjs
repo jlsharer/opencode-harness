@@ -19,7 +19,7 @@ import HarnessPlugin from "../plugins/index.js";
 import { resolveModelForRole } from "./model-routing-helper.mjs";
 import { loadRoutingConfigSelection, mergeExternalRoutingDocuments, selectImplicitRoutingConfig, } from "./routing-config-loader.mjs";
 import { loadRoutingConfig, parseArgs } from "./resolve-model-routing.mjs";
-import { applyHarnessRoleModelOverrides, resolveHarnessRoutingPath, } from "../plugin-modules/role-model-routing-enforcement.js";
+import { applyHarnessRoleModelOverrides, assertLocalAssignmentsReady, HarnessRoleModelRoutingEnforcementPlugin, resolveHarnessRoutingPath, } from "../plugin-modules/role-model-routing-enforcement.js";
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_DIR = path.basename(path.dirname(DIR)) === "src" ? path.resolve(DIR, "../../routing") : DIR;
 const EXAMPLE_PATH = path.join(CONFIG_DIR, "harness-model-routing.example.json");
@@ -1132,5 +1132,93 @@ test("combined plugin retains workspace mismatch rejection after native catches 
             delete process.env.OPENCODE_HARNESS_TRACE_ROOT;
         else
             process.env.OPENCODE_HARNESS_TRACE_ROOT = originalTrace;
+    }
+});
+test("explicit local readiness requires healthy exact models without credentials or redirects", async () => {
+    const calls = [];
+    const mock = async (input, options) => {
+        calls.push(String(input));
+        assert.deepEqual(options?.headers, { Accept: "application/json" });
+        assert.equal(options?.credentials, "omit");
+        assert.equal(options?.redirect, "error");
+        assert.equal(options?.method, "GET");
+        return Response.json(String(input).endsWith("/health")
+            ? { status: "ok" }
+            : { data: [{ id: "qwen2.5-7b-instruct" }, { id: "qwen2.5-coder-7b" }] });
+    };
+    const cfg = nativeConfig();
+    const before = clone(cfg);
+    await assertLocalAssignmentsReady(forceConfig(), cfg, mock);
+    assert.equal(calls.length, 4);
+    assert.deepEqual(cfg, before);
+});
+test("local readiness fails closed for unhealthy missing-model timeout and oversized responses", async () => {
+    const scenarios = [
+        async () => new Response("unhealthy", { status: 503 }),
+        async () => Response.json({ status: "loading" }),
+        async (input) => Response.json(String(input).endsWith("/health")
+            ? { status: "ok" }
+            : { data: [{ id: "different-model" }] }),
+        async () => new Response("x".repeat(65537)),
+        async (_input, options) => new Promise((_resolve, reject) => {
+            const keepAlive = setTimeout(() => reject(new Error("fixture failed to abort")), 1000);
+            options?.signal?.addEventListener("abort", () => {
+                clearTimeout(keepAlive);
+                reject(new Error("aborted"));
+            }, { once: true });
+        }),
+    ];
+    for (const mock of scenarios) {
+        const cfg = nativeConfig();
+        const before = clone(cfg);
+        await assert.rejects(assertLocalAssignmentsReady(forceConfig(), cfg, mock, 10), /blocked without remote fallback/);
+        assert.deepEqual(cfg, before);
+    }
+});
+test("local readiness freezes success and failure for the plugin instance without route oscillation", async () => {
+    const old = process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+    const originalFetch = globalThis.fetch;
+    process.env.OPENCODE_HARNESS_LOCAL_READINESS = "required";
+    let calls = 0;
+    try {
+        globalThis.fetch = async (input) => {
+            calls++;
+            return Response.json(String(input).endsWith("/health")
+                ? { status: "ok" }
+                : { data: [{ id: "qwen2.5-7b-instruct" }, { id: "qwen2.5-coder-7b" }] });
+        };
+        const document = forceConfig();
+        const plugin = await HarnessRoleModelRoutingEnforcementPlugin({ routingDocument: document });
+        const cfg = nativeConfig();
+        await plugin.config(cfg);
+        const first = clone(cfg);
+        const probed = calls;
+        globalThis.fetch = async () => {
+            calls++;
+            throw new Error("offline");
+        };
+        await plugin.config(nativeConfig());
+        assert.equal(calls, probed);
+        assert.deepEqual(cfg, first);
+        const failed = await HarnessPlugin({ routingDocument: forceConfig() });
+        const untouched = nativeConfig();
+        const before = clone(untouched);
+        await assert.rejects(failed.config(untouched), /blocked without remote fallback/);
+        const failedCount = calls;
+        globalThis.fetch = async () => {
+            calls++;
+            return Response.json({ status: "ok" });
+        };
+        await assert.rejects(failed.config(untouched), /blocked without remote fallback/);
+        assert.equal(calls, failedCount);
+        assert.deepEqual(untouched, before);
+        await assert.rejects(() => failed["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "blocked" }, { args: {} }), /Harness dispatch blocked.*without remote fallback/);
+    }
+    finally {
+        globalThis.fetch = originalFetch;
+        if (old === undefined)
+            delete process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+        else
+            process.env.OPENCODE_HARNESS_LOCAL_READINESS = old;
     }
 });
