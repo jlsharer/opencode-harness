@@ -4,7 +4,12 @@ import { mkdtemp, writeFile, mkdir, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { expandIndexedReferences, validateUsageTelemetry } from "./context-budget.ts";
+import {
+  expandIndexedReferences,
+  managedCompactionSafe,
+  reportedInputCompactionDecision,
+  validateUsageTelemetry,
+} from "./context-budget.ts";
 
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
@@ -86,4 +91,91 @@ test("enforces aggregate bytes and hard budget ceilings", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+function compactionFixture() {
+  return {
+    session: { id: "primary", time: { compacting: 100 } },
+    status: { primary: { type: "idle" } },
+    idleEvent: { type: "session.idle", sessionID: "primary" },
+    managed: { stopped: false, background: null, runs: [] as unknown[] },
+    providers: {
+      all: [{ id: "provider", models: { model: { id: "model", limit: { context: 100 } } } }],
+    },
+    messages: [
+      {
+        info: {
+          id: "user",
+          sessionID: "primary",
+          role: "user",
+          time: { created: 101 },
+          model: { providerID: "provider", modelID: "model" },
+        },
+      },
+      {
+        info: {
+          id: "turn",
+          parentID: "user",
+          sessionID: "primary",
+          role: "assistant",
+          providerID: "provider",
+          modelID: "model",
+          time: { created: 102, completed: 103 },
+          tokens: { input: 60 },
+        },
+      },
+    ],
+  };
+}
+
+test("reported input threshold is conservative and exact at 60 percent", () => {
+  const fixture = compactionFixture();
+  assert.equal(reportedInputCompactionDecision(fixture).status, "request-eligible");
+  const tokens = (fixture.messages[1]!.info as { tokens: { input: number } }).tokens;
+  tokens.input = 59;
+  assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+  tokens.input = 60;
+  fixture.providers.all[0]!.models.model.limit.context = 101;
+  assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+  fixture.providers.all[0]!.models.model.limit.context = Number.MAX_SAFE_INTEGER;
+  tokens.input = Number.MAX_SAFE_INTEGER;
+  assert.equal(reportedInputCompactionDecision(fixture).status, "request-eligible");
+});
+
+test("compaction skips busy, child, stale, missing and uncertain work", () => {
+  const fixture = compactionFixture();
+  const complete = {
+    interrupted: false,
+    active: 0,
+    attempts: [{ state: "success" }, { state: "blocked" }],
+  };
+  fixture.managed.runs = [complete];
+  assert.equal(managedCompactionSafe(fixture.managed), true);
+  for (const run of [
+    { ...complete, active: 1 },
+    { ...complete, interrupted: true },
+    { ...complete, attempts: [{ state: "running" }] },
+    {},
+  ]) {
+    fixture.managed.runs = [run];
+    assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+  }
+  fixture.managed.runs = [complete];
+  fixture.managed.stopped = true;
+  assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+  fixture.managed.stopped = false;
+  fixture.status.primary.type = "busy";
+  assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+  fixture.status.primary.type = "idle";
+  assert.equal(
+    reportedInputCompactionDecision({
+      ...fixture,
+      session: { ...fixture.session, parentID: "parent" },
+    }).status,
+    "skip",
+  );
+  assert.equal(
+    reportedInputCompactionDecision({ ...fixture, messages: fixture.messages.slice(0, 1) }).status,
+    "skip",
+  );
 });

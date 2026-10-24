@@ -8,6 +8,7 @@ This directory is project-owned memory for OpenCode harness orchestration. It is
 - `references/opencode-refs.md` - OpenCode documentation URL inventory and short descriptions.
 - `templates/orchestration-index.md` - template for per-orchestration memory indexes.
 - `templates/role-trace-artifact.md` - template for role-level trace artifacts.
+- `templates/interactive-refinement-test-plan.md` - progressive owner-led manual test plan template.
 
 ## Orchestration Memory
 

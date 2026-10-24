@@ -107,3 +107,19 @@ test("existing bubblewrap executes quoted exact commands and prevents workspace 
     );
     assert.equal(readFileSync(path.join(base.workspaceRoot, "source.txt"), "utf8"), "original");
   }));
+test("focused syntax check succeeds under the read-only managed shell", () =>
+  fixture((base) => {
+    writeFileSync(path.join(base.workspaceRoot, "source.js"), "const value = 1;\n");
+    const command = "node --check source.js";
+    const guarded = enforceManagedTool({
+      ...base,
+      tool: "bash",
+      role: "validator",
+      commands: [command],
+      args: { command },
+    });
+    assert.equal(
+      execFileSync("/bin/sh", ["-c", String(guarded.command)], { encoding: "utf8" }),
+      "",
+    );
+  }));

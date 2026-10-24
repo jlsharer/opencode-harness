@@ -37,6 +37,7 @@
     { "source": ".opencode/commands/delegate-research.md", "destination": "commands/delegate-research.md" },
     { "source": ".opencode/commands/delegate-validate.md", "destination": "commands/delegate-validate.md" },
     { "source": ".opencode/skills/delegation-orchestrator/SKILL.md", "destination": "skills/delegation-orchestrator/SKILL.md" },
+    { "source": ".opencode/skills/interactive-refinement/SKILL.md", "destination": "skills/interactive-refinement/SKILL.md" },
     { "source": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md", "destination": "skills/delegation-orchestrator/references/role-routing-matrix.md" },
     { "source": ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md", "destination": "skills/delegation-orchestrator/references/trust-and-restart-guide.md" },
     { "source": ".opencode/skills/delegation-orchestrator/references/validation-checklist.md", "destination": "skills/delegation-orchestrator/references/validation-checklist.md" },
@@ -46,6 +47,7 @@
     { "source": ".opencode/schemas/opencode-provider-projection.schema.json", "destination": "schemas/opencode-provider-projection.schema.json" },
     { "source": ".opencode/schemas/harness-routing-profile.schema.json", "destination": "schemas/harness-routing-profile.schema.json" },
     { "source": ".opencode/schemas/memory-trace-artifact.schema.json", "destination": "schemas/memory-trace-artifact.schema.json" },
+    { "source": ".opencode/schemas/interactive-refinement-test-plan.schema.json", "destination": "schemas/interactive-refinement-test-plan.schema.json" },
     { "source": ".opencode/schemas/orchestration-input.schema.json", "destination": "schemas/orchestration-input.schema.json" },
     { "source": ".opencode/schemas/role-io-contracts.schema.json", "destination": "schemas/role-io-contracts.schema.json" },
     { "source": ".opencode/routing/harness-model-routing.example.json", "destination": "routing/harness-model-routing.example.json" },
@@ -62,6 +64,7 @@
     { "source": ".opencode/bootstrap/memory/INDEX.md", "destination": "bootstrap/memory/INDEX.md" },
     { "source": ".opencode/bootstrap/memory/protocols/memory-management.md", "destination": "bootstrap/memory/protocols/memory-management.md" },
     { "source": ".opencode/bootstrap/memory/templates/orchestration-index.md", "destination": "bootstrap/memory/templates/orchestration-index.md" },
-    { "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md", "destination": "bootstrap/memory/templates/role-trace-artifact.md" }
+    { "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md", "destination": "bootstrap/memory/templates/role-trace-artifact.md" },
+    { "source": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md", "destination": "bootstrap/memory/templates/interactive-refinement-test-plan.md" }
   ]
 }

@@ -188,6 +188,64 @@ function fixture(role = "researcher") {
         },
     };
 }
+test("current task view is bound, bounded, fresh, and never exposes packet contents", async () => {
+    const f = fixture();
+    assert.equal(f.managed.currentTaskView("parent"), null);
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args({
+        ...f.packet(),
+        scopedQuestion: "packet-only-secret-marker",
+    }));
+    assert.equal(f.managed.currentTaskView("parent"), null);
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    const expected = {
+        orchestrationId: "fixture",
+        scopeKey: "a",
+        delegationTaskId: "task",
+        role: "researcher",
+        taskMode: "research",
+        goal: "bounded work",
+    };
+    const view = f.managed.currentTaskView("parent");
+    assert.deepEqual(view, expected);
+    assert.deepEqual(Object.keys(view).sort(), Object.keys(expected).sort());
+    assert.deepEqual(f.managed.currentTaskView("child"), expected);
+    assert.notEqual(f.managed.currentTaskView("child"), view);
+    assert.ok(JSON.stringify(view).length < 300);
+    assert.ok(!JSON.stringify(view).includes("packet-only-secret-marker"));
+    assert.equal(f.managed.currentTaskView("other"), null);
+    for (const bad of [undefined, null, "", 2, {}, "child "]) {
+        assert.equal(f.managed.currentTaskView(bad), null);
+    }
+    assert.equal(f.finish(f.success()).outcome, "success");
+    assert.equal(f.managed.currentTaskView("child"), null);
+    assert.equal(f.managed.currentTaskView("parent"), null);
+});
+test("current task view fails closed on unsafe goals and stale reservations", async () => {
+    for (const goal of ["x".repeat(241), "bad\nline", "bad\u007fdel", "bad\u0085c1"]) {
+        const f = fixture();
+        fs.writeFileSync(f.specFile, JSON.stringify({
+            ...f.spec,
+            workUnits: [{ ...f.spec.workUnits[0], goal }],
+        }));
+        await f.start();
+        assert.equal(f.managed.currentTaskView("parent"), null);
+        assert.equal(f.managed.currentTaskView("child"), null);
+    }
+    const expired = fixture();
+    await expired.start();
+    expired.advance();
+    assert.equal(expired.managed.currentTaskView("parent"), null);
+    assert.equal(expired.managed.snapshot().runs[0].attempts[0].state, "cancel-requested");
+    const interrupted = fixture();
+    await interrupted.start();
+    interrupted.managed.interrupt("test");
+    assert.equal(interrupted.managed.currentTaskView("child"), null);
+    const blocked = fixture();
+    await blocked.start();
+    const { outputContract: _unused, ...result } = blocked.success();
+    blocked.finish({ ...result, outcome: "blocked", reason: "fixture" });
+    assert.equal(blocked.managed.currentTaskView("child"), null);
+});
 test("managed native hooks accept correlated research with exact artifact proof and reject duplicate completion", async () => {
     const f = fixture();
     await f.start();
@@ -196,6 +254,52 @@ test("managed native hooks accept correlated research with exact artifact proof 
     assert.throws(() => f.finish(f.success()), /duplicate|uncorrelated/);
     assert.equal(f.telemetry.at(-1).event, "completed");
 });
+test("a terminal blocked run permits a different fresh orchestration in the same parent session", async () => {
+    const f = fixture();
+    await f.start();
+    const { outputContract: _output, ...blocked } = f.success();
+    assert.equal(f.finish({ ...blocked, outcome: "blocked", reason: "scoped implementation incomplete" })
+        .outcome, "blocked");
+    assert.equal(f.managed.snapshot().stopped, false);
+    const nextId = "fresh-after-blocked";
+    fs.mkdirSync(path.join(f.trace, "orchestrations", nextId));
+    fs.writeFileSync(path.join(f.trace, "orchestrations", nextId, "normalized-spec.json"), JSON.stringify({ ...f.spec, orchestrationId: nextId }));
+    await f.managed.beforeTask({ sessionID: "parent", callID: "fresh" }, f.args({ ...f.packet("new-task"), orchestrationId: nextId }));
+    assert.equal(f.managed.snapshot().runs.length, 2);
+    assert.equal(f.managed.snapshot().runs[1].active, 1);
+    f.managed.sessionCreated({ id: "next-child", parentID: "parent" });
+    assert.equal(f.managed.currentTaskView("child"), null);
+    assert.equal(f.managed.currentTaskView("next-child")?.delegationTaskId, "new-task");
+    assert.ok(fs.existsSync(path.join(f.trace, "orchestrations", nextId, "dispatch-started.json")));
+});
+test("late events from a completed child cannot stop a later managed task", async () => {
+    const f = fixture();
+    const hooks = await HarnessLifecyclePlugin({ directory: f.workspace }, () => f.managed);
+    await hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "call" }, { args: f.args() });
+    await hooks.event({
+        event: { type: "session.created", properties: { info: { id: "child", parentID: "parent" } } },
+    });
+    await hooks["tool.execute.after"]({ tool: "task", callID: "call" }, {
+        metadata: { sessionId: "child" },
+        output: formatTaskResultWrapper(JSON.stringify(f.success()), "child"),
+    });
+    await hooks.event({ event: { type: "session.deleted", properties: { sessionID: "child" } } });
+    assert.equal(f.managed.snapshot().stopped, false);
+    const nextId = "new-after-old-child";
+    fs.mkdirSync(path.join(f.trace, "orchestrations", nextId));
+    fs.writeFileSync(path.join(f.trace, "orchestrations", nextId, "normalized-spec.json"), JSON.stringify({ ...f.spec, orchestrationId: nextId }));
+    await hooks["tool.execute.before"]({ tool: "task", sessionID: "parent", callID: "next-call" }, { args: f.args({ ...f.packet("new-task"), orchestrationId: nextId }) });
+    await hooks.event({
+        event: {
+            type: "session.created",
+            properties: { info: { id: "next-child", parentID: "parent" } },
+        },
+    });
+    await hooks.event({ event: { type: "session.error", properties: { sessionID: "child" } } });
+    assert.equal(f.managed.snapshot().stopped, false);
+    await hooks.event({ event: { type: "session.error", properties: { sessionID: "next-child" } } });
+    assert.equal(f.managed.snapshot().stopped, true);
+});
 test("managed runtime rejects null packets without reservation and serializes same-scope race", async () => {
     const f = fixture();
     await assert.rejects(f.managed.beforeTask({ sessionID: "parent", callID: "null" }, f.args({ ...f.packet(), scopedQuestion: null })), /invalid/);
@@ -203,6 +307,21 @@ test("managed runtime rejects null packets without reservation and serializes sa
     const outcomes = await Promise.allSettled(["one", "two"].map((id) => f.managed.beforeTask({ sessionID: "parent", callID: id }, f.args(f.packet(id)))));
     assert.equal(outcomes.filter((v) => v.status === "fulfilled").length, 1);
     assert.equal(f.managed.snapshot().runs[0].active, 1);
+});
+test("known write-producing managed gate rejects before creating a refusal marker", async () => {
+    const f = fixture();
+    fs.writeFileSync(f.specFile, JSON.stringify({
+        ...f.spec,
+        acceptanceGates: [
+            {
+                ...f.spec.acceptanceGates[0],
+                evidenceCommand: "node .opencode/scripts/validate-" + "harness.mts",
+            },
+        ],
+    }));
+    await assert.rejects(f.managed.beforeTask({ sessionID: "parent", callID: "unsafe" }, f.args()), /managed acceptance gate needs read-only/);
+    assert.equal(f.managed.snapshot().runs.length, 0);
+    assert.equal(fs.existsSync(path.join(f.trace, "orchestrations/fixture/dispatch-started.json")), false);
 });
 test("managed workflow mutation is rejected at tool and result boundaries", async () => {
     const f = fixture();
@@ -233,6 +352,97 @@ test("managed result rejects out-of-scope edits and stale or missing artifacts",
         assert.equal(f.managed.snapshot().stopped, true, mutation);
     }
 });
+test("orchestrator can release a stopped adapter only after completed native child and reviewed tree", async () => {
+    const f = fixture("implementer");
+    const managed = createManagedDispatch({
+        ...f.options,
+        backgroundTransport: {
+            enabled: false,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => ({ parent: "parent", idle: true, messages: [] }),
+            abort: async () => { },
+        },
+    });
+    await managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    managed.sessionCreated({ id: "child", parentID: "parent" });
+    const result = f.success();
+    fs.appendFileSync(path.join(f.trace, result.artifacts[0].reference), "tamper");
+    assert.throws(() => managed.afterTask({ callID: "call" }, {
+        metadata: { sessionId: "child" },
+        output: formatTaskResultWrapper(JSON.stringify(result), "child"),
+    }), /digest/);
+    assert.equal(managed.snapshot().stopped, true);
+    assert.throws(() => managed.beforeTool({ sessionID: "child", tool: "harness_recovery_status" }, {}), /bound stopped parent/);
+    assert.deepEqual(managed.beforeTool({ sessionID: "parent", tool: "harness_recovery_status" }, {}), {});
+    const status = await managed.recoveryStatus("parent");
+    assert.equal(status.state, "ready");
+    if (status.state !== "ready")
+        throw new Error("expected native termination proof");
+    assert.throws(() => managed.beforeTool({ sessionID: "parent", tool: "write" }, { filePath: "src/a.txt" }), /tools disabled/);
+    assert.equal(managed.beforeTool({ sessionID: "parent", tool: "read" }, { filePath: "src/a.txt" }).filePath, "src/a.txt");
+    await assert.rejects(() => managed.releaseForFresh("parent", "0".repeat(64)), /changed worker/);
+    assert.equal(managed.snapshot().stopped, true);
+    const released = await managed.releaseForFresh("parent", status.treeHash);
+    assert.equal(released.state, "fresh-only");
+    assert.equal(managed.snapshot().stopped, false);
+    assert.throws(() => managed.beforeTool({ sessionID: "child", tool: "read" }, {}), /terminal/);
+    await assert.rejects(() => managed.beforeTask({ sessionID: "parent", callID: "old-run" }, f.args(f.packet("other"))), /interrupted/);
+    const nextId = "new-after-recovery";
+    fs.mkdirSync(path.join(f.trace, "orchestrations", nextId));
+    fs.writeFileSync(path.join(f.trace, "orchestrations", nextId, "normalized-spec.json"), JSON.stringify({ ...f.spec, orchestrationId: nextId }));
+    await managed.beforeTask({ sessionID: "parent", callID: "new-call" }, f.args({ ...f.packet("new-task"), orchestrationId: nextId }));
+    assert.equal(managed.snapshot().runs.length, 2);
+    assert.equal(managed.interruptIfCurrent("child", "late old child deletion"), false);
+    assert.equal(managed.snapshot().stopped, false);
+    assert.ok(fs.existsSync(path.join(f.trace, "orchestrations/fixture/dispatch-started.json")));
+});
+test("uncertain live worker or out-of-scope effects never unlock stopped recovery", async () => {
+    const f = fixture("implementer");
+    await f.start();
+    f.managed.interrupt("unverified blocking worker");
+    const uncertain = await f.managed.recoveryStatus("parent");
+    assert.equal(uncertain.state, "blocked");
+    await assert.rejects(() => f.managed.releaseForFresh("parent", "0".repeat(64)), /uncertain/);
+    assert.equal(f.managed.snapshot().stopped, true);
+    const outside = fixture("implementer");
+    const managed = createManagedDispatch({
+        ...outside.options,
+        backgroundTransport: {
+            enabled: false,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => ({ parent: "parent", idle: true, messages: [] }),
+            abort: async () => { },
+        },
+    });
+    await managed.beforeTask({ sessionID: "parent", callID: "call" }, outside.args());
+    managed.sessionCreated({ id: "child", parentID: "parent" });
+    const result = outside.success();
+    fs.writeFileSync(path.join(outside.workspace, "outside.txt"), "unauthorized");
+    assert.throws(() => managed.afterTask({ callID: "call" }, {
+        metadata: { sessionId: "child" },
+        output: formatTaskResultWrapper(JSON.stringify(result), "child"),
+    }), /outside|scope/);
+    assert.equal((await managed.recoveryStatus("parent")).state, "blocked");
+    assert.equal(managed.snapshot().stopped, true);
+});
+test("recovery release rejects a changed tree or immutable workflow after ready status", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await f.managed.cancelBackground("parent");
+    const ready = await f.managed.recoveryStatus("parent");
+    assert.equal(ready.state, "ready");
+    if (ready.state !== "ready")
+        throw new Error("expected reconciled background child");
+    fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "changed in allowed scope");
+    await assert.rejects(() => f.managed.releaseForFresh("parent", ready.treeHash), /changed worker/);
+    assert.equal(f.managed.snapshot().stopped, true);
+    fs.writeFileSync(f.specFile, JSON.stringify({ ...f.spec, goal: "changed spec" }));
+    assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
+    fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+    fs.unlinkSync(path.join(f.trace, "orchestrations/fixture/dispatch-started.json"));
+    assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
+    assert.equal(f.managed.snapshot().stopped, true);
+});
 test("managed child binding rejects unknown tool and result sessions", async () => {
     const f = fixture();
     await f.start();
@@ -258,6 +468,8 @@ test("managed clarification cannot survive interruption, restart, stale nonce, o
         artifacts: [],
     };
     assert.equal(f.finish(result).outcome, "clarification");
+    assert.equal(f.managed.currentTaskView("parent")?.goal, "bounded work");
+    assert.equal(f.managed.currentTaskView("child")?.delegationTaskId, "task");
     const response = (nonce) => ({
         subagent_type: "researcher",
         task_id: "child",
@@ -276,6 +488,52 @@ test("managed clarification cannot survive interruption, restart, stale nonce, o
     f.managed.interrupt("fixture interruption");
     await assert.rejects(f.managed.beforeTask({ sessionID: "parent", callID: "fresh" }, f.args(f.packet("new"))), /non-resumable/);
 });
+test("an unacknowledged blocking clarification continuation cannot be released on idle alone", async () => {
+    const f = fixture();
+    const managed = createManagedDispatch({
+        ...f.options,
+        backgroundTransport: {
+            enabled: false,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => ({ parent: "parent", idle: true, messages: [] }),
+            abort: async () => { },
+        },
+    });
+    await managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    managed.sessionCreated({ id: "child", parentID: "parent" });
+    const clarification = {
+        version: 1,
+        orchestrationId: "fixture",
+        delegationTaskId: "task",
+        scopeKey: "a",
+        role: "researcher",
+        taskMode: "research",
+        outcome: "clarification",
+        summary: "Need a choice",
+        requestNonce: "nonce",
+        question: "Which fixture?",
+        evidence: [],
+        artifacts: [],
+    };
+    assert.equal(managed.afterTask({ callID: "call" }, {
+        metadata: { sessionId: "child" },
+        output: formatTaskResultWrapper(JSON.stringify(clarification), "child"),
+    }).outcome, "clarification");
+    await managed.beforeTask({ sessionID: "parent", callID: "reply" }, {
+        task_id: "child",
+        subagent_type: "researcher",
+        prompt: formatTaskThreadEnvelope({
+            version: 1,
+            kind: "clarification-response",
+            delegationTaskId: "task",
+            requestNonce: "nonce",
+            answer: "fixture",
+        }),
+    });
+    managed.interrupt("continuation launch is unacknowledged");
+    assert.equal((await managed.recoveryStatus("parent")).state, "blocked");
+    await assert.rejects(() => managed.releaseForFresh("parent", "0".repeat(64)), /uncertain/);
+});
 test("managed tools deny shell for research, unauthorized commands, and edits outside scope", async () => {
     const research = fixture();
     await research.start();
@@ -285,6 +543,71 @@ test("managed tools deny shell for research, unauthorized commands, and edits ou
     assert.throws(() => writer.managed.beforeTool({ sessionID: "child", callID: "shell", tool: "bash" }, { command: "touch outside" }), /exact verification/);
     assert.throws(() => writer.managed.beforeTool({ sessionID: "child", tool: "write" }, { filePath: "outside.txt", content: "bad" }), /outside allowed/);
     assert.throws(() => writer.managed.beforeTool({ sessionID: "child", tool: "apply_patch" }, {}), /unsupported/);
+});
+test("managed validator tool records native exit proof and trace creation is role-bound", async () => {
+    const f = fixture("validator");
+    await f.start();
+    assert.throws(() => f.managed.verifyCommand("parent", "true"), /bound validator child/);
+    assert.throws(() => f.managed.verifyCommand("child", "false"), /exact verification/);
+    assert.equal(f.managed.verifyCommand("child", "true").exitCode, 0);
+    const file = "orchestrations/fixture/roles/validator/proof.md";
+    assert.equal(f.managed.writeTrace("child", file, "# Validator proof\n"), file);
+    assert.throws(() => f.managed.writeTrace("child", file, "replacement"), /EEXIST/);
+    assert.throws(() => f.managed.writeTrace("child", "src/a.txt", "bad"), /outside assigned/);
+    assert.equal(f.finish(f.success()).outcome, "success");
+    assert.throws(() => f.managed.verifyCommand("child", "true"), /bound validator child/);
+    assert.throws(() => f.managed.writeTrace("child", file, "late"), /bound role child/);
+});
+test("each managed role can write only its own immutable trace", async () => {
+    for (const role of ["researcher", "implementer", "validator"]) {
+        const f = fixture(role);
+        await f.start();
+        const own = `orchestrations/fixture/roles/${role}/proof.md`;
+        assert.equal(f.managed.writeTrace("child", own, `# ${role}\n`), own);
+        assert.throws(() => f.managed.writeTrace("parent", own, "bad"), /bound role child/);
+        if (role !== "validator")
+            assert.throws(() => f.managed.writeTrace("child", "orchestrations/fixture/roles/validator/no.md", "bad"), /outside assigned/);
+    }
+});
+test("managed source edit checks exact target and complete prior contents", async () => {
+    const f = fixture("implementer");
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args({ ...f.packet(), targetPaths: ["src/a.txt", "src/new.txt", "src/nested/skill.md"] }));
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    assert.throws(() => f.managed.editSource("parent", "src/a.txt", "initial", "bad"), /bound implementer/);
+    assert.throws(() => f.managed.editSource("child", "src/other.txt", "", "bad"), /outside assigned/);
+    assert.throws(() => f.managed.editSource("child", "src/a.txt", "stale", "new"), /stale or mismatched/);
+    assert.equal(f.managed.editSource("child", "src/a.txt", "initial", "replacement").filePath, "src/a.txt");
+    assert.throws(() => f.managed.editSource("child", "src/a.txt", "initial", "second"), /stale or mismatched/);
+    assert.equal(f.managed.editSource("child", "src/new.txt", "", "new source").filePath, "src/new.txt");
+    assert.equal(f.managed.editSource("child", "src/nested/skill.md", "", "# New skill\n").filePath, "src/nested/skill.md");
+    assert.equal(fs.readFileSync(path.join(f.workspace, "src/nested/skill.md"), "utf8"), "# New skill\n");
+    assert.throws(() => f.managed.editSource("child", "src/new.txt", "", "overwrite"), /EEXIST/);
+    const reader = fixture();
+    await reader.start();
+    assert.throws(() => reader.managed.editSource("child", "src/a.txt", "initial", "bad"), /bound implementer/);
+});
+test("managed fragment replacement is exact, unique, scoped and bound to the live implementer", async () => {
+    const f = fixture("implementer");
+    await f.start();
+    assert.throws(() => f.managed.replaceSource("parent", "src/a.txt", "initial", "changed"), /bound implementer/);
+    assert.throws(() => f.managed.replaceSource("child", "src/other.txt", "initial", "changed"), /assigned target/);
+    assert.equal(f.managed.replaceSource("child", "src/a.txt", "init", "found").filePath, "src/a.txt");
+    const file = path.join(f.workspace, "src/a.txt");
+    assert.equal(fs.readFileSync(file, "utf8"), "foundial");
+    assert.throws(() => f.managed.replaceSource("child", "src/a.txt", "init", "other"), /exactly one/);
+    assert.throws(() => f.managed.replaceSource("child", "src/a.txt", "found", "found"), /bounded distinct/);
+    assert.throws(() => f.managed.replaceSource("child", "src/a.txt", "a".repeat(8193), "x"), /bounded distinct/);
+    fs.writeFileSync(file, "same same");
+    assert.throws(() => f.managed.replaceSource("child", "src/a.txt", "same", "new"), /exactly one/);
+    assert.equal(fs.readFileSync(file, "utf8"), "same same");
+    const reader = fixture();
+    await reader.start();
+    assert.throws(() => reader.managed.replaceSource("child", "src/a.txt", "initial", "changed"), /bound implementer/);
+    const linked = fixture("implementer");
+    await linked.start();
+    fs.unlinkSync(path.join(linked.workspace, "src/a.txt"));
+    fs.symlinkSync("../outside.txt", path.join(linked.workspace, "src/a.txt"));
+    assert.throws(() => linked.managed.replaceSource("child", "src/a.txt", "initial", "changed"), /symlink/);
 });
 test("managed independent validator requires observed command status, not declared result evidence", async () => {
     const missing = fixture("validator");
@@ -536,6 +859,9 @@ function backgroundFixture(timeoutMs = 60000, role = "researcher") {
         failAbort: () => {
             abortError = true;
         },
+        restoreAbort: () => {
+            abortError = false;
+        },
         inspectWith: (fn) => {
             inspection = fn;
         },
@@ -619,13 +945,56 @@ test("queued context update is bounded, charged, ordered, and distinct from clar
 test("background cancellation retains lease until abort acknowledgement and rejects late completion", async () => {
     const f = backgroundFixture();
     await f.start();
+    assert.equal(f.managed.currentTaskView("child")?.goal, "bounded work");
     await f.managed.cancelBackground("parent");
+    assert.equal(f.managed.currentTaskView("parent"), null);
+    assert.equal(f.managed.currentTaskView("child"), null);
     assert.equal(f.aborted(), true);
     assert.equal(f.managed.snapshot().stopped, true);
     assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
     f.terminal();
     await f.managed.reconcileBackground("child");
     assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+});
+test("reconciled background cancellation permits a fresh ID after orchestrator review", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await f.managed.cancelBackground("parent");
+    const status = await f.managed.recoveryStatus("parent");
+    assert.equal(status.state, "ready");
+    if (status.state !== "ready")
+        throw new Error("expected reconciled cancellation");
+    assert.equal((await f.managed.releaseForFresh("parent", status.treeHash)).state, "fresh-only");
+    const nextId = "new-after-cancellation";
+    fs.mkdirSync(path.join(f.trace, "orchestrations", nextId));
+    fs.writeFileSync(path.join(f.trace, "orchestrations", nextId, "normalized-spec.json"), JSON.stringify({ ...f.spec, orchestrationId: nextId }));
+    await f.managed.beforeTask({ sessionID: "parent", callID: "new-call" }, f.args({ ...f.packet("new-task"), orchestrationId: nextId }));
+    assert.equal(f.managed.snapshot().runs.length, 2);
+    assert.equal(f.managed.snapshot().stopped, false);
+});
+test("the bound orchestrator can use the recovery tools while ordinary stopped tools stay denied", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await f.managed.cancelBackground("parent");
+    const offlineTool = Object.assign((definition) => definition, {
+        schema: { string: () => ({}) },
+    });
+    const hooks = await HarnessLifecyclePlugin({ directory: f.workspace, toolFactory: offlineTool }, () => f.managed);
+    const statusTool = hooks.tool.harness_recovery_status;
+    const resolveTool = hooks.tool.harness_recovery_resolve;
+    const releaseTool = hooks.tool.harness_recovery_release;
+    await assert.rejects(() => hooks["tool.execute.before"]({ tool: "harness_recovery_status", sessionID: "child" }, { args: {} }), /bound stopped parent/);
+    const input = { tool: "harness_recovery_status", sessionID: "parent" };
+    const output = { args: {} };
+    await hooks["tool.execute.before"](input, output);
+    const status = JSON.parse(await statusTool.execute({}, { sessionID: "parent" }));
+    assert.equal(status.state, "ready");
+    await hooks["tool.execute.before"]({ tool: "harness_recovery_resolve", sessionID: "parent" }, { args: {} });
+    assert.equal(JSON.parse(await resolveTool.execute({}, { sessionID: "parent" })).state, "blocked");
+    await hooks["tool.execute.before"]({ tool: "harness_recovery_release", sessionID: "parent" }, { args: { expectedTreeHash: status.treeHash } });
+    const released = JSON.parse(await releaseTool.execute({ expectedTreeHash: status.treeHash }, { sessionID: "parent" }));
+    assert.equal(released.state, "fresh-only");
+    assert.equal(f.managed.snapshot().stopped, false);
 });
 test("background stale workspace proof fails and restart cannot restore reservation", async () => {
     const f = backgroundFixture();
@@ -644,6 +1013,63 @@ test("failed native abort retains uncertain capacity", async () => {
     await assert.rejects(() => f.managed.cancelBackground("parent"), /abort unavailable/);
     assert.equal(f.managed.snapshot().runs[0].active, 1);
     assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancel-requested");
+    assert.equal(f.managed.snapshot().stopped, true);
+    assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
+    await assert.rejects(() => f.managed.resolveRecovery("child"), /bound stopped parent/);
+    assert.equal((await f.managed.resolveRecovery("parent")).state, "blocked");
+    f.restoreAbort();
+    assert.equal((await f.managed.resolveRecovery("parent")).state, "terminated");
+    const reviewed = await f.managed.recoveryStatus("parent");
+    assert.equal(reviewed.state, "ready");
+    if (reviewed.state !== "ready")
+        throw new Error("expected reviewed recovery proof");
+    assert.equal((await f.managed.releaseForFresh("parent", reviewed.treeHash)).state, "fresh-only");
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancelled");
+});
+test("uncertain pre-launch or pending continuation cannot be resolved by an idle abort", async () => {
+    const f = backgroundFixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    f.managed.sessionCreated({ id: "child", parentID: "parent" });
+    f.managed.interrupt("launch not acknowledged");
+    assert.equal((await f.managed.resolveRecovery("parent")).state, "blocked");
+    assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
+});
+test("recovery resolver is bound to stopped runs and leaves worker reserved if abort fails", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    await assert.rejects(() => f.managed.resolveRecovery("parent"), /bound stopped parent/);
+    f.failAbort();
+    await assert.rejects(() => f.managed.cancelBackground("parent"), /abort unavailable/);
+    const before = f.abortCalls();
+    assert.equal((await f.managed.resolveRecovery("parent")).state, "blocked");
+    assert.equal(f.abortCalls(), before + 1);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+});
+test("recovery cannot release capacity while its retry abort is in flight", async () => {
+    const f = backgroundFixture();
+    await f.start();
+    f.failAbort();
+    await assert.rejects(() => f.managed.cancelBackground("parent"), /abort unavailable/);
+    f.restoreAbort();
+    let releaseAbort;
+    let entered;
+    const enteredAbort = new Promise((resolve) => {
+        entered = resolve;
+    });
+    f.abortWith(() => new Promise((resolve) => {
+        releaseAbort = resolve;
+        entered();
+    }));
+    const resolution = f.managed.resolveRecovery("parent");
+    await enteredAbort;
+    assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
+    await assert.rejects(() => f.managed.resolveRecovery("parent"), /in progress/);
+    await assert.rejects(() => f.managed.releaseForFresh("parent", "0".repeat(64)), /progress/);
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    releaseAbort();
+    assert.equal((await resolution).state, "terminated");
+    const status = await f.managed.recoveryStatus("parent");
+    assert.equal(status.state, "ready");
 });
 test("native error without finish rejects immediately", async () => {
     const f = backgroundFixture();

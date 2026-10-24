@@ -55,6 +55,7 @@
     ".opencode/commands/delegate-research.md",
     ".opencode/commands/delegate-validate.md",
     ".opencode/skills/delegation-orchestrator/SKILL.md",
+    ".opencode/skills/interactive-refinement/SKILL.md",
     ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
     ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
     ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
@@ -62,6 +63,7 @@
     ".opencode/schemas/harness-endpoint-catalog.schema.json",
     ".opencode/schemas/harness-model-routing.schema.json",
     ".opencode/schemas/memory-trace-artifact.schema.json",
+    ".opencode/schemas/interactive-refinement-test-plan.schema.json",
     ".opencode/schemas/orchestration-input.schema.json",
     ".opencode/schemas/role-io-contracts.schema.json",
     ".opencode/routing/harness-model-routing.example.json",
@@ -87,7 +89,8 @@
     ".opencode/bootstrap/memory/INDEX.md",
     ".opencode/bootstrap/memory/protocols/memory-management.md",
     ".opencode/bootstrap/memory/templates/orchestration-index.md",
-    ".opencode/bootstrap/memory/templates/role-trace-artifact.md"
+    ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+    ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md"
   ],
   "memorySeeds": [
     {
@@ -105,6 +108,10 @@
     {
       "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
       "target": ".memory/templates/role-trace-artifact.md"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
+      "target": ".memory/templates/interactive-refinement-test-plan.md"
     }
   ],
   "forbiddenReferences": [

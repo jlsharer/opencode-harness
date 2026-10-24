@@ -304,7 +304,7 @@ Before relying on a local llama.cpp endpoint for harness work:
 - Confirm authentication behavior when `--api-key` is enabled.
 - Confirm OpenCode provider configuration is user-local or otherwise approved.
 - Confirm any project config change validates against `https://opencode.ai/config.json`.
-- Run `node .opencode/scripts/validate-harness.mjs` before accepting harness
+- Run `node .opencode/scripts/validate-harness.mts` before accepting harness
   runtime changes. Documentation-only changes may defer final validation to the
   assigned validator.
 - Check `.opencode/skills/delegation-orchestrator/references/validation-checklist.md`

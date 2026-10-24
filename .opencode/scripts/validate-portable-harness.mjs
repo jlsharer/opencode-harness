@@ -51,6 +51,7 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/commands/delegate-research.md",
     ".opencode/commands/delegate-validate.md",
     ".opencode/skills/delegation-orchestrator/SKILL.md",
+    ".opencode/skills/interactive-refinement/SKILL.md",
     ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
     ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
     ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
@@ -58,6 +59,7 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/schemas/harness-endpoint-catalog.schema.json",
     ".opencode/schemas/harness-model-routing.schema.json",
     ".opencode/schemas/memory-trace-artifact.schema.json",
+    ".opencode/schemas/interactive-refinement-test-plan.schema.json",
     ".opencode/schemas/orchestration-input.schema.json",
     ".opencode/schemas/role-io-contracts.schema.json",
     ".opencode/routing/harness-model-routing.example.json",
@@ -96,6 +98,7 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/bootstrap/memory/protocols/memory-management.md",
     ".opencode/bootstrap/memory/templates/orchestration-index.md",
     ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+    ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
 ].sort();
 const EXPECTED_MEMORY_SEEDS = [
     [".opencode/bootstrap/memory/INDEX.md", ".memory/INDEX.md"],
@@ -110,6 +113,10 @@ const EXPECTED_MEMORY_SEEDS = [
     [
         ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
         ".memory/templates/role-trace-artifact.md",
+    ],
+    [
+        ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
+        ".memory/templates/interactive-refinement-test-plan.md",
     ],
 ];
 const EXPECTED_WRITE_CAPABILITIES = {
@@ -211,8 +218,8 @@ function validateManifest(manifest) {
         !Array.isArray(manifest.forbiddenReferences))
         fail("manifest inventories must be arrays");
     const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, ".opencode/"));
-    if (managed.length !== 55)
-        fail(`managed inventory must contain exactly 55 files; got ${managed.length}`);
+    if (managed.length !== 58)
+        fail(`managed inventory must contain exactly 58 files; got ${managed.length}`);
     if (new Set(managed).size !== managed.length ||
         !managed.includes(".opencode/portable.manifest.json"))
         fail("managed inventory must be unique and self-containing");
@@ -393,6 +400,7 @@ async function validateMemory(root, manifest) {
         ".memory/protocols/memory-management.md",
         ".memory/templates/orchestration-index.md",
         ".memory/templates/role-trace-artifact.md",
+        ".memory/templates/interactive-refinement-test-plan.md",
     ]);
     if (manifest.memorySeeds.length !== required.size ||
         manifest.memorySeeds.some((seed) => !required.delete(seed.target)) ||
@@ -562,7 +570,17 @@ async function validateRoutingAndPlugin(root) {
             },
         },
     };
-    await localHooks.config(localNativeConfig);
+    // Source/portable QA must never contact an operator's localhost model service.
+    const savedFetch = globalThis.fetch;
+    try {
+        globalThis.fetch = async (input) => Response.json(String(input).endsWith("/health")
+            ? { status: "ok" }
+            : { data: [{ id: "qwen2.5-7b-instruct" }, { id: "qwen2.5-coder-7b" }] });
+        await localHooks.config(localNativeConfig);
+    }
+    finally {
+        globalThis.fetch = savedFetch;
+    }
     if (["researcher", "planner", "implementer", "validator"].some((role) => typeof localNativeConfig.agent[role]?.model !== "string"))
         fail("mixed local config hook must assign all four roles");
     const traceTest = await regularFile(root, ".opencode/plugin-modules/trace-root-permissions.test.mjs");

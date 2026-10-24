@@ -2,6 +2,7 @@ import path from "node:path";
 import type { HarnessLifecyclePlugin } from "./harness-lifecycle.ts";
 import {
   FIXED_HARNESS_ROLES,
+  normalizeAndValidateRoutingConfig,
   resolveAllHarnessRoleAssignments,
   validateNativeProviderCoherence,
 } from "../routing/routing-policy.ts";
@@ -84,6 +85,7 @@ export function resolveHarnessRoutingPath(options: HarnessRoutingContext = {}): 
 export function applyHarnessRoleModelOverrides(
   cfg: unknown,
   options: HarnessRoutingContext = {},
+  selectedPlan?: RoleAssignmentPlan,
 ): MutableRoleAssignmentPlan {
   let plan: MutableRoleAssignmentPlan;
   let native: MutableNativeConfig;
@@ -99,7 +101,7 @@ export function applyHarnessRoleModelOverrides(
                 }
               : { configPath: options.routingPath, startPath: projectPathFromContext(options) },
           ).document;
-    plan = resolveAllHarnessRoleAssignments(document);
+    plan = structuredClone(selectedPlan ?? resolveAllHarnessRoleAssignments(document));
     // The shared plan resolves all role assignments and provider-class filters
     // before any native config mutation.
     validateNativeProviderCoherence(cfg, plan);
@@ -178,12 +180,25 @@ export async function assertLocalAssignmentsReady(
   cfg: unknown,
   fetcher: typeof fetch = fetch,
   timeoutMs = 1500,
+  selectedPlan?: RoleAssignmentPlan,
 ): Promise<void> {
-  const plan = resolveAllHarnessRoleAssignments(document);
+  const plan = selectedPlan ?? resolveAllHarnessRoleAssignments(document);
   validateNativeProviderCoherence(cfg, plan);
   const selected = new Map<string, string>();
   for (const assignment of Object.values(plan.assignments)) {
     if (!assignment?.catalogName || !assignment.routingServiceUrl) continue;
+    const providerId = assignment.model.split("/")[0]!;
+    const providers = mutableNativeConfig(cfg).provider as UnknownRecord;
+    const provider = providers[providerId];
+    const modelId = assignment.model.slice(providerId.length + 1);
+    if (
+      !isRecord(provider) ||
+      !isRecord(provider.models) ||
+      !Object.hasOwn(provider.models, modelId)
+    )
+      throw new Error(
+        `Required local model ${assignment.model} needs an explicit native models map and registered model entry; managed delegation is blocked without fallback`,
+      );
     selected.set(assignment.model, assignment.routingServiceUrl);
   }
   for (const [model, base] of selected) {
@@ -243,34 +258,142 @@ export async function assertLocalAssignmentsReady(
   }
 }
 
+/** Resolve optional catalog routes once; unavailable local routes inherit the native session. */
+export async function selectAvailableRoleAssignments(
+  document: unknown,
+  cfg: unknown,
+  required = false,
+  fetcher: typeof fetch = fetch,
+  timeoutMs = 1500,
+): Promise<{ plan: RoleAssignmentPlan; inheritRoles: HarnessRole[] }> {
+  const routing = normalizeAndValidateRoutingConfig(document);
+  const plan = resolveAllHarnessRoleAssignments(routing);
+  const strict =
+    required || plan.mode === "local-only" || routing.localRouting.forceLocalForHarnessSubagents;
+  if (strict) {
+    // Configuration errors remain errors, independently of endpoint availability.
+    applyHarnessRoleModelOverrides(structuredClone(cfg), { routingDocument: routing });
+    await assertLocalAssignmentsReady(routing, cfg, fetcher, timeoutMs);
+    return { plan, inheritRoles: [] };
+  }
+  const native = mutableNativeConfig(cfg);
+  if (native.provider !== undefined && !isRecord(native.provider))
+    throw new Error("$.nativeConfig.provider must be an object");
+  const inheritRoles: HarnessRole[] = [];
+  const available = new Map<string, boolean>();
+  for (const role of FIXED_HARNESS_ROLES) {
+    const assignment = plan.assignments[role];
+    if (!assignment?.catalogName) continue;
+    // Reject unsafe URLs before the availability catch (never probe remote hosts).
+    const url = new URL(assignment.routingServiceUrl!);
+    if (
+      url.protocol !== "http:" ||
+      !["127.0.0.1", "[::1]", "localhost"].includes(url.hostname) ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash
+    )
+      throw new Error("Local readiness requires a credential-free loopback HTTP catalog endpoint");
+    const providerId = assignment.model.split("/")[0]!;
+    // An explicit provider restriction is a configuration conflict, not an outage.
+    if (
+      plan.mode === "cloud-only" ||
+      (Array.isArray(native.disabled_providers) &&
+        native.disabled_providers.includes(providerId)) ||
+      (Array.isArray(native.enabled_providers) && !native.enabled_providers.includes(providerId))
+    )
+      throw new Error(
+        `configured role ${role} selects provider ${providerId} blocked by native provider restrictions (${plan.mode} effective filters)`,
+      );
+    const providers = isRecord(native.provider) ? native.provider : {};
+    const provider = providers[providerId];
+    const modelId = assignment.model.slice(providerId.length + 1);
+    const absent =
+      provider === undefined ||
+      (isRecord(provider) &&
+        (provider.models === undefined ||
+          (isRecord(provider.models) && !Object.hasOwn(provider.models, modelId))));
+    if (absent) {
+      if (isRecord(provider)) {
+        // Missing optional model metadata is not permission to ignore a conflicting
+        // endpoint or malformed native provider. Validate those independently.
+        const metadataOnly = structuredClone(native);
+        const copiedProviders = metadataOnly.provider as UnknownRecord;
+        delete (copiedProviders[providerId] as UnknownRecord).models;
+        const single = structuredClone(plan);
+        for (const other of FIXED_HARNESS_ROLES)
+          if (other !== role) single.assignments[other] = null;
+        validateNativeProviderCoherence(metadataOnly, single);
+      }
+      plan.assignments[role] = null;
+      inheritRoles.push(role);
+    }
+  }
+  // Validate existing provider shapes, endpoint agreement and explicit cloud routes
+  // before interpreting network errors as optional-local unavailability.
+  applyHarnessRoleModelOverrides(structuredClone(cfg), { routingDocument: routing }, plan);
+  for (const role of FIXED_HARNESS_ROLES) {
+    const assignment = plan.assignments[role];
+    if (!assignment?.catalogName) continue;
+    if (!available.has(assignment.model)) {
+      const single = structuredClone(plan);
+      for (const other of FIXED_HARNESS_ROLES) if (other !== role) single.assignments[other] = null;
+      try {
+        await assertLocalAssignmentsReady(routing, cfg, fetcher, timeoutMs, single);
+        available.set(assignment.model, true);
+      } catch {
+        available.set(assignment.model, false);
+      }
+    }
+    if (!available.get(assignment.model)) {
+      plan.assignments[role] = null;
+      inheritRoles.push(role);
+    }
+  }
+  return { plan, inheritRoles };
+}
+
 export const HarnessRoleModelRoutingEnforcementPlugin = async (
   context: HarnessRoutingContext = {},
 ) => {
-  // Freeze the explicit readiness decision and document for this plugin instance.
-  // Neither success nor failure is re-probed mid-task or switched to another route.
   let selectedDocument: unknown;
-  let readiness: Promise<void> | undefined;
+  let selection: Promise<Awaited<ReturnType<typeof selectAvailableRoleAssignments>>> | undefined;
   return {
     config: async (cfg: unknown) => {
       const policy = process.env.OPENCODE_HARNESS_LOCAL_READINESS;
-      if (policy === undefined) {
-        applyHarnessRoleModelOverrides(cfg, context);
-        return;
-      }
-      if (policy !== "required")
+      if (policy !== undefined && policy !== "required")
         throw new Error("OPENCODE_HARNESS_LOCAL_READINESS must be required when set");
-      if (!readiness) {
-        readiness = (async () => {
+      if (!selection) {
+        selection = (async () => {
           selectedDocument = structuredClone(
             context.routingDocument ??
               loadRoutingConfigSelection({ configPath: resolveHarnessRoutingPath(context) })
                 .document,
           );
-          await assertLocalAssignmentsReady(selectedDocument, cfg);
+          try {
+            return await selectAvailableRoleAssignments(
+              selectedDocument,
+              cfg,
+              policy === "required",
+            );
+          } catch (error) {
+            const message = errorMessage(error);
+            if (message.startsWith("Harness role model routing enforcement failed:")) throw error;
+            throw new Error(`Harness role model routing enforcement failed: ${message}`);
+          }
         })();
       }
-      await readiness;
-      applyHarnessRoleModelOverrides(cfg, { ...context, routingDocument: selectedDocument });
+      const selected = await selection;
+      applyHarnessRoleModelOverrides(
+        cfg,
+        { ...context, routingDocument: selectedDocument },
+        selected.plan,
+      );
+      for (const role of selected.inheritRoles) {
+        const agent = mutableNativeConfig(cfg).agent?.[role];
+        if (agent) delete agent.model;
+      }
     },
   };
 };

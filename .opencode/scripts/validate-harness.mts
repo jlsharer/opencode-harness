@@ -164,7 +164,9 @@ const STATIC_MANIFEST_PATHS = [
   ".memory/references/opencode-refs.md",
   ".memory/templates/orchestration-index.md",
   ".memory/templates/role-trace-artifact.md",
+  ".memory/templates/interactive-refinement-test-plan.md",
   ".opencode/skills/delegation-orchestrator/SKILL.md",
+  ".opencode/skills/interactive-refinement/SKILL.md",
   ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md",
   ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
   ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
@@ -178,6 +180,7 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/contracts/role-io-contracts.json",
   ".opencode/schemas/role-io-contracts.schema.json",
   ".opencode/schemas/memory-trace-artifact.schema.json",
+  ".opencode/schemas/interactive-refinement-test-plan.schema.json",
   ".opencode/schemas/orchestration-input.schema.json",
   ".opencode/schemas/harness-endpoint-catalog.schema.json",
   ".opencode/schemas/harness-model-routing.schema.json",
@@ -244,6 +247,7 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/bootstrap/memory/protocols/memory-management.md",
   ".opencode/bootstrap/memory/templates/orchestration-index.md",
   ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+  ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
   ".opencode/bootstrap/native/darwin-portable-fs.c",
   ".opencode/bootstrap/native/darwin-portable-fs.universal",
   ".opencode/portable.manifest.json",
@@ -273,6 +277,7 @@ const STATIC_MEMORY_PATHS = [
   ".memory/references/opencode-refs.md",
   ".memory/templates/orchestration-index.md",
   ".memory/templates/role-trace-artifact.md",
+  ".memory/templates/interactive-refinement-test-plan.md",
 ];
 const SCHEMA_PATHS = [
   ".opencode/schemas/role-io-contracts.schema.json",
@@ -282,6 +287,7 @@ const SCHEMA_PATHS = [
   ".opencode/schemas/harness-model-routing.schema.json",
   ".opencode/schemas/harness-routing-profile.schema.json",
   ".opencode/schemas/opencode-provider-projection.schema.json",
+  ".opencode/schemas/interactive-refinement-test-plan.schema.json",
 ];
 const ROLE_CONTRACT_PATH = ".opencode/contracts/role-io-contracts.json";
 const TRACE_SCHEMA_PATH = ".opencode/schemas/memory-trace-artifact.schema.json";
@@ -627,12 +633,12 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   if (!destinations.includes("schemas/opencode-provider-projection.schema.json"))
     fail("Runtime manifest must include the provider projection schema");
   if (
-    runtimeManifest.files.length !== 42 ||
+    runtimeManifest.files.length !== 45 ||
     !destinations.includes("plugin-modules/task-thread-policy.js") ||
     !destinations.includes("plugin-modules/trace-root-permissions.js")
   )
     fail(
-      "Runtime manifest must contain the exact 42-file external runtime including trace permissions",
+      "Runtime manifest must contain the exact 45-file external runtime including interactive refinement",
     );
   const packageManifest = json("package.json");
   if (
@@ -746,8 +752,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     devDependencies["typescript-eslint"] !== "8.68.0"
   )
     fail("Package must pin the approved ESLint TypeScript stylistic toolchain");
-  if (packageManifest.files.length !== 33 || new Set(packageManifest.files).size !== 33)
-    fail("Package files selector allowlist must contain exactly 33 unique entries");
+  if (packageManifest.files.length !== 35 || new Set(packageManifest.files).size !== 35)
+    fail("Package files selector allowlist must contain exactly 35 unique entries");
   const selectors = [
     ".opencode/plugin-modules/task-contracts.js",
     ".opencode/plugin-modules/dispatch-controller.js",
@@ -762,6 +768,7 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/agents/researcher.md",
     ".opencode/commands/delegate-*.md",
     ".opencode/skills/delegation-orchestrator/SKILL.md",
+    ".opencode/skills/interactive-refinement/SKILL.md",
     ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
     ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
     ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
@@ -782,6 +789,7 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/bootstrap/memory/protocols/memory-management.md",
     ".opencode/bootstrap/memory/templates/orchestration-index.md",
     ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+    ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
   ];
   sameSet(packageManifest.files, selectors, "exact package selector allowlist");
   const result = spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: ROOT, encoding: "utf8" });
@@ -815,8 +823,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/runtime.manifest.json",
     ...runtimeManifest.files.map((entry) => entry.source),
   ];
-  if (actual.length !== 46 || new Set(actual).size !== 46)
-    fail(`npm payload must contain exactly 46 unique paths; got ${actual.length}`);
+  if (actual.length !== 49 || new Set(actual).size !== 49)
+    fail(`npm payload must contain exactly 49 unique paths; got ${actual.length}`);
   sameSet(actual, expected, "exact npm payload allowlist");
   const launcher = report.files.find((entry) => entry.path === "bin/opencode-harness.mjs");
   if (!launcher || launcher.mode !== 0o755) fail("npm payload launcher must retain mode 0755");
@@ -1043,6 +1051,7 @@ function assertMemorySeeds() {
     "protocols/memory-management.md",
     "templates/orchestration-index.md",
     "templates/role-trace-artifact.md",
+    "templates/interactive-refinement-test-plan.md",
   ]) {
     const source = `.memory/${relative}`;
     const seed = `.opencode/bootstrap/memory/${relative}`;
@@ -1051,13 +1060,14 @@ function assertMemorySeeds() {
   }
   const portableManifest = json(".opencode/portable.manifest.json");
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 55 || mappings.length !== 4)
-    fail("Portable manifest must contain exactly 55 managed files plus four memory seeds");
+  if (portableManifest.managedFiles?.length !== 58 || mappings.length !== 5)
+    fail("Portable manifest must contain exactly 58 managed files plus five memory seeds");
   const expectedTargets = [
     ".memory/INDEX.md",
     ".memory/protocols/memory-management.md",
     ".memory/templates/orchestration-index.md",
     ".memory/templates/role-trace-artifact.md",
+    ".memory/templates/interactive-refinement-test-plan.md",
   ];
   sameSet(
     mappings.map((entry: { target: string }) => entry.target),

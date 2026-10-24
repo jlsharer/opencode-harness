@@ -1,0 +1,16 @@
+---
+name: interactive-refinement
+description: Guides owner-led iterative refinement of a feature or defect through bounded implementation rounds, versioned manual testing, and independent validation; use when an owner wants to test changes, report observations, and decide whether another round is needed.
+---
+
+# Interactive Refinement
+
+Use this workflow for a concrete feature or defect with an owner available to perform manual tests. It coordinates refinement, not delegation mechanics or a substitute for owner approval. `/delegate-orchestration` is the sole dispatch entry point; the delegation-orchestrator skill and its contracts remain authoritative. The active roles are `researcher`, `planner`, `implementer`, and `validator`.
+
+1. Before implementation, agree with the owner on a measurable goal, observable success criteria, manual test environment, finite positive maximum rounds, and applicable agent/attempt budget. Record the agreement and identify the next safe action in a test plan based on `.memory/templates/interactive-refinement-test-plan.md`. If these are not agreed, ask rather than start a round.
+2. Default to serial rounds and serial role work. Request separately scoped fresh tasks through `/delegate-orchestration` for planning, implementation and independent validation as needed; do not invent parallel capacity or reuse a completed task thread. The orchestrator enforces its own dispatch, trace and budget rules. Keep a bounded change scope and link the round's implementation and automation evidence.
+3. For each round, have a planner revise the versioned manual tasks for unresolved risks and prior feedback. Retain earlier round records and task results unchanged, identify added/changed/retired tasks, and keep stable task IDs for tasks reused without changing their meaning. The implementer makes scoped changes and runs relevant automation; an independent validator checks the changed behavior and automation on the resulting tree before code acceptance. A passing automation check never stands in for a manual owner verdict.
+4. Give the owner ordered manual steps and expected observable results. Record actual observations, questions and owner feedback only when supplied; until then mark them pending. The owner reports `success`, `needs-work`, or `blocked` (or leaves `pending` while undecided). An owner success verdict is not independent validator proof. Decide whether the measurable goal is met, a new PRD goal is needed where applicable, or a budgeted next round addresses the remaining issues.
+5. Stop without claiming success on a failed validation gate, missing owner decision, blocker, exhausted round/agent budget, or unsafe interruption. State the blocker or next safe action; never retry indefinitely or imply a live provider or deployment check occurred without evidence.
+
+The Markdown template is a human-maintained plan. `.opencode/schemas/interactive-refinement-test-plan.schema.json` describes an optional structured JSON record with corresponding concepts; it does not validate Markdown or replace owner sign-off. Use the template's field correspondence when recording both formats. After installing or changing this skill, restart OpenCode to load it.

@@ -37,3 +37,5 @@ Authority and path resolution: the parent-owned `delegation-orchestrator` skill 
 ## Structured terminal result
 
 Return one JSON result object using the enforced ephemeral dispatch protocol in the immutable memory-management source: version, exact task identity, outcome, summary, evidence, artifacts, and (for success) the existing role-specific outputContract. A success without required artifact references or evidence is rejected. The adapter computes artifact digests and rejects any supplied digest that does not match. Use blocked/failed with a reason rather than claiming an unrun command passed. Existing nonce-bound clarification envelopes remain valid. Native managed shell is read-only and exact-command bounded; do not bypass it with another tool.
+
+For managed gates, use `harness_verify` with the exact assigned command; it records the observed exit status from the same read-only Bubblewrap boundary. Use `harness_trace` for your immutable role trace when native `write`/`edit` is unavailable. Never infer success from stdout alone.

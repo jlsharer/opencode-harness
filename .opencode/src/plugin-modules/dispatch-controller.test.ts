@@ -113,6 +113,26 @@ test("workflow validates references and rejects cycles, duplicate declarations a
     assert.throws(() => validateWorkflow(spec));
   }
 });
+test("write-producing source and package QA cannot become managed acceptance gates", () => {
+  for (const command of [
+    "node .opencode/scripts/validate-" + "harness.mts",
+    "node .opencode/scripts/validate-portable-harness.mjs --root .",
+    "npm pack --dry-run --json",
+    "npm test",
+    "npm run build",
+  ]) {
+    const spec = validWorkflow();
+    spec.acceptanceGates[0]!.evidenceCommand = command;
+    assert.throws(() => validateWorkflow(spec), /managed acceptance gate needs read-only/);
+  }
+  const readOnly = validWorkflow();
+  readOnly.acceptanceGates[0]!.evidenceCommand =
+    "node --check .opencode/plugin-modules/managed-dispatch.js";
+  assert.equal(
+    validateWorkflow(readOnly).acceptanceGates[0]!.evidenceCommand,
+    readOnly.acceptanceGates[0]!.evidenceCommand,
+  );
+});
 test("scope containment and unsupported authority fail closed", () => {
   for (const path of ["/tmp/a", "../a", "src/../a", ".git/config", "src/*", "src\\a", "src//a"])
     assert.throws(() => safeScopePath(path));

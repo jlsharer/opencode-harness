@@ -13,6 +13,15 @@ function text(value, label) {
         fail(`invalid ${label}`);
     return value;
 }
+/** Known non-read-only gates fail before a workflow is registered or consumes attempts.
+ * This is not a general shell analyzer: other gates still need a reviewed input/write boundary. */
+function managedGate(value) {
+    const command = text(value, "evidenceCommand");
+    if (/^node\s+\.opencode\/scripts\/validate-(?:harness\.mts|portable-harness\.mjs)(?:\s|$)/.test(command) ||
+        /^(?:npm|pnpm|yarn|bun)\s+(?:pack|install|ci|test|run\s+(?:build|compile|format|test(?::\S+)?|check:generated))(?:\s|$)/.test(command))
+        fail("managed acceptance gate needs read-only inputs and no host writes; run package/source QA separately outside managed verification");
+    return command;
+}
 function id(value) {
     const result = text(value, "identifier");
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}$/.test(result))
@@ -107,7 +116,7 @@ export function validateWorkflow(input) {
         text(gate.criterion, "criterion");
         return {
             id: id(gate.id),
-            evidenceCommand: text(gate.evidenceCommand, "evidenceCommand"),
+            evidenceCommand: managedGate(gate.evidenceCommand),
             workUnitIds: strings(gate.workUnitIds, "gate workUnitIds").map(id),
         };
     });

@@ -481,7 +481,7 @@ docker compose --env-file config/nodes/secondary.env.example -f compose.yaml -f 
 
 ```bash
 cd /home/joshl/projects/opencode-harness
-node .opencode/scripts/validate-harness.mjs
+node .opencode/scripts/validate-harness.mts
 git diff --check -- local-ai-nodes-quickstart.md opencode.json
 ```
 

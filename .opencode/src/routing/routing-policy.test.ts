@@ -25,6 +25,7 @@ import { loadRoutingConfig, parseArgs } from "./resolve-model-routing.ts";
 import {
   applyHarnessRoleModelOverrides,
   assertLocalAssignmentsReady,
+  selectAvailableRoleAssignments,
   HarnessRoleModelRoutingEnforcementPlugin,
   resolveHarnessRoutingPath,
 } from "../plugin-modules/role-model-routing-enforcement.ts";
@@ -1620,4 +1621,211 @@ test("local readiness freezes success and failure for the plugin instance withou
     if (old === undefined) delete process.env.OPENCODE_HARNESS_LOCAL_READINESS;
     else process.env.OPENCODE_HARNESS_LOCAL_READINESS = old;
   }
+});
+
+test("optional local selection inherits when transport metadata or exact served model is absent", async () => {
+  for (const missing of ["provider", "model", "offline", "wrong-model"]) {
+    const document = clone(localCommitted);
+    const cfg = nativeConfig();
+    const before = clone(cfg);
+    let calls = 0;
+    if (missing === "provider") cfg.provider = {};
+    if (missing === "model")
+      for (const provider of Object.values(cfg.provider)) provider.models = {};
+    const selected = await selectAvailableRoleAssignments(document, cfg, false, async (input) => {
+      calls++;
+      if (missing === "offline") throw new Error("fixture offline");
+      return Response.json(
+        String(input).endsWith("/health") ? { status: "ok" } : { data: [{ id: "wrong" }] },
+      );
+    });
+    assert.ok(Object.values(selected.plan.assignments).every((value) => value === null));
+    assert.equal(selected.inheritRoles.length, 4);
+    if (["provider", "model"].includes(missing)) assert.equal(calls, 0);
+    else assert.deepEqual(cfg, before);
+  }
+});
+
+test("optional healthy local route overrides while explicit cloud and neutral inheritance remain unchanged", async () => {
+  let calls = 0;
+  const healthy: typeof fetch = async (input) => {
+    calls++;
+    return Response.json(
+      String(input).endsWith("/health")
+        ? { status: "ok" }
+        : { data: [{ id: "qwen2.5-7b-instruct" }, { id: "qwen2.5-coder-7b" }] },
+    );
+  };
+  const local = await selectAvailableRoleAssignments(
+    localCommitted,
+    nativeConfig(),
+    false,
+    healthy,
+  );
+  assert.equal(local.inheritRoles.length, 0);
+  assert.deepEqual(local.plan, resolveAllHarnessRoleAssignments(localCommitted));
+  const priorCalls = calls;
+  const neutral = await selectAvailableRoleAssignments(committed, {}, false, healthy);
+  assert.ok(Object.values(neutral.plan.assignments).every((v) => v === null));
+  assert.equal(calls, priorCalls);
+});
+
+test("optional unavailable route is frozen and deletes stale role model to inherit selected session", async () => {
+  const old = process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+  const savedFetch = globalThis.fetch;
+  delete process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+  let calls = 0;
+  try {
+    globalThis.fetch = async () => {
+      calls++;
+      throw new Error("offline fixture");
+    };
+    const plugin = await HarnessRoleModelRoutingEnforcementPlugin({
+      routingDocument: localCommitted,
+    });
+    const cfg = nativeConfig();
+    await plugin.config(cfg);
+    for (const role of FIXED_HARNESS_ROLES)
+      assert.equal(Object.hasOwn(cfg.agent[role]!, "model"), false);
+    const first = calls;
+    globalThis.fetch = async () => {
+      calls++;
+      return Response.json({ status: "ok" });
+    };
+    await plugin.config(nativeConfig());
+    assert.equal(calls, first);
+  } finally {
+    globalThis.fetch = savedFetch;
+    if (old === undefined) delete process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+    else process.env.OPENCODE_HARNESS_LOCAL_READINESS = old;
+  }
+});
+
+test("optional routing never masks malformed configuration and forced local never inherits on outage", async () => {
+  const offline: typeof fetch = async () => {
+    throw new Error("offline fixture");
+  };
+  await assert.rejects(
+    selectAvailableRoleAssignments({ bad: true }, {}, false, offline),
+    /unknown property/,
+  );
+  const cfg = nativeConfig();
+  cfg.provider["llamacpp-research"]!.options.baseURL = "http://127.0.0.1:8999/v1";
+  await assert.rejects(
+    selectAvailableRoleAssignments(localCommitted, cfg, false, offline),
+    /must equal catalog URL/,
+  );
+  cfg.provider["llamacpp-research"]!.models = {};
+  await assert.rejects(
+    selectAvailableRoleAssignments(localCommitted, cfg, false, offline),
+    /must equal catalog URL/,
+  );
+  await assert.rejects(
+    selectAvailableRoleAssignments(forceConfig(), nativeConfig(), false, offline),
+    /blocked without remote fallback/,
+  );
+  await assert.rejects(
+    selectAvailableRoleAssignments(localCommitted, nativeConfig(), true, offline),
+    /blocked without remote fallback/,
+  );
+});
+
+test("repaired legacy Open Court optional catalog cannot block native inheritance before Task", async () => {
+  const doc = clone(committed);
+  const routing = doc.harnessModelRouting;
+  routing.localRouting.enabled = true;
+  routing.localRouting.models = {
+    "qwen-research": {
+      model: "llamacpp-research/qwen2.5-7b-instruct",
+      routingServiceUrl: "http://127.0.0.1:8080/v1",
+      maxInFlight: 2,
+    },
+  };
+  // Undefined qwen-coder references and retired role/command keys were removed
+  // by the backed-up consumer migration, not silently accepted by the schema.
+  for (const role of ["researcher", "planner", "validator"] as const)
+    routing.roleOverrides[role].localModel = "qwen-research";
+  const saved = process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+  delete process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+  try {
+    const hooks = await HarnessPlugin({ routingDocument: doc });
+    const cfg = nativeConfig();
+    cfg.provider = {};
+    await hooks.config(cfg);
+    for (const role of FIXED_HARNESS_ROLES) assert.equal(cfg.agent[role]!.model, undefined);
+    await assert.rejects(
+      hooks["tool.execute.before"](
+        { tool: "task", sessionID: "parent", callID: "fixture" },
+        { args: {} },
+      ),
+      /absolute workspace root/,
+    );
+  } finally {
+    if (saved === undefined) delete process.env.OPENCODE_HARNESS_LOCAL_READINESS;
+    else process.env.OPENCODE_HARNESS_LOCAL_READINESS = saved;
+  }
+});
+
+test("explicit cloud route survives optional local outage without choosing a substitute", async () => {
+  const routing = clone(localCommitted);
+  routing.harnessModelRouting.roleOverrides.researcher = {
+    model: "cloud/chosen",
+    localModel: null,
+    variant: null,
+  };
+  const cfg = nativeConfig();
+  cfg.provider.cloud = {
+    options: { baseURL: "https://example.invalid/v1" },
+    models: { chosen: { name: "chosen" } },
+  };
+  const selected = await selectAvailableRoleAssignments(routing, cfg, false, async () => {
+    throw new Error("offline");
+  });
+  assert.equal(selected.plan.assignments.researcher?.model, "cloud/chosen");
+  assert.equal(selected.inheritRoles.includes("researcher"), false);
+  assert.ok(selected.inheritRoles.length > 0);
+});
+
+test("missing native models map inherits only for optional local routing without probing", async () => {
+  const cfg = nativeConfig();
+  for (const provider of Object.values(cfg.provider)) Reflect.deleteProperty(provider, "models");
+  let calls = 0;
+  const healthy: typeof fetch = async (input) => {
+    calls++;
+    return Response.json(
+      String(input).endsWith("/health")
+        ? { status: "ok" }
+        : { data: [{ id: "qwen2.5-7b-instruct" }, { id: "qwen2.5-coder-7b" }] },
+    );
+  };
+  const selected = await selectAvailableRoleAssignments(localCommitted, cfg, false, healthy);
+  assert.equal(selected.inheritRoles.length, 4);
+  assert.ok(Object.values(selected.plan.assignments).every((assignment) => assignment === null));
+  assert.equal(calls, 0);
+  for (const [document, required] of [
+    [localCommitted, true],
+    [forceConfig(), false],
+  ] as const)
+    await assert.rejects(
+      selectAvailableRoleAssignments(document, cfg, required, healthy),
+      /explicit native models map/,
+    );
+  assert.equal(calls, 0);
+});
+
+test("missing model map never masks malformed maps or conflicting endpoints", async () => {
+  const cfg = nativeConfig();
+  for (const value of [null, [], "invalid"]) {
+    Reflect.set(cfg.provider["llamacpp-research"]!, "models", value);
+    await assert.rejects(
+      selectAvailableRoleAssignments(localCommitted, cfg),
+      /models.*must be an object/,
+    );
+  }
+  Reflect.deleteProperty(cfg.provider["llamacpp-research"]!, "models");
+  cfg.provider["llamacpp-research"]!.options.baseURL = "http://127.0.0.1:8999/v1";
+  await assert.rejects(
+    selectAvailableRoleAssignments(localCommitted, cfg),
+    /must equal catalog URL/,
+  );
 });

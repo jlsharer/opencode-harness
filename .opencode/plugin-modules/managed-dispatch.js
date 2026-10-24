@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { withinScope, createDispatchController } from "./dispatch-controller.js";
 import { formatTaskResultWrapper, createTaskThreadPolicy } from "./task-thread-policy.js";
 import { validateTaskPacket } from "./task-contracts.js";
@@ -117,6 +118,16 @@ export function createManagedDispatch(options) {
     const knownChildren = new Set();
     let active = null;
     let stopped = false;
+    let recoveryOwner = null;
+    let recoveryId = null;
+    let recoveryReason = null;
+    let recoveryBefore = null;
+    let recoveryAllowedPaths = [];
+    let recoveryProofReady = false;
+    let recoveryResolving = false;
+    let recoveryFault = false;
+    let terminationReconciled = false;
+    let recoveries = 0;
     const report = options.telemetry ?? (() => { });
     function snapshot(id, validationInputs = runs.get(id)?.controller.spec.validationInputs ?? []) {
         return captureWorkspace(options.workspaceRoot, {
@@ -132,7 +143,28 @@ export function createManagedDispatch(options) {
         if (readDocument(options.traceRoot, run.source).digest !== run.digest)
             throw new Error("workflow changed after registration; restart requires a fresh orchestration ID");
     }
-    function interrupt(reason) {
+    function interrupt(reason, terminal) {
+        if (stopped && active && !terminal)
+            recoveryFault = true;
+        recoveryProofReady = false;
+        if (!stopped) {
+            recoveryOwner = active?.run.parent ?? terminal?.parent ?? null;
+            recoveryId = active?.context.orchestrationId ?? terminal?.orchestrationId ?? null;
+            recoveryReason = reason;
+            if (active) {
+                recoveryBefore = active.before;
+                const unit = active.run.controller.spec.workUnits.find((entry) => entry.id === active.context.scopeKey);
+                recoveryAllowedPaths =
+                    active.context.role === "implementer" ? (unit?.allowedPaths ?? []) : [];
+            }
+        }
+        if (terminal &&
+            !active &&
+            terminal.parent === recoveryOwner &&
+            terminal.orchestrationId === recoveryId) {
+            terminationReconciled = true;
+            recoveryFault = false;
+        }
         stopped = true;
         if (active?.timer)
             clearTimeout(active.timer);
@@ -204,7 +236,8 @@ export function createManagedDispatch(options) {
         report({ event: "cancel-requested", delegationTaskId: task.context.delegationTaskId, reason });
         // Publish the single termination promise before invoking native abort: abort itself
         // may emit session.error and re-enter interruption. Never release on acknowledgement alone.
-        task.termination = Promise.resolve().then(async () => {
+        task.termination = Promise.resolve()
+            .then(async () => {
             const launchedWhenAbortRequested = task.nativeStarted;
             await transport.abort(task.childId);
             if (!launchedWhenAbortRequested) {
@@ -220,8 +253,22 @@ export function createManagedDispatch(options) {
             if (active !== task || observed.parent !== parent || !observed.idle)
                 throw new Error("native termination not reconciled; capacity retained");
             task.run.controller.reconcileCancelled(task.context.delegationTaskId);
+            recoveryBefore = task.before;
+            const unit = task.run.controller.spec.workUnits.find((entry) => entry.id === task.context.scopeKey);
+            recoveryAllowedPaths =
+                task.context.role === "implementer" ? (unit?.allowedPaths ?? []) : [];
             active = null;
-            interrupt("background cancellation reconciled; fresh reviewed workflow process required");
+            interrupt("background cancellation reconciled; fresh reviewed workflow required", {
+                parent,
+                orchestrationId: task.context.orchestrationId,
+            });
+        })
+            .catch((error) => {
+            interrupt("native abort or idle reconciliation failed; termination uncertain");
+            throw error;
+        })
+            .finally(() => {
+            task.terminationSettled = true;
         });
         return task.termination;
     }
@@ -296,6 +343,172 @@ export function createManagedDispatch(options) {
         }
     }
     let dispatching = false;
+    function recoveryCaller(sessionID) {
+        const id = identifier(sessionID);
+        if (!stopped || !recoveryOwner || id !== recoveryOwner || knownChildren.has(id))
+            throw new Error("managed recovery requires the bound stopped parent");
+        return id;
+    }
+    /** Retry a failed or unobserved native termination without replaying the old Task.
+     * An acknowledged launch is mandatory: abort+idle before launch is not a fence.
+     */
+    async function resolveRecovery(sessionID) {
+        const parent = recoveryCaller(sessionID);
+        if (recoveryResolving)
+            throw new Error("managed recovery termination already in progress");
+        const task = active;
+        if (!task ||
+            !recoveryId ||
+            task.context.orchestrationId !== recoveryId ||
+            !task.childId ||
+            !transport ||
+            task.pendingLaunches.size !== 0 ||
+            (!task.background && !task.foregroundCompleted) ||
+            (task.termination && !task.terminationSettled))
+            return {
+                state: "blocked",
+                reason: "native launch or child identity has not been reconciled; await the native Task callback",
+            };
+        recoveryResolving = true;
+        recoveryProofReady = false;
+        try {
+            // A completed blocking Task needs only inspection. For an interrupted
+            // background Task, a fresh abort acknowledgement is required even if an
+            // earlier abort failed or appeared to succeed before termination.
+            if (task.background)
+                await transport.abort(task.childId);
+            const observed = await transport.inspect(task.childId);
+            if (active !== task ||
+                !stopped ||
+                observed.parent !== parent ||
+                !observed.idle ||
+                task.pendingLaunches.size !== 0)
+                throw new Error("native child termination or parent identity remains uncertain");
+            const state = task.run.controller
+                .snapshot()
+                .attempts.find((entry) => entry.id === task.context.delegationTaskId)?.state;
+            if (state === "cancel-requested")
+                task.run.controller.reconcileCancelled(task.context.delegationTaskId);
+            else if (state !== "cancelled")
+                throw new Error("old task is not terminal or cancel-requested");
+            recoveryBefore = task.before;
+            const unit = task.run.controller.spec.workUnits.find((entry) => entry.id === task.context.scopeKey);
+            recoveryAllowedPaths = task.context.role === "implementer" ? (unit?.allowedPaths ?? []) : [];
+            active = null;
+            terminationReconciled = true;
+            recoveryFault = false;
+            report({ event: "recovery-termination-reconciled", priorOrchestrationId: recoveryId });
+            return { state: "terminated", orchestrationId: recoveryId };
+        }
+        catch {
+            return {
+                state: "blocked",
+                reason: "native abort, identity, or idle proof unavailable",
+            };
+        }
+        finally {
+            recoveryResolving = false;
+        }
+    }
+    async function recoveryStatus(sessionID) {
+        const parent = recoveryCaller(sessionID);
+        recoveryProofReady = false;
+        const blocked = (reason) => ({
+            state: "blocked",
+            orchestrationId: recoveryId,
+            reason,
+            nextAction: "retain the old marker; await pending native callbacks or retry harness_recovery_resolve, then request status again",
+        });
+        if (!recoveryId ||
+            !recoveryReason ||
+            !recoveryBefore ||
+            recoveryFault ||
+            recoveryResolving ||
+            dispatching ||
+            reconciling ||
+            recoveries >= 4)
+            return blocked("recovery state is uncertain or process limit reached");
+        const task = active;
+        if (task) {
+            if (task.background ||
+                !task.foregroundCompleted ||
+                task.pendingLaunches.size !== 0 ||
+                !task.childId ||
+                !transport)
+                return blocked("native worker launch or termination remains unverified");
+            try {
+                const observed = await transport.inspect(task.childId);
+                if (!stopped || active !== task || observed.parent !== parent || !observed.idle)
+                    return blocked("native worker is not confirmed idle under the bound parent");
+            }
+            catch {
+                return blocked("native session identity or idle status is unavailable");
+            }
+        }
+        else if (!terminationReconciled)
+            return blocked("native termination was not reconciled");
+        try {
+            for (const run of runs.values())
+                verifySpec(run);
+            const current = snapshot(recoveryId);
+            assertAllowedTransition(recoveryBefore, current, recoveryAllowedPaths);
+            const changed = [
+                ...new Set([...Object.keys(recoveryBefore.files), ...Object.keys(current.files)]),
+            ]
+                .filter((name) => recoveryBefore.files[name] !== current.files[name])
+                .sort();
+            if (changed.length > 32)
+                return blocked("workspace effects exceed review bound");
+            recoveryProofReady = true;
+            return {
+                state: "ready",
+                orchestrationId: recoveryId,
+                treeHash: current.treeHash,
+                changedFiles: changed,
+                reason: recoveryReason,
+                nextAction: "review workspace effects, then request fresh-only release with this tree hash",
+            };
+        }
+        catch {
+            return blocked("workflow marker, specification or workspace inventory changed");
+        }
+    }
+    async function releaseForFresh(sessionID, expectedTreeHash) {
+        const parent = recoveryCaller(sessionID);
+        if (typeof expectedTreeHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedTreeHash))
+            throw new Error("managed recovery requires an exact reviewed tree hash");
+        if (recoveryResolving)
+            throw new Error("managed recovery termination still in progress");
+        const proof = await recoveryStatus(parent);
+        if (proof.state !== "ready" || proof.treeHash !== expectedTreeHash)
+            throw new Error("managed recovery cannot release an uncertain or changed worker");
+        for (const run of runs.values())
+            verifySpec(run);
+        if (snapshot(recoveryId).treeHash !== expectedTreeHash)
+            throw new Error("managed recovery workspace changed after native reconciliation");
+        const prior = recoveryId;
+        active = null;
+        stopped = false;
+        recoveryOwner = null;
+        recoveryId = null;
+        recoveryReason = null;
+        recoveryBefore = null;
+        recoveryAllowedPaths = [];
+        recoveryProofReady = false;
+        recoveryFault = false;
+        terminationReconciled = false;
+        recoveries++;
+        report({ event: "fresh-recovery-enabled", priorOrchestrationId: prior, resumable: false });
+        return { state: "fresh-only", priorOrchestrationId: prior, treeHash: proof.treeHash };
+    }
+    function interruptIfCurrent(sessionID, reason) {
+        if (!active)
+            return false;
+        if (sessionID !== undefined && sessionID !== active.run.parent && sessionID !== active.childId)
+            return false;
+        interrupt(reason);
+        return true;
+    }
     async function beforeTask(input, args) {
         if (dispatching)
             throw new Error("managed dispatch admission already in progress");
@@ -397,6 +610,10 @@ export function createManagedDispatch(options) {
                 active.nativeStarted = false;
                 active.expectedMessages++;
                 args.background = true;
+            }
+            else {
+                active.foregroundCompleted = false;
+                active.pendingLaunches.add(callId);
             }
             return;
         }
@@ -514,6 +731,21 @@ export function createManagedDispatch(options) {
         verifySpec(run);
         if (snapshot(orchestrationId).treeHash !== before.treeHash)
             throw new Error("workspace changed while expanding context");
+        // Goals are validated by the controller but intentionally omitted from its projection.
+        const selected = record(doc.value).workUnits;
+        const selectedGoal = Array.isArray(selected)
+            ? selected.find((entry) => record(entry).id === context.scopeKey)
+            : undefined;
+        const goal = selectedGoal ? record(selectedGoal).goal : null;
+        const safeGoal = run.controller.spec.roleModeTaskMapping.some((mapping) => mapping.workUnitId === context.scopeKey &&
+            mapping.role === role &&
+            mapping.taskMode === context.taskMode) &&
+            typeof goal === "string" &&
+            goal.length > 0 &&
+            goal.length <= 240 &&
+            !/[\u0000-\u001f\u007f-\u009f]/.test(goal)
+            ? goal
+            : null;
         run.policy.validateBeforeTask({ sessionID: parent, callID: callId, args });
         run.controller.reserve({
             id: context.delegationTaskId,
@@ -534,6 +766,7 @@ export function createManagedDispatch(options) {
         active = {
             run,
             context,
+            goal: safeGoal,
             packet,
             before,
             callId,
@@ -585,6 +818,20 @@ export function createManagedDispatch(options) {
         }
     }
     function beforeTool(input, args) {
+        if (["harness_recovery_status", "harness_recovery_resolve", "harness_recovery_release"].includes(String(input.tool))) {
+            recoveryCaller(input.sessionID);
+            if (input.tool !== "harness_recovery_release" && Object.keys(args).length)
+                throw new Error("managed recovery status and resolve have no arguments");
+            if (input.tool === "harness_recovery_release" &&
+                (Object.keys(args).length !== 1 || !Object.hasOwn(args, "expectedTreeHash")))
+                throw new Error("managed recovery release requires only expectedTreeHash");
+            return args;
+        }
+        if (stopped &&
+            recoveryProofReady &&
+            input.sessionID === recoveryOwner &&
+            ["read", "grep", "glob", "list"].includes(String(input.tool)))
+            return args;
         if (stopped)
             throw new Error("managed run interrupted; tools disabled until a new reviewed workflow process");
         if (!active) {
@@ -608,6 +855,19 @@ export function createManagedDispatch(options) {
         verifySpec(active.run);
         const unit = active.run.controller.spec.workUnits.find((u) => u.id === active.context.scopeKey);
         const role = active.context.role;
+        if (input.tool === "harness_verify" || input.tool === "harness_trace") {
+            if (input.tool === "harness_verify" &&
+                (role !== "validator" ||
+                    !active.packet.commandsToRun.includes(args.command)))
+                throw new Error("managed verification requires an assigned validator command");
+            return args;
+        }
+        if (input.tool === "harness_source_edit" || input.tool === "harness_source_replace") {
+            if (role !== "implementer" ||
+                !active.packet.targetPaths.includes(args.filePath))
+                throw new Error("managed source edit requires an assigned implementer target");
+            return args;
+        }
         const commands = role === "validator"
             ? active.run.controller.spec.acceptanceGates
                 .filter((g) => unit.acceptanceGateIds.includes(g.id))
@@ -691,6 +951,141 @@ export function createManagedDispatch(options) {
             taskId: active.context.delegationTaskId,
         });
     }
+    function verifyCommand(sessionID, command) {
+        if (!active || active.childId !== sessionID || active.context.role !== "validator")
+            throw new Error("managed verification requires the bound validator child");
+        const callID = randomUUID();
+        const prepared = beforeTool({ sessionID, callID, tool: "bash" }, { command });
+        const run = spawnSync("/bin/sh", ["-c", prepared.command], {
+            cwd: prepared.workdir,
+            timeout: prepared.timeout,
+            encoding: "utf8",
+            maxBuffer: 1024 * 1024,
+        });
+        if (run.error || !Number.isInteger(run.status)) {
+            active?.pendingCommands.delete(callID);
+            throw new Error("isolated verification did not provide a native process exit status");
+        }
+        afterTool({ sessionID, callID, tool: "bash" }, { metadata: { exit: run.status } });
+        return { command, exitCode: run.status, stdout: run.stdout, stderr: run.stderr };
+    }
+    function writeTrace(sessionID, filePath, content) {
+        if (!active || active.childId !== sessionID)
+            throw new Error("managed trace creation requires the bound role child");
+        const prefix = `orchestrations/${active.context.orchestrationId}/roles/${active.context.role}/`;
+        if (typeof filePath !== "string" ||
+            !filePath.startsWith(prefix) ||
+            !/^[A-Za-z0-9][A-Za-z0-9._-]{0,159}\.md$/.test(filePath.slice(prefix.length)))
+            throw new Error("managed trace outside assigned role directory");
+        if (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > 65536)
+            throw new Error("managed trace content exceeds bound or is empty");
+        const absolute = path.join(options.traceRoot, filePath);
+        const args = beforeTool({ sessionID, tool: "write" }, { filePath: absolute, content });
+        fs.mkdirSync(path.dirname(args.filePath), { recursive: true, mode: 0o700 });
+        const checked = beforeTool({ sessionID, tool: "write" }, { filePath: absolute, content });
+        fs.writeFileSync(checked.filePath, content, { flag: "wx", mode: 0o600 });
+        return path
+            .relative(options.traceRoot, checked.filePath)
+            .split(path.sep)
+            .join("/");
+    }
+    function editSource(sessionID, filePath, expectedContent, content) {
+        if (!active || active.childId !== sessionID || active.context.role !== "implementer")
+            throw new Error("managed source edit requires the bound implementer child");
+        if (typeof filePath !== "string" || !active.packet.targetPaths.includes(filePath))
+            throw new Error("managed source edit outside assigned target paths");
+        if (typeof expectedContent !== "string" ||
+            typeof content !== "string" ||
+            !content.trim() ||
+            content.includes("\0") ||
+            Buffer.byteLength(expectedContent) > 65536 ||
+            Buffer.byteLength(content) > 65536 ||
+            expectedContent === content)
+            throw new Error("managed source edit requires bounded distinct UTF-8 contents");
+        let checked = beforeTool({ sessionID, tool: "write" }, { filePath, content });
+        if (expectedContent === "") {
+            fs.mkdirSync(path.dirname(checked.filePath), { recursive: true, mode: 0o700 });
+            checked = beforeTool({ sessionID, tool: "write" }, { filePath, content });
+            fs.writeFileSync(checked.filePath, content, { flag: "wx", mode: 0o644 });
+        }
+        else {
+            const fd = fs.openSync(checked.filePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+            try {
+                const stat = fs.fstatSync(fd);
+                if (!stat.isFile() ||
+                    stat.size > 65536 ||
+                    !fs.readFileSync(fd).equals(Buffer.from(expectedContent, "utf8")))
+                    throw new Error("managed source edit stale or mismatched prior content");
+                const current = fs.lstatSync(checked.filePath);
+                if (current.isSymbolicLink() || current.dev !== stat.dev || current.ino !== stat.ino)
+                    throw new Error("managed source edit target changed before write");
+                fs.writeFileSync(checked.filePath, content);
+            }
+            finally {
+                fs.closeSync(fd);
+            }
+        }
+        return { filePath, sha256: createHash("sha256").update(content).digest("hex") };
+    }
+    function replaceSource(sessionID, filePath, expectedContent, content) {
+        if (!active || active.childId !== sessionID || active.context.role !== "implementer")
+            throw new Error("managed source replacement requires the bound implementer child");
+        if (typeof filePath !== "string" || !active.packet.targetPaths.includes(filePath))
+            throw new Error("managed source replacement outside assigned target paths");
+        if (typeof expectedContent !== "string" ||
+            typeof content !== "string" ||
+            !expectedContent ||
+            expectedContent === content ||
+            expectedContent.includes("\0") ||
+            content.includes("\0") ||
+            Buffer.byteLength(expectedContent) > 8192 ||
+            Buffer.byteLength(content) > 8192)
+            throw new Error("managed source replacement requires bounded distinct UTF-8 fragments");
+        const checked = beforeTool({ sessionID, tool: "edit" }, { filePath });
+        const filename = checked.filePath;
+        const fd = fs.openSync(filename, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+        try {
+            const before = fs.fstatSync(fd);
+            if (!before.isFile() || before.size > 8 * 1024 * 1024)
+                throw new Error("managed source replacement requires a bounded regular file");
+            const original = fs.readFileSync(fd);
+            new TextDecoder("utf-8", { fatal: true }).decode(original);
+            const needle = Buffer.from(expectedContent, "utf8");
+            const replacement = Buffer.from(content, "utf8");
+            const index = original.indexOf(needle);
+            if (index < 0 || original.indexOf(needle, index + 1) >= 0)
+                throw new Error("managed source replacement requires exactly one current occurrence");
+            const next = Buffer.concat([
+                original.subarray(0, index),
+                replacement,
+                original.subarray(index + needle.length),
+            ]);
+            if (next.length > 8 * 1024 * 1024)
+                throw new Error("managed source replacement exceeds file bound");
+            const latest = fs.fstatSync(fd);
+            const current = fs.lstatSync(filename);
+            if (latest.dev !== before.dev ||
+                latest.ino !== before.ino ||
+                latest.size !== before.size ||
+                latest.mtimeMs !== before.mtimeMs ||
+                current.isSymbolicLink() ||
+                current.dev !== before.dev ||
+                current.ino !== before.ino)
+                throw new Error("managed source replacement target changed before write");
+            let offset = 0;
+            while (offset < next.length) {
+                const written = fs.writeSync(fd, next, offset, next.length - offset, offset);
+                if (written < 1)
+                    throw new Error("managed source replacement could not finish writing");
+                offset += written;
+            }
+            fs.ftruncateSync(fd, next.length);
+            return { filePath, sha256: createHash("sha256").update(next).digest("hex") };
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+    }
     function afterTask(input, output) {
         if (active && !active.background && record(output.metadata).background === true) {
             active.background = true;
@@ -759,6 +1154,10 @@ export function createManagedDispatch(options) {
             output: output.output,
             metadata,
         });
+        if (!task.background && result.outcome !== "rejected" && result.result) {
+            task.foregroundCompleted = true;
+            task.pendingLaunches.delete(task.callId);
+        }
         if (result.outcome === "clarification") {
             task.run.controller.clarification(task.context.delegationTaskId);
             return result;
@@ -825,13 +1224,52 @@ export function createManagedDispatch(options) {
             throw error;
         }
     }
+    function currentTaskView(querySessionId) {
+        if (!active ||
+            stopped ||
+            !active.goal ||
+            !active.childId ||
+            typeof querySessionId !== "string" ||
+            !querySessionId ||
+            (querySessionId !== active.run.parent && querySessionId !== active.childId))
+            return null;
+        const { context, run } = active;
+        const state = run.controller.snapshot();
+        const attempt = state.attempts.find((entry) => entry.id === context.delegationTaskId);
+        if (state.interrupted ||
+            !attempt ||
+            !["running", "awaiting-guidance"].includes(attempt.state) ||
+            (options.now ?? Date.now)() >= attempt.deadline ||
+            attempt.parentSessionId !== run.parent ||
+            attempt.workUnitId !== context.scopeKey ||
+            attempt.role !== context.role ||
+            attempt.taskMode !== context.taskMode)
+            return null;
+        return {
+            orchestrationId: context.orchestrationId,
+            scopeKey: context.scopeKey,
+            delegationTaskId: context.delegationTaskId,
+            role: context.role,
+            taskMode: context.taskMode,
+            goal: active.goal,
+        };
+    }
     return {
+        currentTaskView,
         beforeTask,
         beforeTool,
         afterTool,
+        verifyCommand,
+        writeTrace,
+        editSource,
+        replaceSource,
         afterTask,
         sessionCreated,
         interrupt,
+        interruptIfCurrent,
+        recoveryStatus,
+        resolveRecovery,
+        releaseForFresh,
         reconcileBackground,
         cancelBackground,
         snapshot: () => ({

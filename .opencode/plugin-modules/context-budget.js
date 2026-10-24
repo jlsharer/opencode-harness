@@ -116,3 +116,106 @@ export async function expandIndexedReferences(root, index, requestedIds, budget)
     }
     return { entries, bytes };
 }
+function object(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : null;
+}
+/** Only terminal attempts with no active worker are safe for a native compaction request. */
+export function managedCompactionSafe(value) {
+    const managed = object(value);
+    return (managed?.stopped === false &&
+        managed.background === null &&
+        Array.isArray(managed.runs) &&
+        managed.runs.every((entry) => {
+            const run = object(entry);
+            return (run?.interrupted === false &&
+                run.active === 0 &&
+                Array.isArray(run.attempts) &&
+                run.attempts.every((entry) => ["success", "blocked", "failed"].includes(String(object(entry)?.state))));
+        }));
+}
+/** Reported completed-turn input is a proxy, never a measurement of current occupancy. */
+export function reportedInputCompactionDecision(input) {
+    const skip = { status: "skip" };
+    const session = object(input.session);
+    const status = object(input.status);
+    const idleEvent = object(input.idleEvent);
+    const time = object(session?.time);
+    const compacting = time?.compacting ?? 0;
+    if (!session ||
+        typeof session.id !== "string" ||
+        !session.id ||
+        session.parentID !== undefined ||
+        !idleEvent ||
+        idleEvent.sessionID !== session.id ||
+        !(idleEvent.type === "session.idle" ||
+            (idleEvent.type === "session.status" && object(idleEvent.status)?.type === "idle")) ||
+        !status ||
+        (Object.hasOwn(status, session.id) && object(status[session.id])?.type !== "idle") ||
+        !managedCompactionSafe(input.managed) ||
+        !Array.isArray(input.messages) ||
+        !input.messages.length ||
+        input.messages.length > 256 ||
+        !Number.isSafeInteger(compacting) ||
+        compacting < 0)
+        return skip;
+    const messages = input.messages;
+    const info = object(object(messages.at(-1))?.info);
+    const turnTime = object(info?.time);
+    const tokens = object(info?.tokens);
+    if (!info ||
+        info.role !== "assistant" ||
+        info.sessionID !== session.id ||
+        typeof info.id !== "string" ||
+        !info.id ||
+        info.summary === true ||
+        info.error !== undefined ||
+        !Number.isSafeInteger(turnTime?.created) ||
+        !Number.isSafeInteger(turnTime?.completed) ||
+        turnTime?.completed < turnTime?.created ||
+        turnTime?.created <= compacting ||
+        typeof info.providerID !== "string" ||
+        !info.providerID ||
+        typeof info.modelID !== "string" ||
+        !info.modelID ||
+        !Number.isSafeInteger(tokens?.input) ||
+        tokens?.input < 0)
+        return skip;
+    const parent = object(object(messages.findLast((entry) => object(object(entry)?.info)?.id === info.parentID))?.info);
+    const parentModel = object(parent?.model);
+    const parentTime = object(parent?.time);
+    if (!parent ||
+        parent.role !== "user" ||
+        parent.sessionID !== session.id ||
+        parentModel?.providerID !== info.providerID ||
+        parentModel.modelID !== info.modelID ||
+        !Number.isSafeInteger(parentTime?.created) ||
+        parentTime?.created > turnTime?.created ||
+        messages.some((entry) => {
+            const message = object(object(entry)?.info);
+            return (message?.sessionID !== session.id ||
+                !message?.id ||
+                (message?.role !== "assistant" && message?.role !== "user"));
+        }))
+        return skip;
+    const providers = object(input.providers);
+    const all = providers?.all;
+    if (!Array.isArray(all) ||
+        all.filter((provider) => object(provider)?.id === info.providerID).length !== 1)
+        return skip;
+    const provider = object(all.find((entry) => object(entry)?.id === info.providerID));
+    const model = object(object(provider?.models)?.[info.modelID]);
+    const limit = object(model?.limit)?.context;
+    if (model?.id !== info.modelID || !Number.isSafeInteger(limit) || limit < 1)
+        return skip;
+    if (BigInt(tokens?.input) * 5n < BigInt(limit) * 3n)
+        return skip;
+    return {
+        status: "request-eligible",
+        evidence: "reported-turn-input-proxy",
+        messageID: info.id,
+        providerID: info.providerID,
+        modelID: info.modelID,
+    };
+}

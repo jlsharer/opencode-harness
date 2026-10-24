@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://opencode-harness.local/schemas/interactive-refinement-test-plan.schema.json",
+  "title": "Interactive refinement structured test-plan record",
+  "description": "Optional JSON record corresponding to the human-maintained Markdown template; does not validate Markdown, prove validator acceptance, or supply an owner verdict. Round index versus maxRounds and chronological version history require workflow review.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["goal", "successCriteria", "owner", "agreedAt", "maxRounds", "currentVersion", "rounds"],
+  "properties": {
+    "goal": { "$ref": "#/$defs/text" },
+    "successCriteria": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } },
+    "owner": { "$ref": "#/$defs/text" },
+    "agreedAt": { "type": "string", "format": "date" },
+    "maxRounds": { "type": "integer", "minimum": 1, "maximum": 100 },
+    "currentVersion": { "$ref": "#/$defs/text" },
+    "rounds": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/round" } }
+  },
+  "$defs": {
+    "text": { "type": "string", "minLength": 1 },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending", "available"] },
+        "references": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" } },
+        "outcome": { "enum": ["pass", "fail", "blocked", "unknown"] },
+        "pendingReason": { "$ref": "#/$defs/text" }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "const": "available" } }, "required": ["status"] }, "then": { "required": ["references", "outcome"], "not": { "required": ["pendingReason"] } } },
+        { "if": { "properties": { "status": { "const": "pending" } }, "required": ["status"] }, "then": { "required": ["pendingReason"], "not": { "anyOf": [{ "required": ["references"] }, { "required": ["outcome"] }] } } }
+      ]
+    },
+    "actual": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["pending", "observed"] },
+        "observations": { "$ref": "#/$defs/text" }
+      },
+      "allOf": [
+        { "if": { "properties": { "status": { "const": "observed" } }, "required": ["status"] }, "then": { "required": ["observations"] } },
+        { "if": { "properties": { "status": { "const": "pending" } }, "required": ["status"] }, "then": { "not": { "required": ["observations"] } } }
+      ]
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "setup", "steps", "expectedOutcome", "actual", "questions", "ownerFeedback"],
+      "properties": {
+        "id": { "$ref": "#/$defs/text" },
+        "setup": { "$ref": "#/$defs/text" },
+        "steps": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/text" }, "description": "Actions in execution order." },
+        "expectedOutcome": { "$ref": "#/$defs/text" },
+        "actual": { "$ref": "#/$defs/actual" },
+        "questions": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["question", "status"], "properties": { "question": { "$ref": "#/$defs/text" }, "status": { "enum": ["pending", "answered"] }, "answer": { "$ref": "#/$defs/text" } }, "allOf": [{ "if": { "properties": { "status": { "const": "answered" } }, "required": ["status"] }, "then": { "required": ["answer"] } }, { "if": { "properties": { "status": { "const": "pending" } }, "required": ["status"] }, "then": { "not": { "required": ["answer"] } } }] } },
+        "ownerFeedback": { "type": "object", "additionalProperties": false, "required": ["status"], "properties": { "status": { "enum": ["pending", "provided"] }, "notes": { "$ref": "#/$defs/text" } }, "allOf": [{ "if": { "properties": { "status": { "const": "provided" } }, "required": ["status"] }, "then": { "required": ["notes"] } }, { "if": { "properties": { "status": { "const": "pending" } }, "required": ["status"] }, "then": { "not": { "required": ["notes"] } } }] }
+      }
+    },
+    "round": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["index", "id", "version", "versionChangeSummary", "scope", "previousFeedbackAndDelta", "automation", "validator", "tasks", "ownerFeedback", "ownerVerdict", "nextAction"],
+      "properties": {
+        "index": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "id": { "$ref": "#/$defs/text" },
+        "version": { "$ref": "#/$defs/text" },
+        "versionChangeSummary": { "$ref": "#/$defs/text" },
+        "scope": { "$ref": "#/$defs/text" },
+        "previousFeedbackAndDelta": { "$ref": "#/$defs/text" },
+        "automation": { "$ref": "#/$defs/evidence" },
+        "validator": { "$ref": "#/$defs/evidence" },
+        "tasks": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/task" } },
+        "ownerFeedback": { "type": "object", "additionalProperties": false, "required": ["status"], "properties": { "status": { "enum": ["pending", "provided"] }, "notes": { "$ref": "#/$defs/text" } }, "allOf": [{ "if": { "properties": { "status": { "const": "provided" } }, "required": ["status"] }, "then": { "required": ["notes"] } }, { "if": { "properties": { "status": { "const": "pending" } }, "required": ["status"] }, "then": { "not": { "required": ["notes"] } } }] },
+        "ownerVerdict": { "enum": ["pending", "needs-work", "success", "blocked"] },
+        "nextAction": { "$ref": "#/$defs/text" }
+      }
+    }
+  }
+}

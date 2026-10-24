@@ -27,6 +27,10 @@ const standalonePolicyFactory: HarnessDispatchFactory = ({ telemetry }) => {
   };
 };
 
+const offlineTool = Object.assign((definition: Record<string, unknown>) => definition, {
+  schema: { string: () => ({}) },
+});
+
 type Policy = ReturnType<typeof createTaskThreadPolicy>;
 type Packet = Record<string, unknown>;
 type ConsoleMethod = "error" | "log" | "warn" | "info";
@@ -606,6 +610,170 @@ test("lifecycle diagnostics contain logger failures without fallback or policy c
   }
 });
 
+test("compaction preserves native context and generic durable pointers", async () => {
+  const hooks = await HarnessLifecyclePlugin(
+    { directory: "/fixture", toolFactory: offlineTool },
+    standalonePolicyFactory,
+  );
+  const output = { context: ["native context"] };
+  await hooks["experimental.session.compacting"]({ sessionID: "parent" }, output);
+  assert.equal(output.context[0], "native context");
+  assert.match(output.context[1]!, /delegation-orchestrator\/SKILL\.md/);
+  assert.match(output.context[1]!, /dispatch-started\.json/);
+  assert.match(output.context[1]!, /fresh reviewed orchestration ID/);
+  assert.doesNotMatch(output.context[1]!, /Project Open Court|PROJECT_PROGRESS\.md/);
+  await assert.rejects(
+    () => hooks["experimental.session.compacting"]({ sessionID: "parent" }, {}),
+    /context unavailable/,
+  );
+  assert.ok(hooks.tool.harness_trace);
+  assert.ok(hooks.tool.harness_source_edit);
+  assert.ok(hooks.tool.harness_source_replace);
+  assert.ok(hooks.tool.harness_recovery_status);
+  assert.ok(hooks.tool.harness_recovery_resolve);
+  assert.ok(hooks.tool.harness_recovery_release);
+  assert.ok(hooks.tool.harness_verify);
+});
+
+test("compaction adds one bounded advisory only for the live session-bound view", async () => {
+  type View = NonNullable<
+    ReturnType<NonNullable<ReturnType<HarnessDispatchFactory>["currentTaskView"]>>
+  >;
+
+  const valid: View = {
+    orchestrationId: "2026-10-23-fixture",
+    scopeKey: "work-unit",
+    delegationTaskId: "task-1",
+    role: "implementer",
+    taskMode: "implementation",
+    goal: 'Review "quoted" goal, not instructions',
+  };
+  let current: unknown = valid;
+  const queries: unknown[] = [];
+  const boundFactory: HarnessDispatchFactory = (options) => ({
+    ...standalonePolicyFactory(options),
+    currentTaskView: (session) => {
+      queries.push(session);
+      return session === "parent" || session === "child" ? (current as View) : null;
+    },
+  });
+  const hooks = await HarnessLifecyclePlugin({}, boundFactory);
+  const compact = async (sessionID: unknown) => {
+    const output = { context: ["native context"] };
+    await hooks["experimental.session.compacting"]({ sessionID }, output);
+    assert.equal(output.context[0], "native context");
+    assert.match(output.context[1]!, /dispatch-started\.json/);
+    return output.context;
+  };
+  for (const session of ["parent", "child"]) {
+    const context = await compact(session);
+    assert.equal(context.length, 3);
+    assert.match(
+      context[2]!,
+      /2026-10-23-fixture\/work-unit\/task-1 \(implementer\/implementation\)/,
+    );
+    assert.ok(context[2]!.includes(JSON.stringify(valid.goal)));
+    assert.match(context[2]!, /not authorization or a checkpoint/);
+    assert.ok(context[2]!.length <= 900);
+  }
+  assert.equal((await compact("unrelated")).length, 2);
+  assert.equal((await compact(undefined)).length, 2);
+  assert.deepEqual(queries, ["parent", "child", "unrelated"]);
+  current = null; // An expired or terminal adapter view is null.
+  assert.equal((await compact("parent")).length, 2);
+  for (const malformed of [
+    { ...valid, goal: "x".repeat(241) },
+    { ...valid, goal: "bad\ncontrol" },
+    { ...valid, role: "constructor" },
+    { ...valid, taskMode: "review" },
+    { ...valid, scopeKey: "invalid/path" },
+    { ...valid, goal: { secret: "raw-packet-secret" } },
+  ]) {
+    current = malformed;
+    assert.equal((await compact("child")).length, 2);
+  }
+  current = { ...valid, packet: "raw-packet-secret", reference: "private-reference-secret" };
+  const context = await compact("parent");
+  assert.equal(context.length, 3);
+  assert.doesNotMatch(context.join(" "), /raw-packet-secret|private-reference-secret/);
+});
+
+test("active plugin registers SDK-backed tools when the SDK is installed", async (t) => {
+  try {
+    import.meta.resolve("@opencode-ai/plugin");
+  } catch {
+    t.skip("portable offline installation does not include the SDK");
+    return;
+  }
+  const hooks = await HarnessLifecyclePlugin({ directory: process.cwd() });
+  assert.equal(typeof hooks.tool.harness_verify, "object");
+  assert.equal(typeof hooks.tool.harness_trace, "object");
+  assert.equal(typeof hooks.tool.harness_source_edit, "object");
+  assert.equal(typeof hooks.tool.harness_source_replace, "object");
+  assert.equal(typeof hooks.tool.harness_recovery_status, "object");
+  assert.equal(typeof hooks.tool.harness_recovery_resolve, "object");
+  assert.equal(typeof hooks.tool.harness_recovery_release, "object");
+});
+
+test("idle completed parent requests native compaction once from reported input evidence", async () => {
+  let summarize = 0;
+  const state = { stopped: false, background: null, runs: [] };
+  const info = {
+    id: "turn",
+    parentID: "user",
+    sessionID: "primary",
+    role: "assistant",
+    providerID: "provider",
+    modelID: "model",
+    time: { created: 102, completed: 103 },
+    tokens: { input: 60 },
+  };
+  const hooks = await HarnessLifecyclePlugin(
+    {
+      directory: "/fixture",
+      client: {
+        app: { log: () => {} },
+        session: {
+          get: async () => ({ data: { id: "primary", time: { compacting: 100 } } }),
+          status: async () => ({ data: { primary: { type: "idle" } } }),
+          messages: async () => ({
+            data: [
+              {
+                info: {
+                  id: "user",
+                  sessionID: "primary",
+                  role: "user",
+                  time: { created: 101 },
+                  model: { providerID: "provider", modelID: "model" },
+                },
+              },
+              { info },
+            ],
+          }),
+          summarize: async () => {
+            summarize++;
+            return { data: true };
+          },
+        },
+        provider: {
+          list: async () => ({
+            data: {
+              all: [
+                { id: "provider", models: { model: { id: "model", limit: { context: 100 } } } },
+              ],
+            },
+          }),
+        },
+      },
+    },
+    (options) => ({ ...standalonePolicyFactory(options), snapshot: () => state }),
+  );
+  const event = { event: { type: "session.idle", properties: { sessionID: "primary" } } };
+  await hooks.event(event);
+  await hooks.event(event);
+  assert.equal(summarize, 1);
+});
+
 test("lifecycle forwards managed hook boundaries and relevant session interruption", async () => {
   const observed: string[] = [];
   const hooks = await HarnessLifecyclePlugin({}, (options) => ({
@@ -668,9 +836,15 @@ test("managed lifecycle refuses a different native project directory", async () 
   const original = process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
   process.env.OPENCODE_HARNESS_WORKSPACE_ROOT = "/fixture/expected";
   try {
-    const mismatch = await HarnessLifecyclePlugin({ directory: "/fixture/other" });
+    const mismatch = await HarnessLifecyclePlugin(
+      { directory: "/fixture/other" },
+      standalonePolicyFactory,
+    );
     await assert.rejects(() => mismatch.config({}), /managed workspace mismatch/);
-    const matching = await HarnessLifecyclePlugin({ directory: "/fixture/expected" });
+    const matching = await HarnessLifecyclePlugin(
+      { directory: "/fixture/expected" },
+      standalonePolicyFactory,
+    );
     await matching.config({});
   } finally {
     if (original === undefined) delete process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
