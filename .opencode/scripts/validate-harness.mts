@@ -263,6 +263,8 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/scripts/validate-portable-harness.mjs",
   ".opencode/src/scripts/validate-portable-harness.ts",
   ".opencode/scripts/validate-harness.mts",
+  ".opencode/scripts/operator-external-qa.mts",
+  ".opencode/scripts/operator-external-qa.test.mts",
   ".opencode/scripts/runtime-harness.test.mts",
   ".opencode/scripts/runtime-foreign-repo.test.mts",
   ".opencode/runtime.manifest.json",

@@ -129,6 +129,8 @@
     { "path": ".opencode/src/scripts/validate-portable-harness.ts", "kind": "portable-validation-source", "owner": "harness-owned" },
     { "path": ".opencode/scripts/validate-portable-harness.mjs", "kind": "generated-portable-validator-compatibility", "owner": "harness-owned" },
     { "path": ".opencode/scripts/validate-harness.mts", "kind": "harness-validation-source", "owner": "harness-owned" },
+    { "path": ".opencode/scripts/operator-external-qa.mts", "kind": "source-only-evaluation", "owner": "harness-owned" },
+    { "path": ".opencode/scripts/operator-external-qa.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned" },
     { "path": ".opencode/harness.manifest.json", "kind": "harness-manifest", "owner": "harness-owned" }
   ],
   "validationFindings": []

@@ -12,7 +12,7 @@ test.after(() => {
     for (const root of roots)
         fs.rmSync(root, { recursive: true, force: true });
 });
-function fixture(role = "researcher") {
+function fixture(role = "researcher", timeoutMs = 10) {
     const root = fs.mkdtempSync("/var/tmp/harness-managed-test-");
     roots.push(root);
     const workspace = path.join(root, "workspace");
@@ -90,7 +90,7 @@ function fixture(role = "researcher") {
         workspaceRoot: workspace,
         traceRoot: trace,
         now: () => now,
-        timeoutMs: 10,
+        timeoutMs,
         telemetry: (r) => telemetry.push(r),
     };
     const managed = createManagedDispatch(options);
@@ -545,7 +545,7 @@ test("managed tools deny shell for research, unauthorized commands, and edits ou
     assert.throws(() => writer.managed.beforeTool({ sessionID: "child", tool: "apply_patch" }, {}), /unsupported/);
 });
 test("managed validator tool records native exit proof and trace creation is role-bound", async () => {
-    const f = fixture("validator");
+    const f = fixture("validator", 10_000);
     await f.start();
     assert.throws(() => f.managed.verifyCommand("parent", "true"), /bound validator child/);
     assert.throws(() => f.managed.verifyCommand("child", "false"), /exact verification/);
