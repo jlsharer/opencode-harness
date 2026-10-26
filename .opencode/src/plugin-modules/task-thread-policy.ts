@@ -520,8 +520,10 @@ export function createTaskThreadPolicy({
       tasksByChildId.set(childId, task);
     }
     if (!task) throw policyError("uncorrelatable Task completion");
+    let rejectionReason = "invalid-native-wrapper";
     try {
       const body = parseTaskResult(output, childId);
+      rejectionReason = "invalid-structured-result";
       let validated: TaskResult | undefined;
       let request: ClarificationRequestEnvelope;
       if (body.startsWith(ENVELOPE_START)) {
@@ -565,7 +567,7 @@ export function createTaskThreadPolicy({
       notice("terminal", {
         delegationTaskId: task.delegationTaskId,
         scopeKey: task.scopeKey,
-        reason: "ordinary-or-invalid-result",
+        reason: rejectionReason,
       });
       return { outcome: "rejected" as const };
     }

@@ -15,7 +15,7 @@ import { promisify } from "node:util";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { FIXED_HARNESS_ROLES, normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, validateNativeProviderCoherence, } from "./routing-policy.mjs";
-import HarnessPlugin from "../plugins/index.js";
+import { HarnessPlugin } from "../plugins/index.js";
 import { resolveModelForRole } from "./model-routing-helper.mjs";
 import { loadRoutingConfigSelection, mergeExternalRoutingDocuments, selectImplicitRoutingConfig, } from "./routing-config-loader.mjs";
 import { loadRoutingConfig, parseArgs } from "./resolve-model-routing.mjs";

@@ -37,8 +37,17 @@ test("edits are exact scoped canonical file paths for implementers only", () => 
     symlinkSync("source.txt", path.join(base.workspaceRoot, "link"));
     assert.throws(() => enforceManagedTool({ ...base, allowedPaths: ["link"], args: { filePath: "link" } }), /symlink/);
 }));
+test("researcher webfetch passes through copied args without invoking the network", () => fixture((base) => {
+    const args = { url: "https://example.org/reference?q=one", format: "markdown" };
+    const result = enforceManagedTool({ ...base, tool: "webfetch", role: "researcher", args });
+    assert.deepEqual(result, args);
+    assert.notStrictEqual(result, args);
+    assert.deepEqual(args, { url: "https://example.org/reference?q=one", format: "markdown" });
+    for (const role of ["planner", "implementer", "validator"])
+        assert.throws(() => enforceManagedTool({ ...base, tool: "webfetch", role, args }), /cannot use webfetch/);
+}));
 test("unknown mutation and delegation tools fail closed while read surfaces remain", () => fixture((base) => {
-    for (const tool of ["apply_patch", "patch", "task", "unknown", "webfetch", "multiedit"])
+    for (const tool of ["apply_patch", "patch", "task", "unknown", "multiedit"])
         assert.throws(() => enforceManagedTool({ ...base, tool }), /unsupported/);
     for (const tool of ["read", "grep", "glob", "list"])
         assert.deepEqual(enforceManagedTool({ ...base, tool, role: "researcher" }), base.args);

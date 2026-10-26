@@ -420,11 +420,26 @@ test("root and config-directory JSON/JSONC collisions and plugins fail closed wi
     /colliding agent/,
   );
   assert.match(
+    invoke(fixture("v2-json-agent", "opencode.json", JSON.stringify({ agents: { planner: {} } })))
+      .result.stderr,
+    /colliding agent/,
+  );
+  assert.match(
     invoke(
       fixture(
         "jsonc-command",
         ".opencode/opencode.jsonc",
         '{ // comment\n "command": { "delegate-plan": {}, },\n}',
+      ),
+    ).result.stderr,
+    /colliding command/,
+  );
+  assert.match(
+    invoke(
+      fixture(
+        "v2-json-command",
+        "opencode.json",
+        JSON.stringify({ commands: { "delegate-plan": {} } }),
       ),
     ).result.stderr,
     /colliding command/,
@@ -436,6 +451,12 @@ test("root and config-directory JSON/JSONC collisions and plugins fail closed wi
   const plugin = fixture("jsonc-plugin", "opencode.jsonc", '{\n "plugin": ["foreign-plugin",],\n}');
   assert.match(invoke(plugin).result.stderr, /require --allow-project-plugins/);
   assert.equal(invoke(plugin, ["--allow-project-plugins"]).result.status, 0);
+  const v2Plugin = fixture(
+    "v2-json-plugin",
+    "opencode.json",
+    JSON.stringify({ plugins: ["foreign-plugin"] }),
+  );
+  assert.match(invoke(v2Plugin).result.stderr, /require --allow-project-plugins/);
   const harnessPlugin = fixture(
     "harness-plugin",
     "opencode.json",

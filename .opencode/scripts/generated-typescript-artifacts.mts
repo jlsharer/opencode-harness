@@ -47,6 +47,16 @@ export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
     mode: 0o644,
   },
   {
+    source: ".opencode/src/plugin-modules/compaction-handoff.js",
+    output: ".opencode/plugin-modules/compaction-handoff.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/compaction-handoff.test.js",
+    output: ".opencode/plugin-modules/compaction-handoff.test.mjs",
+    mode: 0o644,
+  },
+  {
     source: ".opencode/src/plugin-modules/managed-execution.js",
     output: ".opencode/plugin-modules/managed-execution.js",
     mode: 0o644,
@@ -64,6 +74,21 @@ export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
   {
     source: ".opencode/src/plugin-modules/managed-dispatch.test.js",
     output: ".opencode/plugin-modules/managed-dispatch.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/v2-dispatch-bridge.js",
+    output: ".opencode/plugin-modules/v2-dispatch-bridge.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/v2-dispatch-bridge.test.js",
+    output: ".opencode/plugin-modules/v2-dispatch-bridge.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/v2-native-plugin.js",
+    output: ".opencode/plugin-modules/v2-native-plugin.js",
     mode: 0o644,
   },
   {

@@ -329,10 +329,21 @@ export function createDispatchController(input, options = {}) {
                     fail("dependency gate not ready");
             }
         }
-        if (sequence
+        const missing = sequence
             .slice(0, index)
-            .some((m) => !completed.has(`${m.workUnitId}:${m.role}:${m.taskMode}`)))
-            fail("prior task mode not ready");
+            .find((m) => !completed.has(`${m.workUnitId}:${m.role}:${m.taskMode}`));
+        if (missing) {
+            const latest = [...attempts.values()]
+                .filter((a) => a.workUnitId === missing.workUnitId &&
+                a.role === missing.role &&
+                a.taskMode === missing.taskMode)
+                .at(-1);
+            const state = ["success", "failed", "blocked", "running"].includes(latest?.state ?? "")
+                ? latest.state
+                : "unknown";
+            // Only validated mapping enums and a fixed state leave this boundary.
+            fail(`prior task mode not ready: ${missing.role}/${missing.taskMode} (${state})`);
+        }
         const startsCycle = lastAttemptGeneration.has(key(request)) &&
             (lastAttemptGeneration.get(key(request)) === generation || reopensSuccess);
         if (startsCycle &&

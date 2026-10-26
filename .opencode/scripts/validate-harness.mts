@@ -163,6 +163,7 @@ const STATIC_MANIFEST_PATHS = [
   ".memory/protocols/memory-management.md",
   ".memory/references/opencode-refs.md",
   ".memory/templates/orchestration-index.md",
+  ".memory/templates/compaction-handoff.md",
   ".memory/templates/role-trace-artifact.md",
   ".memory/templates/interactive-refinement-test-plan.md",
   ".opencode/skills/delegation-orchestrator/SKILL.md",
@@ -204,6 +205,8 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/plugin-modules/dispatch-controller.js",
   ".opencode/plugin-modules/acceptance-proof.js",
   ".opencode/plugin-modules/context-budget.js",
+  ".opencode/plugin-modules/compaction-handoff.js",
+  ".opencode/plugin-modules/compaction-handoff.test.mjs",
   ".opencode/plugin-modules/managed-execution.js",
   ".opencode/plugin-modules/managed-dispatch.js",
   ".opencode/plugin-modules/task-contracts.test.mjs",
@@ -212,10 +215,16 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/plugin-modules/context-budget.test.mjs",
   ".opencode/plugin-modules/managed-execution.test.mjs",
   ".opencode/plugin-modules/managed-dispatch.test.mjs",
+  ".opencode/plugin-modules/v2-dispatch-bridge.js",
+  ".opencode/plugin-modules/v2-dispatch-bridge.test.mjs",
+  ".opencode/plugin-modules/v2-native-plugin.js",
+  ".opencode/patches/v2.1.4-background-job.patch",
   ".opencode/src/plugin-modules/task-contracts.ts",
   ".opencode/src/plugin-modules/dispatch-controller.ts",
   ".opencode/src/plugin-modules/acceptance-proof.ts",
   ".opencode/src/plugin-modules/context-budget.ts",
+  ".opencode/src/plugin-modules/compaction-handoff.ts",
+  ".opencode/src/plugin-modules/compaction-handoff.test.ts",
   ".opencode/src/plugin-modules/managed-execution.ts",
   ".opencode/src/plugin-modules/managed-dispatch.ts",
   ".opencode/src/plugin-modules/task-contracts.test.ts",
@@ -224,6 +233,9 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/src/plugin-modules/context-budget.test.ts",
   ".opencode/src/plugin-modules/managed-execution.test.ts",
   ".opencode/src/plugin-modules/managed-dispatch.test.ts",
+  ".opencode/src/plugin-modules/v2-dispatch-bridge.ts",
+  ".opencode/src/plugin-modules/v2-dispatch-bridge.test.ts",
+  ".opencode/src/plugin-modules/v2-native-plugin.ts",
   ".opencode/scripts/evaluate-controller.mts",
   ".opencode/evaluation/paired-tasks.json",
   ".opencode/scripts/prepare-paired-benchmark.mts",
@@ -246,6 +258,7 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/bootstrap/memory/INDEX.md",
   ".opencode/bootstrap/memory/protocols/memory-management.md",
   ".opencode/bootstrap/memory/templates/orchestration-index.md",
+  ".opencode/bootstrap/memory/templates/compaction-handoff.md",
   ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
   ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
   ".opencode/bootstrap/native/darwin-portable-fs.c",
@@ -265,6 +278,8 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/scripts/validate-harness.mts",
   ".opencode/scripts/operator-external-qa.mts",
   ".opencode/scripts/operator-external-qa.test.mts",
+  ".opencode/scripts/native-v2-plugin-fixture.mts",
+  ".opencode/scripts/native-v2-plugin-fixture.test.mts",
   ".opencode/scripts/runtime-harness.test.mts",
   ".opencode/scripts/runtime-foreign-repo.test.mts",
   ".opencode/runtime.manifest.json",
@@ -278,6 +293,7 @@ const STATIC_MEMORY_PATHS = [
   ".memory/protocols/memory-management.md",
   ".memory/references/opencode-refs.md",
   ".memory/templates/orchestration-index.md",
+  ".memory/templates/compaction-handoff.md",
   ".memory/templates/role-trace-artifact.md",
   ".memory/templates/interactive-refinement-test-plan.md",
 ];
@@ -627,20 +643,23 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     "dispatch-controller.js",
     "acceptance-proof.js",
     "context-budget.js",
+    "compaction-handoff.js",
     "managed-execution.js",
     "managed-dispatch.js",
+    "v2-dispatch-bridge.js",
+    "v2-native-plugin.js",
   ])
     if (!destinations.includes(`plugin-modules/${module}`))
       fail(`Missing runtime module: ${module}`);
   if (!destinations.includes("schemas/opencode-provider-projection.schema.json"))
     fail("Runtime manifest must include the provider projection schema");
   if (
-    runtimeManifest.files.length !== 45 ||
+    runtimeManifest.files.length !== 49 ||
     !destinations.includes("plugin-modules/task-thread-policy.js") ||
     !destinations.includes("plugin-modules/trace-root-permissions.js")
   )
     fail(
-      "Runtime manifest must contain the exact 45-file external runtime including interactive refinement",
+      "Runtime manifest must contain the exact 49-file external runtime including compaction handoff",
     );
   const packageManifest = json("package.json");
   if (
@@ -754,15 +773,18 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     devDependencies["typescript-eslint"] !== "8.68.0"
   )
     fail("Package must pin the approved ESLint TypeScript stylistic toolchain");
-  if (packageManifest.files.length !== 35 || new Set(packageManifest.files).size !== 35)
-    fail("Package files selector allowlist must contain exactly 35 unique entries");
+  if (packageManifest.files.length !== 39 || new Set(packageManifest.files).size !== 39)
+    fail("Package files selector allowlist must contain exactly 39 unique entries");
   const selectors = [
     ".opencode/plugin-modules/task-contracts.js",
     ".opencode/plugin-modules/dispatch-controller.js",
     ".opencode/plugin-modules/acceptance-proof.js",
     ".opencode/plugin-modules/context-budget.js",
+    ".opencode/plugin-modules/compaction-handoff.js",
     ".opencode/plugin-modules/managed-execution.js",
     ".opencode/plugin-modules/managed-dispatch.js",
+    ".opencode/plugin-modules/v2-dispatch-bridge.js",
+    ".opencode/plugin-modules/v2-native-plugin.js",
     "README.md",
     "bin/opencode-harness.mjs",
     ".opencode/runtime.manifest.json",
@@ -790,6 +812,7 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/bootstrap/memory/INDEX.md",
     ".opencode/bootstrap/memory/protocols/memory-management.md",
     ".opencode/bootstrap/memory/templates/orchestration-index.md",
+    ".opencode/bootstrap/memory/templates/compaction-handoff.md",
     ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
     ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
   ];
@@ -825,8 +848,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/runtime.manifest.json",
     ...runtimeManifest.files.map((entry) => entry.source),
   ];
-  if (actual.length !== 49 || new Set(actual).size !== 49)
-    fail(`npm payload must contain exactly 49 unique paths; got ${actual.length}`);
+  if (actual.length !== 53 || new Set(actual).size !== 53)
+    fail(`npm payload must contain exactly 53 unique paths; got ${actual.length}`);
   sameSet(actual, expected, "exact npm payload allowlist");
   const launcher = report.files.find((entry) => entry.path === "bin/opencode-harness.mjs");
   if (!launcher || launcher.mode !== 0o755) fail("npm payload launcher must retain mode 0755");
@@ -1052,6 +1075,7 @@ function assertMemorySeeds() {
   for (const relative of [
     "protocols/memory-management.md",
     "templates/orchestration-index.md",
+    "templates/compaction-handoff.md",
     "templates/role-trace-artifact.md",
     "templates/interactive-refinement-test-plan.md",
   ]) {
@@ -1062,12 +1086,13 @@ function assertMemorySeeds() {
   }
   const portableManifest = json(".opencode/portable.manifest.json");
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 58 || mappings.length !== 5)
-    fail("Portable manifest must contain exactly 58 managed files plus five memory seeds");
+  if (portableManifest.managedFiles?.length !== 61 || mappings.length !== 6)
+    fail("Portable manifest must contain exactly 61 managed files plus six memory seeds");
   const expectedTargets = [
     ".memory/INDEX.md",
     ".memory/protocols/memory-management.md",
     ".memory/templates/orchestration-index.md",
+    ".memory/templates/compaction-handoff.md",
     ".memory/templates/role-trace-artifact.md",
     ".memory/templates/interactive-refinement-test-plan.md",
   ];

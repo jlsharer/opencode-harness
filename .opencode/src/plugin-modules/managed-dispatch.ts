@@ -46,6 +46,7 @@ interface Active {
   pendingCommands: Map<string, { command: string; treeHash: string; revision: number }>;
   background: boolean;
   workerModel: string | null;
+  nativeJobStartedAt?: number;
   acknowledged: boolean;
   acknowledgedCalls: Set<string>;
   termination?: Promise<void>;
@@ -122,7 +123,12 @@ function envelope(prompt: unknown): RecordValue {
 export interface BackgroundTransport {
   enabled: boolean;
   models(parent: string, role: string): Promise<{ parent: string; worker: string }>;
-  inspect(child: string): Promise<{ parent: string; idle: boolean; messages: unknown[] }>;
+  inspect(child: string): Promise<{
+    parent: string;
+    idle: boolean;
+    messages: unknown[];
+    job?: { status: string; startedAt: number; completedAt?: number; output?: string };
+  }>;
   abort(child: string): Promise<void>;
 }
 
@@ -348,7 +354,17 @@ export function createManagedDispatch(options: {
           await transport.abort(task.childId!);
         }
         const observed = await transport.inspect(task.childId!);
-        if (active !== task || observed.parent !== parent || !observed.idle)
+        if (
+          active !== task ||
+          observed.parent !== parent ||
+          !observed.idle ||
+          (task.nativeJobStartedAt !== undefined &&
+            (observed.job?.startedAt !== task.nativeJobStartedAt ||
+              typeof observed.job.completedAt !== "number" ||
+              !Number.isSafeInteger(observed.job.completedAt) ||
+              observed.job.completedAt < observed.job.startedAt ||
+              observed.job.status === "running"))
+        )
           throw new Error("native termination not reconciled; capacity retained");
         task.run.controller.reconcileCancelled(task.context.delegationTaskId);
         recoveryBefore = task.before;
@@ -389,6 +405,31 @@ export function createManagedDispatch(options: {
       if (active !== task || stopped || task.revision !== revision || !observed.idle) return;
       if (observed.parent !== task.run.parent)
         throw new Error("native background parent identity mismatch");
+      if (observed.job) {
+        const job = observed.job;
+        if (
+          !Number.isSafeInteger(job.startedAt) ||
+          typeof job.completedAt !== "number" ||
+          !Number.isSafeInteger(job.completedAt) ||
+          job.completedAt < job.startedAt ||
+          task.nativeJobStartedAt !== job.startedAt ||
+          job.status !== "completed" ||
+          typeof job.output !== "string" ||
+          job.output.length > 32768
+        )
+          throw new Error("native background Job completion is not correlated");
+        if (task.updateCalls.size || task.pendingLaunches.size) return;
+        const completion = completeTask(
+          { callID: task.callId },
+          {
+            metadata: { sessionId: task.childId },
+            output: formatTaskResultWrapper(job.output, task.childId),
+          },
+        );
+        if (completion.outcome === "clarification") task.reconciledMessages = task.expectedMessages;
+        else if (task.timer) clearTimeout(task.timer);
+        return;
+      }
       if (observed.messages.length > 256) throw new Error("native message inventory exceeds bound");
       const messages = observed.messages.map(record);
       const users = messages.filter((m) => record(m.info).role === "user");
@@ -481,6 +522,12 @@ export function createManagedDispatch(options: {
         !stopped ||
         observed.parent !== parent ||
         !observed.idle ||
+        (task.nativeJobStartedAt !== undefined &&
+          (observed.job?.startedAt !== task.nativeJobStartedAt ||
+            typeof observed.job.completedAt !== "number" ||
+            !Number.isSafeInteger(observed.job.completedAt) ||
+            observed.job.completedAt < observed.job.startedAt ||
+            observed.job.status === "running")) ||
         task.pendingLaunches.size !== 0
       )
         throw new Error("native child termination or parent identity remains uncertain");
@@ -1336,6 +1383,17 @@ export function createManagedDispatch(options: {
       if (active.acknowledgedCalls.has(callId))
         throw new Error("duplicate background acknowledgement");
       active.acknowledgedCalls.add(callId);
+      if (metadata.jobStartedAt !== undefined) {
+        if (
+          typeof metadata.jobStartedAt !== "number" ||
+          !Number.isSafeInteger(metadata.jobStartedAt) ||
+          metadata.jobStartedAt <= 0
+        ) {
+          interrupt("invalid native Job generation");
+          throw new Error("native Job generation unavailable");
+        }
+        active.nativeJobStartedAt = metadata.jobStartedAt;
+      }
       active.acknowledged = true;
       active.updateCalls.delete(callId);
       report({
@@ -1482,8 +1540,20 @@ export function createManagedDispatch(options: {
     };
   }
 
+  function compactionPointer(querySessionId: unknown): { orchestrationId: string } | null {
+    if (
+      typeof querySessionId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(querySessionId) ||
+      knownChildren.has(querySessionId)
+    )
+      return null;
+    const latest = [...runs.values()].filter((run) => run.parent === querySessionId).at(-1);
+    return latest ? { orchestrationId: latest.controller.spec.orchestrationId } : null;
+  }
+
   return {
     currentTaskView,
+    compactionPointer,
     beforeTask,
     beforeTool,
     afterTool,

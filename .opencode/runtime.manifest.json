@@ -25,8 +25,11 @@
     {"source": ".opencode/plugin-modules/dispatch-controller.js", "destination": "plugin-modules/dispatch-controller.js"},
     {"source": ".opencode/plugin-modules/acceptance-proof.js", "destination": "plugin-modules/acceptance-proof.js"},
     {"source": ".opencode/plugin-modules/context-budget.js", "destination": "plugin-modules/context-budget.js"},
+    {"source": ".opencode/plugin-modules/compaction-handoff.js", "destination": "plugin-modules/compaction-handoff.js"},
     {"source": ".opencode/plugin-modules/managed-execution.js", "destination": "plugin-modules/managed-execution.js"},
     {"source": ".opencode/plugin-modules/managed-dispatch.js", "destination": "plugin-modules/managed-dispatch.js"},
+    {"source": ".opencode/plugin-modules/v2-dispatch-bridge.js", "destination": "plugin-modules/v2-dispatch-bridge.js"},
+    {"source": ".opencode/plugin-modules/v2-native-plugin.js", "destination": "plugin-modules/v2-native-plugin.js"},
     { "source": ".opencode/agents/implementer.md", "destination": "agents/implementer.md" },
     { "source": ".opencode/agents/planner.md", "destination": "agents/planner.md" },
     { "source": ".opencode/agents/researcher.md", "destination": "agents/researcher.md" },
@@ -64,6 +67,7 @@
     { "source": ".opencode/bootstrap/memory/INDEX.md", "destination": "bootstrap/memory/INDEX.md" },
     { "source": ".opencode/bootstrap/memory/protocols/memory-management.md", "destination": "bootstrap/memory/protocols/memory-management.md" },
     { "source": ".opencode/bootstrap/memory/templates/orchestration-index.md", "destination": "bootstrap/memory/templates/orchestration-index.md" },
+    { "source": ".opencode/bootstrap/memory/templates/compaction-handoff.md", "destination": "bootstrap/memory/templates/compaction-handoff.md" },
     { "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md", "destination": "bootstrap/memory/templates/role-trace-artifact.md" },
     { "source": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md", "destination": "bootstrap/memory/templates/interactive-refinement-test-plan.md" }
   ]

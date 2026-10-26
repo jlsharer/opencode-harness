@@ -128,6 +128,24 @@ test("reported input threshold is conservative and exact at 60 percent", () => {
     tokens.input = Number.MAX_SAFE_INTEGER;
     assert.equal(reportedInputCompactionDecision(fixture).status, "request-eligible");
 });
+test("reported cached input counts toward the threshold without using lifetime totals", () => {
+    const fixture = compactionFixture();
+    const tokens = fixture.messages[1].info.tokens;
+    tokens.input = 1;
+    tokens.cache = { read: 58, write: 0 };
+    assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+    tokens.cache.write = 1;
+    assert.equal(reportedInputCompactionDecision(fixture).status, "request-eligible");
+    tokens.cache = { read: 238464, write: 0 };
+    fixture.providers.all[0].models.model.limit.context = 256000;
+    assert.equal(reportedInputCompactionDecision(fixture).status, "request-eligible");
+    tokens.cache.read = -1;
+    assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+    tokens.cache.read = Number.MAX_SAFE_INTEGER;
+    assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+    tokens.cache = { read: 0, write: 0 };
+    assert.equal(reportedInputCompactionDecision(fixture).status, "skip");
+});
 test("compaction skips busy, child, stale, missing and uncertain work", () => {
     const fixture = compactionFixture();
     const complete = {

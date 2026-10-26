@@ -6,6 +6,7 @@ This directory is project-owned memory for OpenCode harness orchestration. It is
 
 - `protocols/memory-management.md` - project memory rules, levels, indexing, and retention expectations.
 - `templates/orchestration-index.md` - template for per-orchestration memory indexes.
+- `templates/compaction-handoff.md` - reviewed owner-only compaction continuity template.
 - `templates/role-trace-artifact.md` - template for role-level trace artifacts.
 
 ## Generated Orchestration Memory

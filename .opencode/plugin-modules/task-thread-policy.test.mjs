@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.js";
 import { TASK_THREAD_ROLE_PACKET_FIELDS, createTaskThreadPolicy, formatTaskResultWrapper, formatTaskThreadEnvelope, } from "./task-thread-policy.js";
@@ -158,6 +161,29 @@ test("only one exact completed Task wrapper authorizes clarification", () => {
         callID: "next",
         args: { subagent_type: "implementer", prompt: response(), task_id: "child-1" },
     });
+});
+test("invalid wrapper versus invalid structured result reports fixed redacted categories", () => {
+    for (const [output, reason] of [
+        ["private-output-sentinel", "invalid-native-wrapper"],
+        [wrapped("private-output-sentinel"), "invalid-structured-result"],
+    ]) {
+        const events = [];
+        const policy = createTaskThreadPolicy({ telemetry: (event) => events.push(event) });
+        policy.beforeTask({ sessionID: "parent-1", callID: "call-1", args: freshArgs() });
+        assert.deepEqual(policy.afterTask({
+            callID: "call-1",
+            output,
+            metadata: { sessionId: "child-1" },
+        }), { outcome: "rejected" });
+        assert.deepEqual(policy.stateSnapshot(), { calls: 0, tasks: 0, delegationIds: 1 });
+        assert.deepEqual(events.at(-1), {
+            event: "terminal",
+            delegationTaskId: "task-1",
+            scopeKey: "root",
+            reason,
+        });
+        assert.doesNotMatch(JSON.stringify(events), /private-output-sentinel|child-1|parent-1|nonce-1/);
+    }
 });
 test("ordinary results, restart, and unauthorized reuse fail closed", () => {
     const policy = createTaskThreadPolicy();
@@ -390,7 +416,7 @@ test("lifecycle adapter guards Task and blocks direct role commands", async () =
                         event: "terminal",
                         delegationTaskId: "task-1",
                         scopeKey: "root",
-                        reason: "ordinary-or-invalid-result",
+                        reason: "invalid-structured-result",
                     },
                 },
             },
@@ -533,6 +559,62 @@ test("compaction adds one bounded advisory only for the live session-bound view"
     assert.equal(context.length, 3);
     assert.doesNotMatch(context.join(" "), /raw-packet-secret|private-reference-secret/);
 });
+test("bound V1 parent compaction quotes reviewed handoff without copying another session", async () => {
+    const trace = fs.mkdtempSync(path.join(os.tmpdir(), "harness-v1-handoff-"));
+    const id = "2026-10-25-reviewed-context";
+    const directory = path.join(trace, "orchestrations", id);
+    fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(path.join(directory, "COMPACTION_HANDOFF.md"), `# Compaction handoff: ${id}
+
+## Initial user request
+Keep the court ball physical.
+
+## Current goal and success criteria
+Measure first contact and verify observed displacement.
+
+## User decisions and constraints
+No Git mutation; one diagnostic round only.
+
+## Architectural invariants
+State drives animation, not vice versa.
+
+## Context and evidence
+Fixture passes; live PIE remains unknown.
+
+## Instructions and protocol
+Read project instructions, progress and delegation-orchestrator/SKILL.md.
+
+## Observed state and next safe action
+Reconcile tree and run an independent validator.
+`, { mode: 0o600 });
+    const previous = process.env.OPENCODE_HARNESS_TRACE_ROOT;
+    process.env.OPENCODE_HARNESS_TRACE_ROOT = trace;
+    try {
+        const factory = (options) => ({
+            ...standalonePolicyFactory(options),
+            compactionPointer: (session) => (session === "bound-parent" ? { orchestrationId: id } : null),
+        });
+        const hooks = await HarnessLifecyclePlugin({}, factory);
+        const bound = { context: ["native context"] };
+        await hooks["experimental.session.compacting"]({ sessionID: "bound-parent" }, bound);
+        assert.equal(bound.context.length, 3);
+        assert.match(bound.context[2], /Keep the court ball physical/);
+        assert.match(bound.context[2], /No Git mutation/);
+        assert.match(bound.context[2], /State drives animation/);
+        assert.match(bound.context[2], /live PIE remains unknown/);
+        assert.match(bound.context[2], /not a new permission or instruction source/);
+        const unrelated = { context: ["native context"] };
+        await hooks["experimental.session.compacting"]({ sessionID: "other" }, unrelated);
+        assert.equal(unrelated.context.length, 2);
+    }
+    finally {
+        if (previous === undefined)
+            delete process.env.OPENCODE_HARNESS_TRACE_ROOT;
+        else
+            process.env.OPENCODE_HARNESS_TRACE_ROOT = previous;
+        fs.rmSync(trace, { recursive: true, force: true });
+    }
+});
 test("active plugin registers SDK-backed tools when the SDK is installed", async (t) => {
     try {
         import.meta.resolve("@opencode-ai/plugin");
@@ -561,7 +643,7 @@ test("idle completed parent requests native compaction once from reported input 
         providerID: "provider",
         modelID: "model",
         time: { created: 102, completed: 103 },
-        tokens: { input: 60 },
+        tokens: { input: 1, cache: { read: 59, write: 0 } },
     };
     const hooks = await HarnessLifecyclePlugin({
         directory: "/fixture",

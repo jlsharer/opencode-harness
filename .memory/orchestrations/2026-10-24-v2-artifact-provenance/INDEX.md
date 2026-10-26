@@ -1,0 +1,7 @@
+# 2026-10-24-v2-artifact-provenance
+
+- Goal: investigate official v2.1.4 artifact provenance and offline external verification readiness following user's explicit authorization of official download, isolated credential-free execution and external full QA.
+- [Validated normalized specification](normalized-spec.json); routing metadata status: absent. No live providers, global installation, Git mutation or publication.
+- Input: [pinned V2 source](../2026-10-24-opencode2-pinned-contract/INDEX.md); runtime port and native Task behavior remain unverified.
+- Status: [researcher](roles/researcher/artifact-researcher-001-provenance.md) found npm Linux x64 v2.1.4 metadata and variant-specific SHA-512; GitHub tagged-release API returned 404, no tarball bytes or signature verified. [Planner](roles/planner/artifact-planner-001-external-verification.md) specified isolated artifact verification and exact-tree external QA. [Independent validator](roles/validator/artifact-validator-001-provenance-gate.md) observed `git diff --check` exit zero; native binary and no-regression status remain unproven. Retain `dispatch-started.json`.
+- Next safe action: execute the authorized artifact download/integrity check and credential-free native probes through a separately controlled external verifier, then full source/runtime/package QA against the exact tree. This managed reader/shell workflow cannot download/install binary artifacts or execute write-producing QA; return observed digests and exit statuses for a fresh implementation workflow.

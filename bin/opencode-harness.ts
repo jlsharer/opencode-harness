@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs";
+import { createServer, request as httpRequest } from "node:http";
+import { connect as netConnect } from "node:net";
 import os from "node:os";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import type { SpawnSyncReturns } from "node:child_process";
 import type { BigIntStats } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -36,11 +38,13 @@ const RESERVED_ENV = [
   "OPENCODE_HARNESS_ROUTING_PROFILE",
   "OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH",
   "OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE",
+  "OPENCODE_HARNESS_NATIVE_API",
 ];
 const SEEDS = [
   ["bootstrap/memory/INDEX.md", "INDEX.md"],
   ["bootstrap/memory/protocols/memory-management.md", "protocols/memory-management.md"],
   ["bootstrap/memory/templates/orchestration-index.md", "templates/orchestration-index.md"],
+  ["bootstrap/memory/templates/compaction-handoff.md", "templates/compaction-handoff.md"],
   ["bootstrap/memory/templates/role-trace-artifact.md", "templates/role-trace-artifact.md"],
 ];
 
@@ -125,6 +129,7 @@ interface LauncherOptions {
   providerConfig?: string;
   catalog?: string;
   profile?: string;
+  v2AuthDataHome?: string;
 }
 
 interface ExecutableIdentity {
@@ -146,7 +151,7 @@ interface Snapshot {
   parentIdentity: BigIntStats;
   directory: string;
   directoryIdentity: BigIntStats;
-  paths: Partial<Record<SnapshotInput["key"] | "probeMarker", string>>;
+  paths: Partial<Record<SnapshotInput["key"] | "probeMarker" | "authSource", string>>;
   database: string;
 }
 
@@ -481,6 +486,11 @@ function diagnosticVersion(value: string): string {
       "OpenCode --version must return a nonempty single-line diagnostic (at most 128 characters)",
     );
   return value;
+}
+
+function nativeV2(version: string): boolean {
+  // This chooses a native contract, never a release allowlist or a trust bypass.
+  return /^(?:opencode\s+)?v?2\.\d+/i.test(version);
 }
 
 type ManagedSource = RuntimeFileEntry & { bytes: Buffer };
@@ -1159,15 +1169,24 @@ function inspectConfigDocument(
 ): void {
   if (!isJsonObject(document)) fail(`${label} must contain an object`);
   for (const role of ROLES)
-    if (isJsonObject(document.agent) && Object.hasOwn(document.agent, role))
+    if (
+      (isJsonObject(document.agent) && Object.hasOwn(document.agent, role)) ||
+      (isJsonObject(document.agents) && Object.hasOwn(document.agents, role))
+    )
       fail(`${label} has colliding agent key: ${role}`);
   for (const command of COMMANDS)
     if (
       (isJsonObject(document.command) && Object.hasOwn(document.command, command)) ||
-      (isJsonObject(document.command) && Object.hasOwn(document.command, `/${command}`))
+      (isJsonObject(document.command) && Object.hasOwn(document.command, `/${command}`)) ||
+      (isJsonObject(document.commands) && Object.hasOwn(document.commands, command)) ||
+      (isJsonObject(document.commands) && Object.hasOwn(document.commands, `/${command}`))
     )
       fail(`${label} has colliding command key: ${command}`);
-  const skillPaths = isJsonObject(document.skills) ? (document.skills.paths ?? []) : [];
+  const skillPaths = Array.isArray(document.skills)
+    ? document.skills
+    : isJsonObject(document.skills)
+      ? (document.skills.paths ?? [])
+      : [];
   if (!Array.isArray(skillPaths)) fail(`${label}.skills.paths must be an array`);
   for (const skillPath of skillPaths) {
     if (typeof skillPath !== "string" || !path.isAbsolute(skillPath))
@@ -1177,16 +1196,20 @@ function inspectConfigDocument(
     });
     customSkillRoots.push(root);
   }
-  if (Object.hasOwn(document, "plugin")) {
-    if (!Array.isArray(document.plugin)) fail(`${label}.plugin must be an array`);
-    if (document.plugin.some(containsHarnessPlugin))
-      fail(`${label} declares a harness plugin collision`);
-    if (document.plugin.length > 0 && !allowProjectPlugins)
+  for (const field of ["plugin", "plugins"] as const) {
+    if (!Object.hasOwn(document, field)) continue;
+    const plugins = document[field];
+    if (!Array.isArray(plugins)) fail(`${label}.${field} must be an array`);
+    if (plugins.some(containsHarnessPlugin)) fail(`${label} declares a harness plugin collision`);
+    if (plugins.length > 0 && !allowProjectPlugins)
       fail(
         `${label} plugin declarations require --allow-project-plugins (same-user code execution risk)`,
       );
   }
-  if (providerSupplied && Object.hasOwn(document, "provider"))
+  if (
+    providerSupplied &&
+    (Object.hasOwn(document, "provider") || Object.hasOwn(document, "providers"))
+  )
     fail(`${label} declares provider and collides with --provider-config`);
 }
 
@@ -1602,6 +1625,84 @@ function validateProviderProjection(document: unknown): ProviderProjection {
   };
 }
 
+function projectV2Providers(document: ProviderProjection): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      $schema: "https://opencode.ai/config.json",
+      providers: Object.fromEntries(
+        Object.entries(document.provider).map(([id, provider]) => [
+          id,
+          {
+            package: provider.npm,
+            name: provider.name,
+            settings: { baseURL: provider.options.baseURL },
+            models: Object.fromEntries(
+              Object.entries(provider.models).map(([modelId, model]) => [
+                modelId,
+                {
+                  name: model.name,
+                  limit: model.limit,
+                  body: { chat_template_kwargs: model.options.chat_template_kwargs },
+                },
+              ]),
+            ),
+          },
+        ]),
+      ),
+    }) + "\n",
+  );
+}
+
+async function verifyV2ProviderProjection(
+  url: string,
+  password: string,
+  document: ProviderProjection,
+) {
+  const authorization = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
+  const get = async (route: string): Promise<unknown> => {
+    const response = await fetch(`${url}${route}`, {
+      headers: { Authorization: authorization },
+      redirect: "error",
+      signal: AbortSignal.timeout(3000),
+    });
+    if (response.status !== 200 || Number(response.headers.get("content-length")) > 1048576)
+      fail("V2 projected provider inventory is unavailable");
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length > 1048576) fail("V2 projected provider inventory exceeds bound");
+    return JSON.parse(bytes.toString("utf8")) as unknown;
+  };
+  const listing = await get("/api/model");
+  const models = isJsonObject(listing) ? listing.data : undefined;
+  if (!Array.isArray(models)) fail("V2 projected model inventory is malformed");
+  for (const [id, provider] of Object.entries(document.provider)) {
+    const detail = await get(`/api/provider/${encodeURIComponent(id)}`);
+    const entry = isJsonObject(detail) ? detail.data : undefined;
+    if (
+      !isJsonObject(entry) ||
+      entry.id !== id ||
+      !isJsonObject(entry.settings) ||
+      entry.settings.baseURL !== provider.options.baseURL
+    )
+      fail("V2 projected provider endpoint was not activated exactly");
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      const matches = models.filter(
+        (candidate) =>
+          isJsonObject(candidate) && candidate.providerID === id && candidate.id === modelId,
+      );
+      if (
+        matches.length !== 1 ||
+        !isJsonObject(matches[0]) ||
+        matches[0].enabled !== true ||
+        matches[0].name !== model.name ||
+        !isJsonObject(matches[0].limit) ||
+        matches[0].limit.context !== model.limit.context ||
+        matches[0].limit.output !== model.limit.output
+      )
+        fail("V2 projected model metadata was not activated exactly");
+    }
+  }
+}
+
 function validateCatalog(document: unknown): RoutingCatalog {
   exactKeys(document, ["schemaVersion", "models"], ["schemaVersion", "models"], "routing catalog");
   if (document.schemaVersion !== "1.0.0") fail('routing catalog.schemaVersion must equal "1.0.0"');
@@ -1759,6 +1860,7 @@ function cleanupSnapshot(
     "opencode.db",
     "opencode.db-wal",
     "opencode.db-shm",
+    ...(snapshot.paths.authSource ? ["auth-source.db-wal", "auth-source.db-shm"] : []),
   ]);
   let primary = originalProblem || "launch snapshot cleanup";
   let retainedLaunch: string | null = snapshot.directory;
@@ -2023,6 +2125,7 @@ function activationEnv(
   workspace: string,
   traceRoot: string,
   snapshot: Snapshot,
+  v2 = false,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
@@ -2037,10 +2140,402 @@ function activationEnv(
     env.OPENCODE_HARNESS_ROUTING_CATALOG = snapshot.paths.catalog;
     env.OPENCODE_HARNESS_ROUTING_PROFILE = snapshot.paths.profile;
   }
+  if (v2) {
+    env.OPENCODE_HARNESS_NATIVE_API = "v2";
+    // V2's run command uses inherited PWD ahead of process.cwd() to select
+    // the session Location. It must not point outside the probed workspace.
+    env.PWD = workspace;
+  }
   return env;
 }
 
-function probeTracePermissions(
+async function backupV2AuthSource(snapshot: Snapshot, dataHome: string) {
+  trustedDirectoryPath(dataHome, "V2 auth data home", { exactFinalMode: 0o700 });
+  const authDirectory = trustedDirectoryPath(path.join(dataHome, "opencode"), "V2 auth directory");
+  if (fs.lstatSync(authDirectory).uid !== process.getuid!())
+    fail("V2 auth directory must be owned by the current user");
+  const source = path.join(authDirectory, "opencode.db");
+  const before = lstatOwned(source, "V2 auth database", "file", 0o600);
+  if (before.nlink !== 1n || before.size > 128n * 1024n * 1024n)
+    fail("V2 auth database is linked or exceeds the bounded snapshot limit");
+  const destination = path.join(snapshot.directory, "auth-source.db");
+  snapshot.paths.authSource = destination;
+  const { DatabaseSync, backup } = await import("node:sqlite");
+  const sourceDb = new DatabaseSync(source, { readOnly: true });
+  try {
+    await backup(sourceDb, destination);
+  } finally {
+    sourceDb.close();
+  }
+  fs.chmodSync(destination, 0o600);
+  const copy = lstatOwned(destination, "V2 temporary auth database", "file", 0o600);
+  if (copy.nlink !== 1n || copy.size > 128n * 1024n * 1024n)
+    fail("V2 temporary auth database is linked or oversized");
+  const after = fs.lstatSync(source, { bigint: true });
+  if (
+    !sameDeviceInode(before, after) ||
+    before.size !== after.size ||
+    before.mtimeNs !== after.mtimeNs
+  )
+    fail("V2 source auth database changed during the read-only snapshot");
+}
+
+function removeV2AuthSource(snapshot: Snapshot) {
+  const filename = snapshot.paths.authSource;
+  if (!filename) return;
+  for (const suffix of ["-wal", "-shm", ""]) {
+    const target = filename + suffix;
+    if (!fs.existsSync(target)) continue;
+    const stat = lstatOwned(target, "V2 temporary auth companion", "file", 0o600);
+    if (stat.nlink !== 1n) fail("V2 temporary auth companion has multiple links");
+    fs.unlinkSync(target);
+  }
+}
+
+function importV2OpenAIAuth(
+  executable: string,
+  workspace: string,
+  snapshot: Snapshot,
+  url: string,
+  clientEnv: NodeJS.ProcessEnv,
+) {
+  const authSource = snapshot.paths.authSource;
+  if (!authSource) return;
+  const bwrap = "/usr/bin/bwrap";
+  const sandbox = fs.lstatSync(bwrap);
+  if (
+    !sandbox.isFile() ||
+    sandbox.isSymbolicLink() ||
+    sandbox.uid !== 0 ||
+    (sandbox.mode & 0o022) !== 0 ||
+    fs.realpathSync(bwrap) !== bwrap
+  )
+    fail("V2 auth import requires the installed trusted Bubblewrap");
+  const binDir = trustedDirectoryPath(path.dirname(executable), "V2 selected executable parent");
+  const binName = path.basename(executable);
+  if (!/^[A-Za-z0-9._-]+$/.test(binName)) fail("V2 auth export executable name is unsafe");
+  const exported = spawnSync(
+    bwrap,
+    [
+      "--unshare-all",
+      "--ro-bind",
+      "/",
+      "/",
+      "--dev",
+      "/dev",
+      "--proc",
+      "/proc",
+      "--bind",
+      snapshot.directory,
+      "/opt",
+      "--ro-bind",
+      binDir,
+      "/usr/local/bin",
+      "--tmpfs",
+      "/tmp",
+      "--chdir",
+      "/",
+      "/usr/local/bin/" + binName,
+      "auth",
+      "export",
+      "openai",
+      "--standalone",
+    ],
+    {
+      cwd: workspace,
+      env: {
+        PATH: "/usr/local/bin:/usr/bin:/bin",
+        HOME: "/tmp",
+        XDG_DATA_HOME: "/tmp/data",
+        XDG_CONFIG_HOME: "/tmp/config",
+        XDG_CACHE_HOME: "/tmp/cache",
+        XDG_STATE_HOME: "/tmp/state",
+        TMPDIR: "/tmp",
+        OPENCODE_DB: "/opt/auth-source.db",
+      },
+      encoding: "buffer",
+      timeout: 30000,
+      maxBuffer: 65536,
+    },
+  );
+  const bytes = exported.stdout ?? Buffer.alloc(0);
+  try {
+    if (exported.error || exported.status !== 0 || bytes.length < 2 || bytes.length > 65536)
+      fail("isolated V2 OpenAI auth export failed");
+    let entries: unknown;
+    try {
+      entries = JSON.parse(bytes.toString("utf8"));
+    } catch {
+      fail("V2 OpenAI auth export was malformed");
+    }
+    if (
+      !Array.isArray(entries) ||
+      entries.length !== 1 ||
+      !isJsonObject(entries[0]) ||
+      entries[0].integrationID !== "openai" ||
+      entries[0].active !== true ||
+      !isJsonObject(entries[0].value) ||
+      entries[0].value.type !== "oauth"
+    )
+      fail("V2 auth export did not select exactly one active OpenAI OAuth credential");
+    const imported = spawnSync(executable, ["auth", "import", "--server", url], {
+      cwd: workspace,
+      env: clientEnv,
+      input: bytes,
+      encoding: "buffer",
+      timeout: 30000,
+      maxBuffer: 16384,
+    });
+    if (imported.error || imported.status !== 0)
+      fail("isolated V2 OpenAI auth import into launch database failed");
+  } finally {
+    bytes.fill(0);
+    removeV2AuthSource(snapshot);
+  }
+}
+
+async function serveV2WebProxy(
+  upstreamUrl: string,
+  internalPassword: string,
+  ownerPassword: string,
+  port: number,
+  terminated: Promise<void>,
+): Promise<number> {
+  const upstream = new URL(upstreamUrl);
+  const expected = Buffer.from(
+    `Basic ${Buffer.from(`opencode:${ownerPassword}`).toString("base64")}`,
+  );
+  const internalAuthorization = `Basic ${Buffer.from(`opencode:${internalPassword}`).toString("base64")}`;
+  const sockets = new Set<import("node:net").Socket>();
+  const authorized = (header: string | undefined) => {
+    const actual = Buffer.from(header ?? "");
+    return actual.length === expected.length && timingSafeEqual(actual, expected);
+  };
+  const proxy = createServer((incoming, outgoing) => {
+    if (!authorized(incoming.headers.authorization)) {
+      outgoing.writeHead(401, { "WWW-Authenticate": 'Basic realm="OpenCode harness"' });
+      outgoing.end();
+      return;
+    }
+    if (!incoming.url?.startsWith("/") || incoming.url.startsWith("//")) {
+      outgoing.writeHead(400);
+      outgoing.end();
+      return;
+    }
+    const forwarded = httpRequest({
+      host: "127.0.0.1",
+      port: Number(upstream.port),
+      method: incoming.method,
+      path: incoming.url,
+      headers: {
+        ...incoming.headers,
+        host: upstream.host,
+        authorization: internalAuthorization,
+      },
+    });
+    forwarded.on("response", (response) => {
+      outgoing.writeHead(response.statusCode ?? 502, response.headers);
+      response.pipe(outgoing);
+    });
+    forwarded.on("error", () => {
+      if (!outgoing.headersSent) outgoing.writeHead(502);
+      outgoing.end();
+    });
+    incoming.pipe(forwarded);
+  });
+  proxy.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.once("close", () => sockets.delete(socket));
+  });
+  proxy.on("upgrade", (incoming, client, head) => {
+    if (
+      !authorized(incoming.headers.authorization) ||
+      !incoming.url?.startsWith("/") ||
+      incoming.url.startsWith("//")
+    ) {
+      client.end("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      return;
+    }
+    const upstreamSocket = netConnect(Number(upstream.port), "127.0.0.1");
+    const headers = {
+      ...incoming.headers,
+      host: upstream.host,
+      authorization: internalAuthorization,
+    };
+    upstreamSocket.once("connect", () => {
+      upstreamSocket.write(
+        `${incoming.method} ${incoming.url} HTTP/1.1\r\n${Object.entries(headers)
+          .map(([name, value]) => `${name}: ${value}`)
+          .join("\r\n")}\r\n\r\n`,
+      );
+      if (head.length) upstreamSocket.write(head);
+      client.pipe(upstreamSocket).pipe(client);
+    });
+    upstreamSocket.on("error", () => client.destroy());
+    client.on("error", () => upstreamSocket.destroy());
+    client.once("close", () => upstreamSocket.destroy());
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      proxy.once("error", reject);
+      proxy.listen(port, "127.0.0.1", () => {
+        proxy.off("error", reject);
+        resolve();
+      });
+    });
+    process.stderr.write(`opencode-harness: guarded V2 web ready at http://127.0.0.1:${port}\n`);
+    const status = await new Promise<number>((resolve) => {
+      const finish = (code: number) => {
+        process.off("SIGINT", stop);
+        process.off("SIGTERM", stop);
+        resolve(code);
+      };
+      const stop = () => finish(0);
+      process.once("SIGINT", stop);
+      process.once("SIGTERM", stop);
+      void terminated.then(() => finish(1));
+    });
+    return status;
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    if (proxy.listening) await new Promise<void>((resolve) => proxy.close(() => resolve()));
+  }
+}
+
+async function probeV2Activation(
+  executable: string,
+  workspace: string,
+  env: NodeJS.ProcessEnv,
+  marker: string,
+  expected: ReturnType<typeof expectedTracePermissionMarker>,
+  snapshotDirectory: string,
+  onReady: (
+    url: string,
+    password: string,
+    terminated: Promise<void>,
+  ) => number | Promise<number> = () => 0,
+): Promise<number> {
+  const password = randomBytes(32).toString("base64url");
+  const child = spawn(executable, ["serve", "--stdio", "--hostname", "127.0.0.1", "--port", "0"], {
+    cwd: workspace,
+    env: { ...env, OPENCODE_PASSWORD: password },
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let outputOverflow = false;
+  let ended = false;
+  let activationDiagnostic = "";
+  child.stdout.on("data", (chunk: Buffer) => {
+    stdout += chunk.toString("utf8");
+    if (stdout.length > 4096) outputOverflow = true;
+  });
+  child.stderr.on("data", (chunk: Buffer) => {
+    const text = chunk.toString("utf8");
+    const match = /opencode-harness: V2 role activation failed: ([^\r\n]{1,160})/.exec(text);
+    if (match) activationDiagnostic = match[1]!;
+  });
+  child.stdin.on("error", () => {});
+  const terminal = new Promise<void>((resolve) => {
+    child.once("error", () => {
+      ended = true;
+      resolve();
+    });
+    child.once("exit", () => {
+      ended = true;
+      resolve();
+    });
+  });
+  let terminationProven = false;
+  let requestedStatus = 1;
+  try {
+    for (let attempt = 0; attempt < 100 && !stdout.includes("\n") && !ended; attempt++)
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    if (outputOverflow || ended || !stdout.includes("\n"))
+      fail("V2 activation server did not report a bounded live endpoint");
+    let url: unknown;
+    try {
+      url = JSON.parse(stdout.slice(0, stdout.indexOf("\n"))).url;
+    } catch {
+      fail("V2 activation server reported an invalid endpoint");
+    }
+    if (
+      typeof url !== "string" ||
+      !/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}$/.test(url) ||
+      Number(url.split(":").at(-1)) > 65535
+    )
+      fail("V2 activation endpoint is not an exact loopback port");
+    const headers = {
+      Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
+    };
+    let active = false;
+    let observedPlugin = "absent";
+    const activationDeadline = Date.now() + 33000;
+    for (let attempt = 0; Date.now() < activationDeadline && !ended; attempt++) {
+      try {
+        const response = await fetch(
+          `${url}/api/plugin?directory=${encodeURIComponent(workspace)}`,
+          {
+            headers,
+            signal: AbortSignal.timeout(1500),
+          },
+        );
+        if (response.status !== 200) fail("V2 activation plugin inventory is unavailable");
+        const result: unknown = await response.json();
+        const plugins = isJsonObject(result) ? result.data : undefined;
+        if (!Array.isArray(plugins)) fail("V2 activation plugin inventory is malformed");
+        const selected = plugins.filter(
+          (item) => isJsonObject(item) && item.id === "opencode-harness.v2",
+        );
+        if (selected.length > 1) fail("V2 activation loaded multiple harness plugins");
+        if (selected.length === 1) {
+          const state = isJsonObject(selected[0]) ? selected[0].state : undefined;
+          observedPlugin =
+            isJsonObject(state) && typeof state.status === "string"
+              ? state.status.slice(0, 32)
+              : "unreported";
+          if (isJsonObject(state) && state.status === "failed")
+            fail("V2 harness plugin failed to activate");
+          active = isJsonObject(state) && state.status === "active";
+        }
+        if (active && fs.existsSync(marker)) {
+          verifyTracePermissionMarker(marker, expected);
+          break;
+        }
+      } catch (error) {
+        if (errorMessage(error).startsWith("opencode-harness:")) throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    if (!active || !fs.existsSync(marker) || ended)
+      fail(
+        `V2 native permission and pre-subagent guard proof unavailable (plugin: ${observedPlugin}, marker: ${fs.existsSync(marker) ? "present" : "absent"})${activationDiagnostic ? `: ${activationDiagnostic}` : ""}`,
+      );
+    verifyTracePermissionMarker(marker, expected);
+    requestedStatus = await onReady(url, password, terminal);
+    if (ended) fail("V2 guarded server ended during the requested child");
+  } finally {
+    child.stdin.end();
+    child.kill("SIGTERM");
+    terminationProven = await Promise.race([
+      terminal.then(() => true),
+      new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+    ]);
+    if (!terminationProven) {
+      child.kill("SIGKILL");
+      terminationProven = await Promise.race([
+        terminal.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 2000)),
+      ]);
+    }
+    if (!terminationProven)
+      fail(
+        `V2 activation termination unconfirmed; retained launch snapshot at ${snapshotDirectory}`,
+      );
+  }
+  return requestedStatus;
+}
+
+async function probeTracePermissions(
   executable: string,
   identity: ExecutableIdentity,
   workspace: string,
@@ -2049,29 +2544,42 @@ function probeTracePermissions(
   inputs: SnapshotInput[],
   projectState: ProjectState,
   options: LauncherOptions,
-): void {
+  v2 = false,
+): Promise<void> {
   const snapshot = createSnapshots(runtimeRoot, inputs);
   const marker = path.join(snapshot.directory, "trace-permission-probe.json");
   snapshot.paths.probeMarker = marker;
   const nonce = randomBytes(32).toString("hex");
   let problem: unknown = null;
   try {
-    const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshot);
+    const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshot, v2);
     env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
     env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
-    const result = spawnSync(executable, ["agent", "list"], {
-      cwd: workspace,
-      env,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.error) fail(`cannot start OpenCode activation probe: ${result.error.message}`);
-    if (result.status !== 0)
-      fail(
-        `OpenCode trace permission activation probe failed with status ${result.status}: ${(result.stderr || result.stdout).trim()}`,
+    if (v2) {
+      await probeV2Activation(
+        executable,
+        workspace,
+        env,
+        marker,
+        expectedTracePermissionMarker(workspace, traceRoot, nonce),
+        snapshot.directory,
       );
+    } else {
+      const result = spawnSync(executable, ["agent", "list"], {
+        cwd: workspace,
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.error) fail(`cannot start OpenCode activation probe: ${result.error.message}`);
+      if (result.status !== 0)
+        fail(
+          `OpenCode trace permission activation probe failed with status ${result.status}: ${(result.stderr || result.stdout).trim()}`,
+        );
+    }
     verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce));
   } catch (error) {
+    if (errorMessage(error).includes("V2 activation termination unconfirmed")) throw error;
     problem = error;
   }
   cleanupSnapshot(
@@ -2256,9 +2764,11 @@ function parse(argv: string[]): ParsedArguments {
         | "catalog"
         | "profile"
         | "opencodeBin"
+        | "v2AuthDataHome"
       >
     >([
       ["--opencode-bin", "opencodeBin"],
+      ["--v2-auth-data-home", "v2AuthDataHome"],
       ["--workspace", "workspace"],
       ["--trace-root", "traceRoot"],
       ["--cache-root", "cacheRoot"],
@@ -2276,6 +2786,8 @@ function parse(argv: string[]): ParsedArguments {
       Object.keys(options).some((key) => !["forward", "opencodeBin"].includes(key)))
   )
     fail("doctor accepts only --opencode-bin ABS");
+  if (options.v2AuthDataHome && command !== "run")
+    fail("--v2-auth-data-home is available only for an explicit V2 run");
   if (command === "run" && options.forward.some((arg) => arg === "serve" || arg === "web"))
     fail("run cannot forward server command tokens serve/web; use authenticated loopback web mode");
   if (command === "source-web" || command === "source-tui") {
@@ -2321,6 +2833,7 @@ function usage(): string {
     "  opencode-harness prepare [--opencode-bin ABS] [--cache-root ABS]",
     "  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "  opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]",
+    "    [--v2-auth-data-home ABS] (explicit owner-only V2 OpenAI credential source)",
     "    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "    [--allow-project-plugins] [-- OPENCODE_ARGS...]",
     "",
@@ -2404,7 +2917,10 @@ function sourceProfilePreflight(): string {
     const cfg = readProjectConfig(filename, `source ${relative}`);
     if (!isJsonObject(cfg) || cfg.$schema !== "https://opencode.ai/config.json")
       fail("source-web config requires the native schema declaration");
-    if (Object.hasOwn(cfg, "plugin") && (!Array.isArray(cfg.plugin) || cfg.plugin.length))
+    if (
+      (Object.hasOwn(cfg, "plugin") && (!Array.isArray(cfg.plugin) || cfg.plugin.length)) ||
+      (Object.hasOwn(cfg, "plugins") && (!Array.isArray(cfg.plugins) || cfg.plugins.length))
+    )
       fail("source-web uses source plugin autoload only; explicit plugins are unsupported");
     if (
       isJsonObject(cfg.skills) &&
@@ -2512,7 +3028,10 @@ function sourceProfilePreflight(): string {
   );
 }
 
-function runSourceProfile(options: LauncherOptions, mode: "source-web" | "source-tui"): number {
+async function runSourceProfile(
+  options: LauncherOptions,
+  mode: "source-web" | "source-tui",
+): Promise<number> {
   for (const name of RESERVED_ENV)
     if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
   assertNodeCompatibility(manifest());
@@ -2535,6 +3054,7 @@ function runSourceProfile(options: LauncherOptions, mode: "source-web" | "source
       );
   }
   const selected = resolveCompatibleExecutable(options.opencodeBin);
+  const v2 = nativeV2(selected.version);
   if (sourceProfilePreflight() !== fingerprint)
     fail("source profile changed during validation or version probe");
   recheckExecutable(selected.executable, selected.identity, "source profile validation");
@@ -2550,19 +3070,70 @@ function runSourceProfile(options: LauncherOptions, mode: "source-web" | "source
   let resultStatus = 1;
   let originalError: unknown = null;
   try {
-    const result = spawnSync(selected.executable, options.forward, {
-      cwd: PACKAGE_ROOT,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        OPENCODE_DB: snapshot.database,
-        OPENCODE_HARNESS_WORKSPACE_ROOT: PACKAGE_ROOT,
-        OPENCODE_HARNESS_TRACE_ROOT: path.join(PACKAGE_ROOT, ".memory"),
-      },
-    });
-    if (result.error) fail(`cannot start source OpenCode: ${result.error.message}`);
-    resultStatus = result.status ?? 1;
+    if (v2) {
+      const sourceRuntime = path.join(PACKAGE_ROOT, ".opencode");
+      const traceRoot = chooseTraceRoot(PACKAGE_ROOT, path.join(stateRoot, "trace"), sourceRuntime);
+      const marker = path.join(snapshot.directory, "trace-permission-probe.json");
+      snapshot.paths.probeMarker = marker;
+      const nonce = randomBytes(32).toString("hex");
+      const env = activationEnv(
+        process.env,
+        sourceRuntime,
+        PACKAGE_ROOT,
+        traceRoot,
+        snapshot,
+        true,
+      );
+      if (mode === "source-web") delete env.OPENCODE_SERVER_PASSWORD;
+      env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
+      env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
+      resultStatus = await probeV2Activation(
+        selected.executable,
+        PACKAGE_ROOT,
+        env,
+        marker,
+        expectedTracePermissionMarker(PACKAGE_ROOT, traceRoot, nonce),
+        snapshot.directory,
+        async (url, password, terminated) => {
+          recheckExecutable(selected.executable, selected.identity, "V2 source guard readiness");
+          if (sourceProfilePreflight() !== fingerprint)
+            fail("source profile changed after V2 guard readiness");
+          if (mode === "source-web")
+            return serveV2WebProxy(
+              url,
+              password,
+              process.env.OPENCODE_SERVER_PASSWORD!,
+              Number(options.webPort ?? "4096"),
+              terminated,
+            );
+          const clientEnv: NodeJS.ProcessEnv = { ...env, OPENCODE_PASSWORD: password };
+          delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
+          delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
+          const client = spawnSync(selected.executable, ["--server", url], {
+            cwd: PACKAGE_ROOT,
+            stdio: "inherit",
+            env: clientEnv,
+          });
+          if (client.error) fail(`cannot start V2 guarded source client: ${client.error.message}`);
+          return client.status ?? 1;
+        },
+      );
+    } else {
+      const result = spawnSync(selected.executable, options.forward, {
+        cwd: PACKAGE_ROOT,
+        stdio: "inherit",
+        env: {
+          ...process.env,
+          OPENCODE_DB: snapshot.database,
+          OPENCODE_HARNESS_WORKSPACE_ROOT: PACKAGE_ROOT,
+          OPENCODE_HARNESS_TRACE_ROOT: path.join(PACKAGE_ROOT, ".memory"),
+        },
+      });
+      if (result.error) fail(`cannot start source OpenCode: ${result.error.message}`);
+      resultStatus = result.status ?? 1;
+    }
   } catch (error) {
+    if (errorMessage(error).includes("V2 activation termination unconfirmed")) throw error;
     originalError = error;
   }
   cleanupSnapshot(
@@ -2577,7 +3148,7 @@ function runSourceProfile(options: LauncherOptions, mode: "source-web" | "source
   return resultStatus;
 }
 
-function run(options: LauncherOptions): number {
+async function run(options: LauncherOptions, command: "run" | "web" = "run"): Promise<number> {
   process.stderr.write(
     "opencode-harness: ephemeral execution; interrupted runs cannot resume; launch database is removed after exit.\n",
   );
@@ -2600,10 +3171,18 @@ function run(options: LauncherOptions): number {
     Boolean(options.allowProjectPlugins),
     Boolean(options.providerConfig),
   );
-  const { inputs } = validateExternalInputs(options);
+  const { inputs, providerDocument } = validateExternalInputs(options);
   const value = manifest();
   assertNodeCompatibility(value);
   const { executable, identity, version } = resolveCompatibleExecutable(options.opencodeBin);
+  const v2 = nativeV2(version);
+  if (v2 && providerDocument) {
+    const provider = inputs.find((entry) => entry.key === "provider");
+    if (!provider) fail("validated V2 provider projection is missing");
+    provider.bytes = projectV2Providers(providerDocument);
+  }
+  if (options.v2AuthDataHome && !v2)
+    fail("--v2-auth-data-home requires a verified V2 native CLI contract");
   const runtimeRoot = prepareRuntime(options, version);
   const traceRoot = chooseTraceRoot(workspace, options.traceRoot, runtimeRoot);
   const rootPairs: readonly (readonly [string, string, string])[] = [
@@ -2635,27 +3214,122 @@ function run(options: LauncherOptions): number {
     );
     if (recheckedProject.fingerprint !== projectState.fingerprint)
       fail("project config/plugin/skill surface changed after preflight");
-    if (traceRoot !== path.join(workspace, ".memory"))
-      probeTracePermissions(
+    if (v2) {
+      // The verified guard must own the same server that handles the user's
+      // request. A separate probe followed by `run --standalone` is unsafe:
+      // the requested server can admit a subagent before its plugin loads.
+      if (command !== "web" && (options.forward[0] === "serve" || options.forward[0] === "web"))
+        fail("V2 server launch requires a separately verified native exposure contract");
+      snapshots = createSnapshots(runtimeRoot, inputs);
+      if (options.v2AuthDataHome) await backupV2AuthSource(snapshots, options.v2AuthDataHome);
+      const marker = path.join(snapshots.directory, "trace-permission-probe.json");
+      snapshots.paths.probeMarker = marker;
+      const nonce = randomBytes(32).toString("hex");
+      const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshots, true);
+      if (command === "web") delete env.OPENCODE_SERVER_PASSWORD;
+      env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
+      env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
+      resultStatus = await probeV2Activation(
         executable,
-        identity,
         workspace,
-        runtimeRoot,
-        traceRoot,
-        inputs,
-        projectState,
-        options,
+        env,
+        marker,
+        expectedTracePermissionMarker(workspace, traceRoot, nonce),
+        snapshots.directory,
+        async (url, password, terminated) => {
+          recheckExecutable(executable, identity, "V2 guarded server readiness");
+          const refreshed = projectPreflight(
+            workspace,
+            Boolean(options.allowProjectPlugins),
+            Boolean(options.providerConfig),
+          );
+          if (refreshed.fingerprint !== projectState.fingerprint)
+            fail("project config/plugin/skill surface changed after V2 server readiness");
+          const forward = options.forward;
+          let argv: string[];
+          if (command === "web") argv = [];
+          else if (!forward.length) argv = ["--server", url];
+          else if (forward.length === 1 && forward[0] === "--version") argv = ["--version"];
+          else if (forward[0] === "run" || forward[0] === "models") {
+            if (forward.includes("--server") || forward.includes("--standalone"))
+              fail("V2 forwarded server selection cannot bypass the guarded server");
+            argv = [forward[0], "--server", url, ...forward.slice(1)];
+          } else fail("V2 forwarded command has no verified guarded-server mapping");
+          const clientEnv: NodeJS.ProcessEnv = { ...env, OPENCODE_PASSWORD: password };
+          delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
+          delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
+          if (options.v2AuthDataHome) {
+            importV2OpenAIAuth(executable, workspace, snapshots!, url, clientEnv);
+            recheckExecutable(executable, identity, "V2 auth import");
+            const response = await fetch(
+              `${url}/api/plugin?directory=${encodeURIComponent(workspace)}`,
+              {
+                headers: {
+                  Authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`,
+                },
+                signal: AbortSignal.timeout(1500),
+              },
+            );
+            const inventory: unknown = response.status === 200 ? await response.json() : null;
+            const entries = isJsonObject(inventory) ? inventory.data : null;
+            if (
+              !Array.isArray(entries) ||
+              !entries.some(
+                (entry) =>
+                  isJsonObject(entry) &&
+                  entry.id === "opencode-harness.v2" &&
+                  isJsonObject(entry.state) &&
+                  entry.state.status === "active",
+              )
+            )
+              fail("V2 guard changed after importing the selected OpenAI connection");
+            verifyTracePermissionMarker(
+              marker,
+              expectedTracePermissionMarker(workspace, traceRoot, nonce),
+            );
+          }
+          if (providerDocument) await verifyV2ProviderProjection(url, password, providerDocument);
+          if (command === "web")
+            return serveV2WebProxy(
+              url,
+              password,
+              process.env.OPENCODE_SERVER_PASSWORD!,
+              Number(options.webPort ?? "4096"),
+              terminated,
+            );
+          const result = spawnSync(executable, argv, {
+            cwd: workspace,
+            env: clientEnv,
+            stdio: "inherit",
+          });
+          if (result.error) fail(`cannot start V2 guarded client: ${result.error.message}`);
+          return result.status ?? 1;
+        },
       );
-    snapshots = createSnapshots(runtimeRoot, inputs);
-    const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshots);
-    const result = spawnSync(executable, options.forward, {
-      cwd: workspace,
-      env,
-      stdio: "inherit",
-    });
-    if (result.error) fail(`cannot start OpenCode: ${result.error.message}`);
-    resultStatus = result.status ?? 1;
+    } else {
+      if (traceRoot !== path.join(workspace, ".memory"))
+        await probeTracePermissions(
+          executable,
+          identity,
+          workspace,
+          runtimeRoot,
+          traceRoot,
+          inputs,
+          projectState,
+          options,
+        );
+      snapshots = createSnapshots(runtimeRoot, inputs);
+      const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshots);
+      const result = spawnSync(executable, options.forward, {
+        cwd: workspace,
+        env,
+        stdio: "inherit",
+      });
+      if (result.error) fail(`cannot start OpenCode: ${result.error.message}`);
+      resultStatus = result.status ?? 1;
+    }
   } catch (error) {
+    if (errorMessage(error).includes("V2 activation termination unconfirmed")) snapshots = null; // Preserve the exact retained path reported by the original error.
     originalError = error;
   }
   const originalProblem =
@@ -2684,8 +3358,8 @@ try {
   } else if (command === "prepare") process.stdout.write(`${prepareRuntime(options)}\n`);
   else if (command === "validate-inputs") process.stdout.write(`${validateInputs(options)}\n`);
   else if (command === "source-web" || command === "source-tui")
-    process.exitCode = runSourceProfile(options, command);
-  else if (command === "run" || command === "web") process.exitCode = run(options);
+    process.exitCode = await runSourceProfile(options, command);
+  else if (command === "run" || command === "web") process.exitCode = await run(options, command);
   else fail(`unknown command: ${command}`);
 } catch (error) {
   process.stderr.write(`${singleLine(errorMessage(error))}\n`);

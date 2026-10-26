@@ -135,6 +135,10 @@ export function enforceManagedTool(input: ManagedToolInput): Record<string, unkn
   canonicalWorkspace(input.workspaceRoot);
   const args = { ...input.args };
   if (["read", "grep", "glob", "list"].includes(input.tool)) return args;
+  if (input.tool === "webfetch") {
+    if (input.role !== "researcher") throw new Error("managed role cannot use webfetch");
+    return args;
+  }
   if (input.tool === "edit" || input.tool === "write") {
     if (input.role !== "implementer") throw new Error("managed role cannot edit workspace");
     args.filePath = scopedFile(input.workspaceRoot, args.filePath, input.allowedPaths);

@@ -6,6 +6,12 @@
 - Allowed edit scope:
 - Non-goals:
 
+## Compaction Handoff
+
+- Reviewed owner-only handoff: [COMPACTION_HANDOFF.md](COMPACTION_HANDOFF.md) (create from the active trace root's `templates/compaction-handoff.md` only after completing every section; record "absent" until then).
+- Status and exact next safe action:
+- This pointer does not resume a Task thread or prove acceptance.
+
 ## Routing Metadata
 
 - routingMetadataStatus: present | absent

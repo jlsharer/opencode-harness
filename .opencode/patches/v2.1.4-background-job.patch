@@ -1,0 +1,266 @@
+diff --git a/packages/core/src/job.ts b/packages/core/src/job.ts
+--- a/packages/core/src/job.ts
++++ b/packages/core/src/job.ts
+@@ -466,7 +466,18 @@ export const make = Effect.gen(function* () {
+         const entry = [...jobs].find(([, job]) => job.info.notificationID === notificationID)
+         if (!entry || entry[1].info.status === "running") return jobs
+         const next = new Map(jobs)
++        // Keep a bounded terminal in-memory observation after notification: a
++        // plugin that owns this exact subagent Job can inspect completion and
++        // generation even when notification delivery wins the race. The durable
++        // marker is already removed; ordinary consumed-history eviction applies.
+         next.delete(entry[0])
++        next.set(entry[0], {
++          ...entry[1],
++          consumed: true,
++          info: { ...entry[1].info, notificationID: undefined },
++        })
++        const completed = [...next].filter(([, job]) => job.consumed && !job.info.notificationID)
++        for (const [id] of completed.slice(0, -COMPLETED_LIMIT)) next.delete(id)
+         return next
+       }),
+     ),
+diff --git a/packages/core/src/plugin/host.ts b/packages/core/src/plugin/host.ts
+--- a/packages/core/src/plugin/host.ts
++++ b/packages/core/src/plugin/host.ts
+@@ -6,13 +6,14 @@ import { EventManifest } from "@opencode/schema/event-manifest"
+ import type { Event } from "@opencode/schema/event"
+ import { ServerConfig } from "@opencode/schema/mcp"
+ import { App } from "../app.js"
+-import { Effect, Schema, Stream } from "effect"
++import { Effect, Option, Schema, Stream } from "effect"
+ import { Agent } from "../agent.js"
+ import { AISDK } from "../aisdk.js"
+ import { Command } from "../command.js"
+ import { Credential } from "../credential.js"
+ import { Bus } from "../bus.js"
+ import { Integration } from "../integration.js"
++import { Job } from "../job.js"
+ import { KV } from "../kv.js"
+ import { Location } from "../location.js"
+ import { LocationServiceMap } from "../location-service-map.js"
+@@ -56,6 +57,16 @@ export const make = Effect.fn("PluginHost.make")(function* (
+   const commands = yield* Command.Service
+   const bus = yield* Bus.Service
+   const integration = yield* Integration.Service
++  const optionalJobs = yield* Effect.serviceOption(Job.Service)
++  const jobs = Option.getOrUndefined(optionalJobs)
++  const subagentJob = (id: string) =>
++    jobs
++      ? jobs.get(id).pipe(
++          Effect.flatMap((info) =>
++            info?.type === "subagent" ? Effect.succeed(info) : Effect.fail(new Error("not a subagent Job")),
++          ),
++        )
++      : Effect.fail(new Error("Job capability unavailable"))
+   const kv = yield* KV.Service
+   const mcp = yield* Mcp.Service
+   const location = yield* Location.Service
+@@ -117,6 +128,12 @@ export const make = Effect.fn("PluginHost.make")(function* (
+     location: locationInfo(),
+     options: {},
+     rpc: Object.assign(rpc.client, { register: rpc.register }),
++    job: {
++      get: ({ id }) => subagentJob(id),
++      wait: ({ id, timeout }) =>
++        subagentJob(id).pipe(Effect.flatMap(() => jobs!.wait({ id, timeout }))),
++      cancel: ({ id }) => subagentJob(id).pipe(Effect.flatMap(() => jobs!.cancel(id))),
++    },
+     agent: {
+       get: (input) => {
+         const ref = locationRef(input)
+diff --git a/packages/core/test/job.test.ts b/packages/core/test/job.test.ts
+--- a/packages/core/test/job.test.ts
++++ b/packages/core/test/job.test.ts
+@@ -288,4 +288,5 @@ describe("Job", () => {
+       yield* jobs.completeBackground(completed.notificationID)
+       expect((yield* jobs.pendingBackground).find((item) => item.id === job.id)).toBeUndefined()
++      expect(yield* jobs.get(job.id)).toMatchObject({ status: "completed", output: "done" })
+     }),
+   )
+diff --git a/packages/core/test/plugin/fixture.ts b/packages/core/test/plugin/fixture.ts
+--- a/packages/core/test/plugin/fixture.ts
++++ b/packages/core/test/plugin/fixture.ts
+@@ -14,6 +14,7 @@ import { FSUtil } from "@opencode/util/fs-util"
+ import { Form } from "@opencode/core/form"
+ import { Generate } from "@opencode/core/generate"
+ import { Integration } from "@opencode/core/integration"
++import { Job } from "@opencode/core/job"
+ import { KV } from "@opencode/core/kv"
+ import { Location } from "@opencode/core/location"
+ import { ManagedPolicy } from "@opencode/core/managed-policy"
+@@ -94,6 +95,7 @@ export const makePluginTestLayer = (permission = permissionLayer) =>
+       Model.node,
+       Command.node,
+       Integration.node,
++      Job.node,
+       KV.node,
+       ManagedPolicy.node,
+       Mcp.node,
+diff --git a/packages/core/test/plugin/host.ts b/packages/core/test/plugin/host.ts
+--- a/packages/core/test/plugin/host.ts
++++ b/packages/core/test/plugin/host.ts
+@@ -28,6 +28,11 @@ export function host(overrides: Overrides = {}): Plugin.Context {
+         },
+       }),
+     options: {},
++    job: overrides.job ?? {
++      get: () => Effect.die("unused job.get"),
++      wait: () => Effect.die("unused job.wait"),
++      cancel: () => Effect.die("unused job.cancel"),
++    },
+     rpc:
+       overrides.rpc ??
+       Object.assign(
+diff --git a/packages/plugin/src/effect/plugin.ts b/packages/plugin/src/effect/plugin.ts
+--- a/packages/plugin/src/effect/plugin.ts
++++ b/packages/plugin/src/effect/plugin.ts
+@@ -8,6 +8,7 @@ import type { AISDKDomain } from "./aisdk.js"
+ import type { CommandDomain } from "./command.js"
+ import type { EventDomain } from "./event.js"
+ import type { IntegrationDomain } from "./integration.js"
++import type { JobDomain } from "./job.js"
+ import type { MCPDomain } from "./mcp.js"
+ import type { ModelDomain } from "./model.js"
+ import type { PermissionDomain } from "./permission.js"
+@@ -36,6 +37,7 @@ export interface Context {
+     readonly terminal: Pick<ExperimentalApi<unknown>["persistentPty"], "read">
+   }
+   readonly integration: IntegrationDomain
++  readonly job: JobDomain
+   readonly mcp: MCPDomain
+   readonly model: ModelDomain
+   readonly generate: GenerateApi<unknown>
+diff --git a/packages/plugin/src/promise/adapter.ts b/packages/plugin/src/promise/adapter.ts
+--- a/packages/plugin/src/promise/adapter.ts
++++ b/packages/plugin/src/promise/adapter.ts
+@@ -589,6 +589,11 @@ export function fromPromise(plugin: Plugin) {
+                 ),
+               ),
+           },
++          job: {
++            get: (input) => run(host.job.get(input)),
++            wait: (input) => run(host.job.wait(input)),
++            cancel: (input) => run(host.job.cancel(input)),
++          },
+           session: {
+             hook: (name, callback, options) =>
+               register(
+diff --git a/packages/plugin/src/promise/plugin.ts b/packages/plugin/src/promise/plugin.ts
+--- a/packages/plugin/src/promise/plugin.ts
++++ b/packages/plugin/src/promise/plugin.ts
+@@ -8,6 +8,7 @@ import type { AISDKDomain } from "./aisdk.js"
+ import type { CommandDomain } from "./command.js"
+ import type { EventDomain } from "./event.js"
+ import type { IntegrationDomain } from "./integration.js"
++import type { JobDomain } from "./job.js"
+ import type { MCPDomain } from "./mcp.js"
+ import type { ModelDomain } from "./model.js"
+ import type { PermissionDomain } from "./permission.js"
+@@ -36,6 +37,7 @@ export interface Context {
+     readonly terminal: Pick<OpenCodeClient["experimental"]["persistentPty"], "read">
+   }
+   readonly integration: IntegrationDomain
++  readonly job: JobDomain
+   readonly mcp: MCPDomain
+   readonly model: ModelDomain
+   readonly generate: GenerateApi
+diff --git a/packages/plugin/src/effect/job.ts b/packages/plugin/src/effect/job.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/plugin/src/effect/job.ts
+@@ -0,0 +1,18 @@
++import type { Effect } from "effect"
++
++export interface JobInfo {
++  readonly id: string
++  readonly type: string
++  readonly status: "running" | "completed" | "error" | "cancelled"
++  readonly started_at: number
++  readonly completed_at?: number
++  readonly output?: string
++  readonly error?: string
++}
++
++/** Bound subagent Job state; consumers must separately verify the child session's parent. */
++export interface JobDomain {
++  readonly get: (input: { id: string }) => Effect.Effect<JobInfo | undefined, Error>
++  readonly wait: (input: { id: string; timeout?: number }) => Effect.Effect<{ info?: JobInfo; timedOut: boolean }, Error>
++  readonly cancel: (input: { id: string }) => Effect.Effect<JobInfo | undefined, Error>
++}
+diff --git a/packages/plugin/src/promise/job.ts b/packages/plugin/src/promise/job.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/plugin/src/promise/job.ts
+@@ -0,0 +1,7 @@
++import type { JobInfo } from "../effect/job.js"
++
++export interface JobDomain {
++  readonly get: (input: { id: string }) => Promise<JobInfo | undefined>
++  readonly wait: (input: { id: string; timeout?: number }) => Promise<{ info?: JobInfo; timedOut: boolean }>
++  readonly cancel: (input: { id: string }) => Promise<JobInfo | undefined>
++}
+diff --git a/packages/core/test/plugin/job-domain.test.ts b/packages/core/test/plugin/job-domain.test.ts
+new file mode 100644
+--- /dev/null
++++ b/packages/core/test/plugin/job-domain.test.ts
+@@ -0,0 +1,59 @@
++import { expect } from "bun:test"
++import { Job } from "@opencode/core/job"
++import { Plugin } from "@opencode/core/plugin"
++import { PluginHost } from "@opencode/core/plugin/host"
++import { fromPromise } from "@opencode/plugin/promise/adapter"
++import { Deferred, Effect } from "effect"
++import { testEffect } from "../lib/effect"
++import { PluginTestLayer } from "./fixture"
++
++const it = testEffect(PluginTestLayer)
++
++it.effect("plugin Job cancellation terminates only an active subagent Job", () =>
++  Effect.gen(function* () {
++    const jobs = yield* Job.Service
++    const plugins = yield* Plugin.Service
++    const host = yield* PluginHost.make(plugins)
++    const latch = yield* Deferred.make<string>()
++    yield* jobs.start({ id: "ses_bound_child", type: "subagent", run: Deferred.await(latch) })
++    yield* jobs.start({ id: "shell_foreign", type: "shell", run: Effect.never })
++
++    expect(yield* host.job.get({ id: "ses_bound_child" })).toMatchObject({ status: "running" })
++    expect(yield* host.job.wait({ id: "ses_bound_child", timeout: 0 })).toMatchObject({
++      timedOut: true,
++      info: { status: "running" },
++    })
++    expect(yield* Effect.exit(host.job.cancel({ id: "shell_foreign" }))).toMatchObject({ _tag: "Failure" })
++    expect(yield* host.job.cancel({ id: "ses_bound_child" })).toMatchObject({ status: "cancelled" })
++    expect(yield* host.job.wait({ id: "ses_bound_child" })).toMatchObject({
++      timedOut: false,
++      info: { status: "cancelled" },
++    })
++    expect(yield* jobs.get("shell_foreign")).toMatchObject({ status: "running" })
++    yield* jobs.cancel("shell_foreign")
++  }),
++)
++
++it.effect("Promise plugin observes terminal Job cancellation through its bound domain", () =>
++  Effect.gen(function* () {
++    const jobs = yield* Job.Service
++    const plugins = yield* Plugin.Service
++    const latch = yield* Deferred.make<string>()
++    yield* jobs.start({ id: "ses_promise_child", type: "subagent", run: Deferred.await(latch) })
++    let status: string | undefined
++    const plugin = fromPromise({
++      id: "test.plugin.job-domain",
++      setup: async (ctx) => {
++        const running = await ctx.job.get({ id: "ses_promise_child" })
++        expect(running?.status).toBe("running")
++        const cancelled = await ctx.job.cancel({ id: "ses_promise_child" })
++        const terminal = await ctx.job.wait({ id: "ses_promise_child", timeout: 1000 })
++        expect(cancelled?.status).toBe("cancelled")
++        expect(terminal.timedOut).toBe(false)
++        status = terminal.info?.status
++      },
++    })
++    yield* plugin.effect(yield* PluginHost.make(plugins))
++    expect(status).toBe("cancelled")
++  }),
++)

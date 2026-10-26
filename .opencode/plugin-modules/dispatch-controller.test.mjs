@@ -185,6 +185,41 @@ test("role modes execute in declared order and failed roles cannot unlock succes
     controller.complete("plan-retry", "success");
     controller.reserve(request());
 });
+test("prior-mode refusal identifies only a fixed predecessor and does not charge the writer", () => {
+    const spec = validWorkflow();
+    spec.workUnits = spec.workUnits.slice(0, 1);
+    spec.acceptanceGates = spec.acceptanceGates.slice(0, 1);
+    spec.roleModeTaskMapping = [
+        { workUnitId: "a", role: "researcher", taskMode: "research", boundedTask: "inspect" },
+        { workUnitId: "a", role: "planner", taskMode: "plan", boundedTask: "plan" },
+        { workUnitId: "a", role: "implementer", taskMode: "implementation", boundedTask: "edit" },
+    ];
+    const writer = request("sensitive-task", "a", "implementer", "implementation");
+    for (const outcome of ["blocked", "failed", "success"]) {
+        const controller = createDispatchController(spec);
+        const refuse = (predecessor, state) => {
+            const before = controller.snapshot();
+            assert.throws(() => controller.reserve(writer), (error) => {
+                assert.equal(error.message, `Harness dispatch controller: prior task mode not ready: ${predecessor} (${state})`);
+                assert.doesNotMatch(error.message, /sensitive-task|parent|src\/|gate-a|a:planner/);
+                return true;
+            });
+            assert.deepEqual(controller.snapshot(), before);
+        };
+        refuse("researcher/research", "unknown");
+        controller.reserve(request("research", "a"));
+        controller.complete("research", "success");
+        refuse("planner/plan", "unknown");
+        controller.reserve(request("plan", "a", "planner", "plan"));
+        controller.complete("plan", outcome);
+        if (outcome === "success") {
+            controller.reserve(writer);
+            assert.equal(controller.snapshot().counts.implementer, 1);
+        }
+        else
+            refuse("planner/plan", outcome);
+    }
+});
 test("dependency readiness includes validator gates, and invalid proofs do not terminally complete", () => {
     const spec = validWorkflow();
     mapping(spec, "a", "validator", "validation");

@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { QA_COMMANDS, parseArgs } from "./operator-external-qa.mts";
+import { QA_COMMANDS, parseArgs, scratchParent } from "./operator-external-qa.mts";
 
 const script = fileURLToPath(new URL("./operator-external-qa.mts", import.meta.url));
 
@@ -22,6 +30,19 @@ test("entry point is explicit and command list is closed", () => {
   const result = spawnSync(process.execPath, [script], { encoding: "utf8" });
   assert.equal(result.status, 1);
   assert.match(result.stderr, /operator QA refused/);
+});
+
+test("QA scratch bypasses public immediate children of a sticky root", () => {
+  const base = mkdtempSync(join("/tmp", "operator-qa-ancestry-"));
+  try {
+    const receipts = join(base, "receipts");
+    mkdirSync(receipts, { mode: 0o700 });
+    assert.equal(scratchParent(receipts), receipts);
+    chmodSync(base, 0o755);
+    assert.equal(scratchParent(receipts), "/tmp");
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
 });
 
 test("rejects receipts in worktree and unsafe or preexisting paths without QA execution", () => {

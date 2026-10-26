@@ -61,12 +61,80 @@ session policy. Prepare/run report selection to stderr while preserving stdout.
 It checks executable trust and reports version diagnostics; it does not prove plugin activation or provider health.
 
 Offline native routing checks have passed with OpenCode 1.18.18 and 1.18.34.
-These checks do not guarantee every native capability.
+OpenCode v2.1.4 has a separate native plugin path and guarded loopback server
+for blocking managed subagents. Disposable provider-backed runs observed
+pre-subagent refusal and an implementer/validator workflow with independent
+validator gates. Those runs do not establish general V2 acceptance or apply to
+a changed tree. Use fresh orchestration IDs for every new attempt. Explicit
+background delegation requires a native Job-capable V2 build: released v2.1.4
+does not expose subagent Job get/wait/cancel to plugins, so explicit background
+is refused for that binary. A pinned-source native patch and an observed custom
+build supply those operations; the adapter binds child, Job generation, model,
+terminal result, and cancellation before releasing capacity. V2 adapts validated credential-free provider
+projections into native `providers` config and checks the active provider, model
+and limits before launching the requested client. Validated routing selections
+bind only to active native models; optional local selections inherit when their
+model, exact catalog endpoint or credential-free loopback health/model probe is
+unavailable. V2 web profiles expose the activated
+native server through an authenticated loopback proxy; direct V2 server forwarding
+remains refused. V2 automatic background selection falls back to blocking when
+the native background inspection/abort transport is unavailable. V2
+`source-tui` starts only after its source profile and native guard activate,
+using an owner-only external trace root. Offline source tests and `doctor` do
+not substitute for native guard activation; V1 launch behavior remains separate.
+
+Operator-authorized V2 validation can use the source-only explicit
+`--v2-auth-data-home /ABSOLUTE/OWNER-ONLY/V2-DATA-HOME` option on `run` after
+an isolated V2 ChatGPT subscription login. The launcher snapshots that native
+auth database read-only, selects only the active OpenAI OAuth connection, and
+imports it into its unique per-launch database after the V2 guard activates;
+the source database is not modified and the temporary copy is removed before
+the requested client starts. Neither credential bytes nor the source path are
+recorded in the runtime or traces. Live model execution, explicit background
+recovery, and full managed acceptance remain separate gates.
 Recheck with `doctor` after upgrades. No shell startup or global PATH change is
 required. For an existing environment-preserving wrapper, use an invocation-local
 override, for example `OPENCODE_BIN=/ABSOLUTE/TRUSTED/opencode opencode-local launch`.
 External wrappers may have their own argument grammar: do not assume they accept
 the launcher's new flag or edit external infrastructure to add it.
+
+For repeatable credential-free V2 iteration, keep the exact v2.1.4 Linux x64
+native archive and extracted executable in an existing owner-only cache outside
+the checkout instead of a disposable `/tmp` tree. The npm package
+`@opencode/cli-linux-x64@2.1.4` has archive integrity
+`sha512-o8EJ0ZsT4dzDKN+0mpG2EKbNGzJyp+F1++Av28UReRVfiEv+N34eZEnN/unkiMoerKHad6W6Ii7k4ukTnPNmNQ==`;
+verify the downloaded archive against that exact value **before** inspecting
+or extracting its two regular members. The extracted `package/bin/opencode`
+must have SHA-256
+`ca9b3ee262e33bb4e7aa0e1230dc61086a474c8c8016b980081d0719712fd2e7`.
+Use `doctor --opencode-bin /ABSOLUTE/OWNER-ONLY/CACHE/package/bin/opencode`
+to confirm selection. This pins fixture bytes, not source-to-release provenance;
+credentials are optional for offline guard and pre-spawn refusal checks.
+
+To reproduce the **separate custom V2 background build**, check out upstream
+commit `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824` into an owner-controlled
+checkout outside this repository, apply
+`.opencode/patches/v2.1.4-background-job.patch` with `git apply --check` then
+`git apply`, and use pinned Bun 1.4.4 (`@oven/bun-linux-x64@1.4.4` archive
+integrity `sha512-CHbbkmHVM28T1GFq+6GL4Ao4ujwwYwj1CxFFwEFzLanPfNsId9AhbIP0Q4reWuWBkGimUkoQygrK7Rgjtj3vog==`).
+After an explicit owner-local `bun install --frozen-lockfile --ignore-scripts`,
+run `OPENCODE_VERSION=2.1.4-harness-job.2 bun packages/cli/script/build.ts --single --skip-install --outdir=/OWNER/PRIVATE/CACHE/native-v2-job`.
+Choose the resulting `cli-linux-x64/bin/opencode` explicitly with
+`--opencode-bin`. Native dependency installation and the custom build are
+external operator steps, not runtime installation or a published OpenCode
+release. The isolated custom build tested here reported SHA-256
+`82e8dc45e8d1e97aa6d5e83e57d76283e2597d62803d5becf3455c804a364712`;
+rebuilds must be re-identified rather than assumed byte-identical. Explicit
+background additionally requires the launch-time native flag
+`OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true` and a complete
+`OPENCODE_HARNESS_DELEGATION` physical-capacity policy. Stock v2.1.4 and
+unknown V2 builds without the bound Job capability continue to refuse explicit
+background before a user client starts.
+Disposable native checks with the identified custom build observed a background
+researcher task reach controller state `success` after a structured result and
+role artifact, plus a separate worker interrupted during an asynchronous local
+fetch with reconciled cancellation and an interrupted child session. Those
+checks do not replace an independent validator gate for a real workflow.
 
 Tokens after `--` are unchanged OpenCode arguments. With none, the TUI opens in
 the enclosing trusted Git worktree; an explicit `--workspace` must still be the
@@ -387,6 +455,64 @@ git diff --check
 Fixture success does not prove live provider activation, endpoint health, model
 identity, authentication, capacity, routing quality, or recovery behavior.
 
+### Source-only V2 setup fixture (offline refusal)
+
+For an operator outside managed execution on Linux/Node 24, the source-only
+`.opencode/scripts/native-v2-plugin-fixture.mts` accepts exactly
+`--binary /ABSOLUTE/TRUSTED/opencode --sha256 LOWERCASE_64_HEX --scratch-parent /OWNER/ONLY/DIR`.
+The digest must be supplied at execution time; do not embed local paths or a
+machine's executable digest in the repository. The scratch parent must already
+be owner-only mode 0700. This preflight currently creates no disposable
+workspace/state or receipt file, invokes no binary, provider, server, or
+subagent, and always exits nonzero with `inventory-only/inconclusive` when
+preflight succeeds. It refuses ambient native state, endpoint, or credential
+variables; unknown environment exposures and missing isolation proof must not
+be treated as safe. Its fixed V2 Promise `Plugin.define({id,setup})` template
+would register an `execute.before` hook for `subagent` only inside a future
+verified disposable `.opencode/plugins/index.js` root, never this checkout's
+production V1 plugin. The template is not loaded or activated by preflight.
+
+Stage A requires a separately reviewed fresh isolated native server (no stale
+socket/endpoint or host credential exposure), exact trusted binary version and
+identity, unique plugin ID and exact disposable SOURCE inventory, then
+source-backed active-state observation tied to that fresh server. A `plugin
+list` ID/SOURCE row alone proves inventory, not setup activation or hook
+registration. No safe endpoint/state method is established yet; do not run the
+native CLI as a workaround. Hook firing and stage B genuine provider-free
+`subagent` before-hook refusal and no-child effects remain unknown. This
+fixture is not a portable/runtime asset, managed gate, V2 guard or acceptance
+proof. Offline tests require separate external authorization; production V1
+and the operator external QA runner remain unchanged.
+
+### Operator-only external QA receipt
+
+Outside managed Task execution, an operator with a trusted preinstalled Node 24,
+Git, npm, dependencies and an owner-only (0700) receipt parent can run:
+
+```sh
+node .opencode/scripts/operator-external-qa.mts --root /ABSOLUTE/TRUSTED/GIT/ROOT --receipt /OWNER/ONLY/receipts/unique-receipt.json --validation-input .opencode/.gitignore
+```
+
+The receipt must not exist and must be outside the worktree. This source-only
+convenience runs its focused tests, the source and portable validators, both
+runtime tests, and `npm pack --dry-run --json`, with scripts disabled, offline npm cache and
+owner-only scratch. If the receipt sits beneath a public immediate child of a
+root-owned sticky directory such as `/tmp`, scratch is instead created directly
+beneath that sticky directory so the fixture roots remain private. Optional
+`--validation-input REL` (repeatable, up to
+64) binds explicitly identified safe ignored files; never supply credentials or
+dependency trees. When `.opencode/.gitignore` exists, declare it as shown; source
+QA reads it and the runner refuses to omit its bytes from the receipt. Under
+root-owned sticky `/tmp`, the receipt itself still needs an owner-only mode-0700
+parent. It records command
+exit/signal/timeout, output hashes rather than raw logs, and HEAD/index/byte-mode
+inventory hashes before and after. A
+failed or mutated run returns nonzero and records an external-only receipt when
+preflight succeeds. Review any retained scratch and the receipt independently.
+This is not a managed-gate proof, a hermetic sandbox, an authorization to execute
+from a managed child, or evidence of V2 compatibility. Native V2 acceptance
+still requires a trusted executable and independently observed guard behavior.
+
 
 ## Refined managed execution
 
@@ -396,7 +522,30 @@ When the managed guard stops, the bound orchestrator can call `harness_recovery_
 
 Read-only shell verification uses an already installed `/usr/bin/bwrap` with working user namespaces. It never falls back to an unrestricted shell or installs dependencies. Write-producing verification, parallel writers, workspaces beneath `/tmp`, and missing native child/exit metadata are explicit unsupported cases. Scope checks are not a general sandbox. See `.memory/protocols/memory-management.md` for the structured result protocol.
 
-Offline evaluation: `node .opencode/scripts/evaluate-controller.mts`. The deterministic thin fixture transport is not a live OpenCode baseline. Live paired model runs and V2 migration remain unexecuted and separate.
+### Compaction continuity
+
+Before a managed run, the parent may create an owner-only (0600)
+`orchestrations/<id>/COMPACTION_HANDOFF.md` under the selected trace root from
+`templates/compaction-handoff.md` and link it in the run `INDEX.md`. Fill its
+seven sections with the safe/redacted initial user request, current goal and
+success criteria, explicit owner decisions/constraints, critical architectural
+invariants, context with evidence versus unknowns, authoritative project and
+delegation instructions, and observed status/next safe action. Refresh it at
+work-unit decisions and before handoff; do not save credentials or raw unbounded
+transcripts. This file is project-owned coordination context, never acceptance
+evidence or a resumable Task checkpoint.
+
+V1's native compaction hook adds a generic recovery reminder and, for a bound
+parent, a checked bounded quote of that file. V2 registers compaction and
+subsequent context hooks: a bound parent receives the same checked quote on
+compaction and later model requests during that launch. If the file is absent,
+malformed or unsafe, only generic instructions remain. Neither native summary
+generation nor this advisory hook guarantees that its prose survives verbatim;
+after compaction or restart reread the project's `AGENTS.md`, current progress
+and handoff documents, the immutable protocol/spec/marker, and actual Git and
+validator evidence. A restart cannot recover ephemeral Task authorization.
+
+Offline evaluation: `node .opencode/scripts/evaluate-controller.mts`. The deterministic thin fixture transport is not a live OpenCode baseline. Live paired model runs and general V2 acceptance remain separate; blocking V2 smoke evidence is limited to disposable workflows.
 
 
 ### Portable consumer installation and upgrade
@@ -430,11 +579,11 @@ Phone connectivity still requires a separately approved secure transport to this
 This is a trusted-owner native server, not an OS or project sandbox. Native file/search/terminal/directory APIs are outside managed tool hooks. The workspace mismatch guard protects managed orchestration bookkeeping; it does not confine the entire server. Use only trusted project plugins. Workspaces still must meet existing canonical-path and ownership/mode checks; Windows-mounted world-writable projects are not exempt. Sessions and workflow state remain ephemeral and the per-launch database is removed on exit; keep required trace artifacts and use fresh reviewed runs after interruption.
 
 
-For this harness source checkout itself, use `node bin/opencode-harness.mjs source-web --opencode-bin /absolute/opencode --port 4096` after supplying the same owner-managed authentication environment. This explicit development profile is restricted to the launcher's own canonical Git package root; it is unavailable from a distribution lacking source and installed build prerequisites. It validates the portable core and generated parity, checks and fingerprints source/loadable surfaces, and requires coherent existing plugin dependencies. It never installs prerequisites. Only the existing `.opencode/plugins/index.js` project autoload entry is permitted: no external runtime/config projection or duplicate plugin entry is injected. Source routing and `.memory` remain project-owned. Pending source routing/provider errors still block managed Task dispatch rather than silently changing models.
+For this harness source checkout itself, use `node bin/opencode-harness.mjs source-web --opencode-bin /absolute/opencode --port 4096` after supplying the same owner-managed authentication environment. V2 opens its authenticated loopback proxy only after the source native guard activates. This explicit development profile is restricted to the launcher's own canonical Git package root; it is unavailable from a distribution lacking source and installed build prerequisites. It validates the portable core and generated parity, checks and fingerprints source/loadable surfaces, and requires coherent existing plugin dependencies. It never installs prerequisites. Only the existing `.opencode/plugins/index.js` project autoload entry is permitted: no external runtime/config projection or duplicate plugin entry is injected. Source routing remains project-owned; V1 uses source `.memory` and V2 source profiles use an owner-only external trace root. Pending source routing/provider errors still block managed Task dispatch rather than silently changing models.
 
 `source-web` accepts only the normal executable/cache selection, fixed-loopback port, and an optional workspace equal to its own root; provider/catalog/profile projections, custom trace roots, plugin overrides, native forwarded arguments and arbitrary workspaces are rejected. Native/global configuration outside the source project remains operator-owned; source preflight does not claim to confine native APIs or erase global CORS/plugin policy. Its private per-launch database is cleaned on ordinary child exit. Stop the native child cleanly; abrupt process/host termination may retain private launch state for inspection. The external `web` profile still rejects source-owned asset collisions in other workspaces.
 
-For the source checkout's native terminal UI, use `node bin/opencode-harness.mjs source-tui`. This mode shares the source-profile validation, workspace pinning and private database lifecycle described above, but invokes OpenCode's default TUI without server arguments or a password requirement. It accepts only source-profile launcher options and no forwarded native arguments. It does not create a tmux session or configure mobile transport. External project terminal sessions continue to use `run --workspace ABS`. Assistant-mediated terminal input is separate from a directly interactive phone terminal; existing sessions must be identified before sending input.
+For the source checkout's native terminal UI, use `node bin/opencode-harness.mjs source-tui`. This mode shares the source-profile validation, workspace pinning and private database lifecycle described above. V1 invokes OpenCode's default TUI; V2 activates the guarded loopback server first, then attaches a TUI to that same server with an ephemeral password and external owner-only trace root. Neither requires an owner-supplied web password. It accepts only source-profile launcher options and no forwarded native arguments. It does not create a tmux session or configure mobile transport. External project terminal sessions continue to use `run --workspace ABS`. Assistant-mediated terminal input is separate from a directly interactive phone terminal; existing sessions must be identified before sending input.
 
 Native session model selection is inherited by default. Explicit valid cloud routes override it. Optional catalog-backed local routes override it only when their native provider/model metadata exists and bounded, credential-free loopback probes report `/health` status `ok` and the exact model ID in `/v1/models`. An unavailable optional local route leaves the role model unset so OpenCode inherits the session-selected model; the harness does not choose a replacement provider. Malformed routing, conflicting provider restrictions and mismatched endpoint configuration still fail. Selection and availability are frozen for the plugin instance: restart after changing routing or endpoint availability. A model lost later may fail its native request; no mid-task provider switching occurs.
 

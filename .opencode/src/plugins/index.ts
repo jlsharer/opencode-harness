@@ -6,7 +6,7 @@ import {
 } from "../plugin-modules/role-model-routing-enforcement.ts";
 import { TraceRootPermissionsPlugin } from "../plugin-modules/trace-root-permissions.ts";
 
-export default async function HarnessPlugin(context: HarnessPluginContext) {
+export async function HarnessPlugin(context: HarnessPluginContext) {
   const lifecycle = await HarnessLifecyclePlugin(context);
   const routing = await HarnessRoleModelRoutingEnforcementPlugin(context);
   const tracePermissions = await TraceRootPermissionsPlugin(context);
@@ -22,3 +22,7 @@ export default async function HarnessPlugin(context: HarnessPluginContext) {
     }),
   };
 }
+
+export default process.env.OPENCODE_HARNESS_NATIVE_API === "v2"
+  ? (await import("../plugin-modules/v2-native-plugin.js")).V2NativePlugin
+  : HarnessPlugin;

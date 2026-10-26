@@ -56,6 +56,31 @@ function privateDirectory(path: string) {
     throw Error("scratch/receipt parent must be owner-only");
 }
 
+// The trace-permission fixtures require the immediate child of a sticky root
+// to be private. A private receipt directory can still sit beneath a public
+// /tmp child (for example /tmp/opencode/receipts), so do not inherit that
+// ancestry for the QA process's own temporary workspaces.
+export function scratchParent(receiptParent: string) {
+  canonical(receiptParent);
+  let current = receiptParent;
+  while (current !== "/") {
+    const parent = dirname(current);
+    const stat = lstatSync(parent);
+    if ((stat.mode & 0o1000) !== 0) {
+      if (!stat.isDirectory() || stat.uid !== 0 || (stat.mode & 0o777) !== 0o777)
+        throw Error("QA scratch ancestry beneath sticky root is unsafe");
+      const child = lstatSync(current);
+      return child.isDirectory() &&
+        child.uid === process.getuid?.() &&
+        (child.mode & 0o777) === 0o700
+        ? receiptParent
+        : parent;
+    }
+    current = parent;
+  }
+  return receiptParent;
+}
+
 function command(
   program: string,
   args: string[],
@@ -245,7 +270,7 @@ export function run(args: string[]) {
     git(root, "check-ignore", "-q", "--", name);
   }
   const baseline = snapshot(root, ignored);
-  const scratch = mkdtempSync(join(dirname(receipt), ".operator-qa-"));
+  const scratch = mkdtempSync(join(scratchParent(dirname(receipt)), ".operator-qa-"));
   let cleanup = "removed";
   const results: ReturnType<typeof command>[] = [];
   let failure: string | null = null;

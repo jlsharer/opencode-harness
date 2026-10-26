@@ -220,6 +220,17 @@ test("current task view is bound, bounded, fresh, and never exposes packet conte
     assert.equal(f.managed.currentTaskView("child"), null);
     assert.equal(f.managed.currentTaskView("parent"), null);
 });
+test("compaction pointer stays parent-bound after terminal work without reviving a child", async () => {
+    const f = fixture("researcher");
+    assert.equal(f.managed.compactionPointer("parent"), null);
+    await f.start();
+    assert.deepEqual(f.managed.compactionPointer("parent"), { orchestrationId: "fixture" });
+    assert.equal(f.managed.compactionPointer("child"), null);
+    assert.equal(f.managed.compactionPointer("unrelated"), null);
+    f.finish(f.success());
+    assert.deepEqual(f.managed.compactionPointer("parent"), { orchestrationId: "fixture" });
+    assert.equal(f.managed.compactionPointer("child"), null);
+});
 test("current task view fails closed on unsafe goals and stale reservations", async () => {
     for (const goal of ["x".repeat(241), "bad\nline", "bad\u007fdel", "bad\u0085c1"]) {
         const f = fixture();
@@ -922,6 +933,125 @@ test("background start retains capacity, allows parent questions, and accepts on
     assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "success");
     await f.managed.reconcileBackground("child");
     assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+test("V2 native Job terminal proof binds generation, parent and typed result", async () => {
+    const f = fixture("researcher");
+    let idle = false;
+    let job = {
+        status: "running",
+        startedAt: 123,
+    };
+    const managed = createManagedDispatch({
+        ...f.options,
+        delegation: backgroundPolicy,
+        backgroundTransport: {
+            enabled: true,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => ({ parent: "parent", idle, messages: [], job }),
+            abort: async () => { },
+        },
+    });
+    await managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    managed.sessionCreated({ id: "child", parentID: "parent" });
+    managed.afterTask({ callID: "call" }, {
+        metadata: {
+            sessionId: "child",
+            jobId: "child",
+            background: true,
+            jobStartedAt: 123,
+            model: { providerID: "fixture", modelID: "worker" },
+        },
+        output: '<task id="child" state="running">\nBackground launch</task>',
+    });
+    await Promise.resolve();
+    idle = true;
+    job = {
+        status: "completed",
+        startedAt: 123,
+        completedAt: 124,
+        output: JSON.stringify(f.success()),
+    };
+    await managed.reconcileBackground("child");
+    assert.equal(managed.snapshot().runs[0].attempts[0].state, "success");
+    const stale = fixture("researcher");
+    const rejected = createManagedDispatch({
+        ...stale.options,
+        delegation: backgroundPolicy,
+        backgroundTransport: {
+            enabled: true,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => ({
+                parent: "parent",
+                idle: true,
+                messages: [],
+                job: {
+                    status: "completed",
+                    startedAt: 122,
+                    completedAt: 124,
+                    output: JSON.stringify(stale.success()),
+                },
+            }),
+            abort: async () => { },
+        },
+    });
+    await rejected.beforeTask({ sessionID: "parent", callID: "call" }, stale.args());
+    rejected.sessionCreated({ id: "child", parentID: "parent" });
+    rejected.afterTask({ callID: "call" }, {
+        metadata: {
+            sessionId: "child",
+            jobId: "child",
+            background: true,
+            jobStartedAt: 123,
+            model: { providerID: "fixture", modelID: "worker" },
+        },
+        output: '<task id="child" state="running">\nBackground launch</task>',
+    });
+    await rejected.reconcileBackground("child").catch((error) => {
+        assert.match(String(error), /Job completion is not correlated/);
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(rejected.snapshot().stopped, true);
+});
+test("V2 cancellation requires a terminal Job from the acknowledged generation", async () => {
+    const f = fixture("researcher");
+    let generation = 123;
+    let status = "running";
+    const managed = createManagedDispatch({
+        ...f.options,
+        delegation: backgroundPolicy,
+        backgroundTransport: {
+            enabled: true,
+            models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+            inspect: async () => ({
+                parent: "parent",
+                idle: status !== "running",
+                messages: [],
+                job: {
+                    status,
+                    startedAt: generation,
+                    ...(status !== "running" ? { completedAt: 124 } : {}),
+                },
+            }),
+            abort: async () => {
+                status = "cancelled";
+                generation = 122;
+            },
+        },
+    });
+    await managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+    managed.sessionCreated({ id: "child", parentID: "parent" });
+    managed.afterTask({ callID: "call" }, {
+        metadata: {
+            sessionId: "child",
+            jobId: "child",
+            background: true,
+            jobStartedAt: 123,
+            model: { providerID: "fixture", modelID: "worker" },
+        },
+        output: '<task id="child" state="running">\nBackground launch</task>',
+    });
+    await assert.rejects(() => managed.cancelBackground("parent"), /termination not reconciled/);
+    assert.equal((await managed.recoveryStatus("parent")).state, "blocked");
 });
 test("queued context update is bounded, charged, ordered, and distinct from clarification", async () => {
     const f = backgroundFixture();

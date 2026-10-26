@@ -432,6 +432,8 @@ test("prepare accepts arbitrary releases and separates diagnostic-version caches
     "1.18.25-beta.1",
     "01.18.25",
     "2.0.0",
+    // A fake tagged V2 version only exercises diagnostic cache isolation, not managed Task safety.
+    "2.1.4",
     "development-build",
   ]) {
     const unsupported = fake(`version-unsupported-${version.replaceAll(".", "-")}`, version);
@@ -441,6 +443,36 @@ test("prepare accepts arbitrary releases and separates diagnostic-version caches
     assert.equal(result.status, 0, result.stderr);
     assert.notEqual(result.stdout.trim(), accepted.stdout.trim());
   }
+});
+
+test("V2 subscription auth import requires an explicit trusted source before native launch", () => {
+  const workspace = repo("v2-auth-source-repo");
+  fs.chmodSync(workspace, 0o700);
+  fs.writeFileSync(path.join(workspace, ".gitignore"), ".memory/\n");
+  const home = path.join(temp, "v2-auth-empty-home");
+  fs.mkdirSync(home, { mode: 0o700 });
+  const cache = path.join(temp, "v2-auth-source-cache");
+  const args = [
+    "run",
+    "--workspace",
+    workspace,
+    "--cache-root",
+    cache,
+    "--v2-auth-data-home",
+    home,
+    "--",
+    "--version",
+  ];
+  const v1 = fake("v2-auth-source-v1");
+  const deniedV1 = run(args, { OPENCODE_BIN: v1.executable });
+  assert.notEqual(deniedV1.status, 0);
+  assert.match(deniedV1.stderr, /requires a verified V2 native CLI contract/);
+  assert.equal(fs.existsSync(v1.capture), false);
+  const v2 = fake("v2-auth-source-v2", "opencode v2.1.4");
+  const deniedV2 = run(args, { OPENCODE_BIN: v2.executable });
+  assert.notEqual(deniedV2.status, 0);
+  assert.match(deniedV2.stderr, /V2 auth directory component is unavailable/);
+  assert.equal(fs.existsSync(v2.capture), false);
 });
 
 test("prepared runtime plugin imports its complete production graph", async () => {
@@ -1269,6 +1301,7 @@ test("trace roots seed once, preserve edits on repeat, and reject unsafe modes",
     "INDEX.md",
     "protocols/memory-management.md",
     "templates/orchestration-index.md",
+    "templates/compaction-handoff.md",
     "templates/role-trace-artifact.md",
   ]) {
     const target = path.join(trace, relative);
@@ -1347,6 +1380,20 @@ test("external trace activation probe fails closed before requested spawn and wo
   const captured = parseCaptured(fallback.capture);
   assert.equal(captured.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH, undefined);
   assert.equal(captured.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE, undefined);
+  const v2 = fake("trace-probe-v2-unverified", "opencode v2.1.4");
+  const rejected = run(
+    [
+      "run",
+      "--workspace",
+      workspace,
+      "--cache-root",
+      path.join(temp, "trace-probe-v2-unverified-cache"),
+    ],
+    { OPENCODE_BIN: v2.executable, HARNESS_TEST_PROBE_MISSING: "1" },
+  );
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr, /V2 activation server did not report a bounded live endpoint/);
+  assert.equal(fs.existsSync(v2.capture), false, "unverified V2 child must not start");
 });
 
 test("provider projection validation is closed, credential-free, loopback-only, and semantically coherent", () => {
@@ -1603,6 +1650,7 @@ test("provider projection refuses provider declarations in root or project confi
   const provider = writePrivate(path.join(temp, "provider-collision.json"), validProvider());
   for (const [name, relative, content] of [
     ["root", "opencode.json", JSON.stringify({ provider: { foreign: {} } })],
+    ["v2-root", "opencode.json", JSON.stringify({ providers: { foreign: {} } })],
     [
       "config-directory",
       ".opencode/opencode.jsonc",
@@ -2419,6 +2467,11 @@ test("web launch requires authentication and closes native exposure arguments", 
     env.OPENCODE_SERVER_PASSWORD,
   );
   assert.ok(!launched.stderr.includes(env.OPENCODE_SERVER_PASSWORD));
+  const unguardedV2 = fake("web-v2-without-guard", "opencode v2.1.4");
+  const refused = run(args, { ...env, OPENCODE_BIN: unguardedV2.executable });
+  assert.notEqual(refused.status, 0);
+  assert.match(refused.stderr, /V2 activation server did not report a bounded live endpoint/);
+  assert.equal(fs.existsSync(unguardedV2.capture), false);
 });
 
 test("run cannot bypass web authentication or binding through forwarded server commands", () => {
@@ -2512,6 +2565,30 @@ test("source-web validates its own source profile without external injection and
     path.join(source, ".opencode/package.json"),
     path.join(source, ".opencode/package-lock.json"),
   ].map((filename) => [filename, fs.readFileSync(filename, "utf8")] as const);
+  const unguardedV2 = fake("source-v2-without-guard", "opencode v2.1.4");
+  for (const mode of ["source-tui", "source-web"]) {
+    const refused = spawnSync(
+      process.execPath,
+      [
+        path.join(source, "bin/opencode-harness.mjs"),
+        mode,
+        "--cache-root",
+        path.join(temp, "source-v2-refusal-cache"),
+      ],
+      {
+        cwd: temp,
+        encoding: "utf8",
+        env: {
+          ...process.env,
+          OPENCODE_BIN: unguardedV2.executable,
+          OPENCODE_SERVER_PASSWORD: "offline-fixture-not-a-real-credential",
+        },
+      },
+    );
+    assert.notEqual(refused.status, 0);
+    assert.equal(fs.existsSync(unguardedV2.capture), false);
+    assert.match(refused.stderr, /V2 (?:activation server|source web exposure)/);
+  }
   const native = fake("source-web");
   const cache = path.join(temp, "source-web-cache");
   const invoke = (extra: string[] = [], env: NodeJS.ProcessEnv = {}) =>

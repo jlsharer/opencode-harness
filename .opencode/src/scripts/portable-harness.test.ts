@@ -123,7 +123,7 @@ test("fresh foreign repository installs and validates without source-owned roots
   const installed = await runNode([BOOTSTRAP, "--target", repo]);
   assert.match(
     installed.stdout,
-    /created\/updated=58, memory-created=5, unchanged=0, collisions=0/,
+    /created\/updated=61, memory-created=6, unchanged=0, collisions=0/,
   );
   assert.match(
     installed.stdout,
@@ -139,6 +139,7 @@ test("fresh foreign repository installs and validates without source-owned roots
   assert.deepEqual(await walk(path.join(repo, ".memory")), [
     "INDEX.md",
     "protocols/memory-management.md",
+    "templates/compaction-handoff.md",
     "templates/interactive-refinement-test-plan.md",
     "templates/orchestration-index.md",
     "templates/role-trace-artifact.md",
@@ -163,10 +164,10 @@ test("fresh foreign repository installs and validates without source-owned roots
 test("bootstrap is idempotent and dry-run performs no writes", async () => {
   const repo = path.join(tempParent, "fresh");
   const second = await runNode([BOOTSTRAP, "--target", repo]);
-  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=63, collisions=0/);
+  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=67, collisions=0/);
   const dryRepo = await makeRepo(tempParent, "dry-run");
   const dry = await runNode([BOOTSTRAP, "--target", dryRepo, "--dry-run"]);
-  assert.match(dry.stdout, /dry-run complete: created\/updated=58, memory-created=5/);
+  assert.match(dry.stdout, /dry-run complete: created\/updated=61, memory-created=6/);
   assert.deepEqual(await readdir(dryRepo), []);
 });
 
@@ -187,7 +188,7 @@ test("partial memory is filled without overwrite and history is never copied or 
   await writeFile(index, "# Destination-owned memory\n");
   await writeFile(history, "keep\n");
   const result = await runNode([BOOTSTRAP, "--target", repo, "--overwrite-managed"]);
-  assert.match(result.stdout, /memory-created=4/);
+  assert.match(result.stdout, /memory-created=5/);
   assert.equal(await readFile(index, "utf8"), "# Destination-owned memory\n");
   assert.equal(await readFile(history, "utf8"), "keep\n");
   const validator = path.join(repo, ".opencode/scripts/validate-portable-harness.mjs");
@@ -557,7 +558,7 @@ test("installed validator independently rejects removed inventory entries", asyn
   const validator = path.join(repo, ".opencode/scripts/validate-portable-harness.mjs");
   assert.match(
     await expectFailure([validator, "--root", repo]),
-    /exact portable-core contract|exactly 58 files/,
+    /exact portable-core contract|exactly 61 files/,
   );
 });
 

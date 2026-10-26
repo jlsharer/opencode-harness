@@ -14,7 +14,7 @@ import {
   validateNativeProviderCoherence,
 } from "./routing-policy.ts";
 import type { HarnessRole, LocalCatalogModel, NormalizedRoutingConfig } from "./routing-policy.ts";
-import HarnessPlugin from "../plugins/index.ts";
+import { HarnessPlugin } from "../plugins/index.ts";
 import { resolveModelForRole } from "./model-routing-helper.ts";
 import {
   loadRoutingConfigSelection,

@@ -314,9 +314,94 @@ Required validation includes:
 
 ## October 2026 local refinement
 
+The tagged OpenCode v2.1.4 source at
+`68bc26b7da1990ce10ffecfbc1e09eb13aa5d824` documents `@opencode/plugin`
+`Plugin.define(...setup...)`, domain registration, and structured tool results,
+not the V1 default-returned hook map and `@opencode-ai/plugin` contract. Its
+after-tool hook cannot be relied on to reject a call. This tagged source does
+not establish release publication, exact CLI `--version` output, a trusted
+installed V2 binary or working native Task interception. The version-neutral
+launcher and its V1 `agent list` trace probe are not a V2 compatibility gate;
+do not launch V2 for managed delegation on this basis. Before any V2 promotion,
+prove a protective pre-spawn discriminator without breaking V1 fallback, pinned
+plugin loading/config and Task/session/before-hook semantics, exact child/result
+correlation and failure propagation, and installed SDK/lock inventory. Then run
+trusted-binary offline fixture tests and independent validation. No provider,
+credential or network activation is authorized by this documentation.
+
+The explicit V2-only subscription-auth option binds a current-user owner-only
+native OpenCode data home. A stable read-only SQLite backup is made in the
+owner-only launch snapshot; an existing trusted Bubblewrap runs an offline
+OpenAI-only native auth export against that backup. Exactly one active OAuth
+connection is piped into the already-probed guarded server's independently
+absent per-launch database. The backup is removed before the requested client;
+ordinary database cleanup removes the imported connection after exit. The
+operator source remains untouched, and exported credential bytes are neither
+logged nor stored in runtime assets or project traces. This opt-in is separate
+from credential-free provider/catalog/profile projections and never grants a
+managed child access to operator auth files.
+
+The source-only V2 setup fixture (`.opencode/scripts/native-v2-plugin-fixture.mts`
+with offline tests) is deliberately a preflight/refusal, not native activation.
+Outside managed execution an operator supplies an exact absolute trusted binary
+and its SHA-256 plus an already-private mode-0700 scratch parent; no binary or
+server is launched, no workspace/state or receipt is created, and the result is
+always inconclusive/nonzero. Its fixed, unexecuted disposable-root plugin
+source uses V2 `Plugin.define({id,setup})`, registering a `subagent`-selective
+`execute.before` sentinel; it is never placed in the production plugin directory.
+Stage A still requires proven fresh server/socket isolation and an active-state
+observation tied to that server: a native ID/SOURCE row would establish plugin
+inventory only, not setup activation or hook firing. With no source-backed safe
+active-state route, the fixture refuses before native spawn. Stage B genuine
+provider-free subagent refusal, child inventory and no-child effects remain
+unknown. This source-only experiment is absent from runtime/portable manifests,
+is not a managed gate, and cannot promote V2 dispatch. Production V1 and the
+operator external QA runner are unchanged; any native or full QA run requires
+separate external authorization and independent evidence.
+
 The implemented refinement retains V1, four roles, and ephemeral operation. `dispatch-controller` validates the normalized workflow and owns atomic serial/capacity, dependency/gate, per-role/total attempt, remediation and deadline enforcement. `managed-dispatch` binds parent/child sessions, typed Task envelopes and results, immutable specs, scoped tool use and tree/artifact acceptance evidence. No persistent store, restart recovery, new roles, V2 adapter or framework is introduced.
 
+The later V2 adapter now gates blocking native `subagent` admission and seals the
+same controller evidence after native child correlation. V2 `source-tui` joins
+the already-probed server; V2 external/source web modes expose it only through
+an owner-password-authenticated loopback proxy opened after the activation
+marker. A validated credential-free V1-style provider document is projected to
+native V2 `providers` schema inside its per-launch snapshot, then checked against
+the active server's provider endpoint and exact model limits before a client
+starts. Routing transforms bind selected roles to active native model refs and
+catalog URL metadata; absent optional local selections inherit. The pinned
+subagent tool cancels both `sessions.interrupt(child.id)` and
+`jobs.cancel(child.id)` when interrupted. Stock v2.1.4 exposes only the first
+operation to plugins. The source-only custom native patch in
+`.opencode/patches/v2.1.4-background-job.patch` adds a subagent-only Job
+get/wait/cancel domain and bounded post-notification terminal retention; a
+separately built binary must be selected explicitly. The V2 adapter binds
+native Job generation and model to the acknowledged child before accepting
+terminal structured output or reconciling cancellation. V2 auto mode falls back
+to foreground on stock builds; explicit background on a build without Job
+capability remains refused. Disposable custom-build native checks separately
+observed controller success after a typed background researcher result and
+reconciled cancellation of a child waiting on a local asynchronous fetch. These
+are transport/role observations; independent validator gates remain required
+for goal acceptance. These newer observations
+do not retroactively turn the source-only fixture above into acceptance proof.
+
 `acceptance-proof` is a post-diff and evidence guard, not a sandbox. `managed-execution` uses existing trusted bubblewrap for read-only shell verification; unsupported shell paths fail closed. Commands requiring workspace writes are explicitly excluded from this managed surface. Interrupted/uncertain work cannot be replayed. The temporary database lifecycle is unchanged. See the memory protocol for exact inputs, artifact hashes, limits and unsupported cases, and `docs/refinement-evaluation.md` for the distinction between deterministic offline policy tests and unexecuted matched model evaluation.
+
+The source-only `.opencode/scripts/operator-external-qa.mts` is an explicit external
+operator convenience, not a managed shell escape, validator gate or launcher
+entry point. It requires a canonical Git root, a new receipt outside that tree
+under an owner-only parent and trusted preinstalled tools. The fixed QA commands
+run without shell interpolation; private scratch and npm cache live beside the
+receipt, scripts and network-dependent npm resolution are disabled, and output
+is hashed rather than copied into the receipt. The receipt has external-only
+provenance, observed exit status and exact HEAD/index/inventory hashes. Any
+command failure, missing result or tree drift fails the receipt; it does not
+restore mutated user files or certify acceptance. A separately authorized
+operator must review and independently verify results on the final tree.
+Ignored dependencies and undeclared ignored files are not inventoried, host
+inputs are not hermetic and same-UID races are outside this receipt boundary.
+V2 release bytes, provenance and native pre-spawn refusal remain separate gates.
 
 ### OpenCode version policy refinement
 

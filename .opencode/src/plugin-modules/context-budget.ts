@@ -179,7 +179,8 @@ export type CompactionDecision =
       modelID: string;
     };
 
-/** Reported completed-turn input is a proxy, never a measurement of current occupancy. */
+/** Reported completed-turn input (uncached + cache read/write) is a proxy,
+ * never a measurement of current occupancy. */
 export function reportedInputCompactionDecision(input: {
   session: unknown;
   status: unknown;
@@ -219,6 +220,10 @@ export function reportedInputCompactionDecision(input: {
   const info = object(object(messages.at(-1))?.info);
   const turnTime = object(info?.time);
   const tokens = object(info?.tokens);
+  const cache = object(tokens?.cache);
+  if (tokens?.cache !== undefined && !cache) return skip;
+  const cacheRead = cache?.read ?? 0;
+  const cacheWrite = cache?.write ?? 0;
   if (
     !info ||
     info.role !== "assistant" ||
@@ -236,7 +241,11 @@ export function reportedInputCompactionDecision(input: {
     typeof info.modelID !== "string" ||
     !info.modelID ||
     !Number.isSafeInteger(tokens?.input) ||
-    (tokens?.input as number) < 0
+    (tokens?.input as number) < 0 ||
+    !Number.isSafeInteger(cacheRead) ||
+    (cacheRead as number) < 0 ||
+    !Number.isSafeInteger(cacheWrite) ||
+    (cacheWrite as number) < 0
   )
     return skip;
   const parent = object(
@@ -274,7 +283,13 @@ export function reportedInputCompactionDecision(input: {
   const limit = object(model?.limit)?.context;
   if (model?.id !== info.modelID || !Number.isSafeInteger(limit) || (limit as number) < 1)
     return skip;
-  if (BigInt(tokens?.input as number) * 5n < BigInt(limit as number) * 3n) return skip;
+  const reportedInput =
+    BigInt(tokens?.input as number) + BigInt(cacheRead as number) + BigInt(cacheWrite as number);
+  if (
+    reportedInput > BigInt(Number.MAX_SAFE_INTEGER) ||
+    reportedInput * 5n < BigInt(limit as number) * 3n
+  )
+    return skip;
   return {
     status: "request-eligible",
     evidence: "reported-turn-input-proxy",

@@ -135,7 +135,8 @@ export function managedCompactionSafe(value) {
                 run.attempts.every((entry) => ["success", "blocked", "failed"].includes(String(object(entry)?.state))));
         }));
 }
-/** Reported completed-turn input is a proxy, never a measurement of current occupancy. */
+/** Reported completed-turn input (uncached + cache read/write) is a proxy,
+ * never a measurement of current occupancy. */
 export function reportedInputCompactionDecision(input) {
     const skip = { status: "skip" };
     const session = object(input.session);
@@ -164,6 +165,11 @@ export function reportedInputCompactionDecision(input) {
     const info = object(object(messages.at(-1))?.info);
     const turnTime = object(info?.time);
     const tokens = object(info?.tokens);
+    const cache = object(tokens?.cache);
+    if (tokens?.cache !== undefined && !cache)
+        return skip;
+    const cacheRead = cache?.read ?? 0;
+    const cacheWrite = cache?.write ?? 0;
     if (!info ||
         info.role !== "assistant" ||
         info.sessionID !== session.id ||
@@ -180,7 +186,11 @@ export function reportedInputCompactionDecision(input) {
         typeof info.modelID !== "string" ||
         !info.modelID ||
         !Number.isSafeInteger(tokens?.input) ||
-        tokens?.input < 0)
+        tokens?.input < 0 ||
+        !Number.isSafeInteger(cacheRead) ||
+        cacheRead < 0 ||
+        !Number.isSafeInteger(cacheWrite) ||
+        cacheWrite < 0)
         return skip;
     const parent = object(object(messages.findLast((entry) => object(object(entry)?.info)?.id === info.parentID))?.info);
     const parentModel = object(parent?.model);
@@ -209,7 +219,9 @@ export function reportedInputCompactionDecision(input) {
     const limit = object(model?.limit)?.context;
     if (model?.id !== info.modelID || !Number.isSafeInteger(limit) || limit < 1)
         return skip;
-    if (BigInt(tokens?.input) * 5n < BigInt(limit) * 3n)
+    const reportedInput = BigInt(tokens?.input) + BigInt(cacheRead) + BigInt(cacheWrite);
+    if (reportedInput > BigInt(Number.MAX_SAFE_INTEGER) ||
+        reportedInput * 5n < BigInt(limit) * 3n)
         return skip;
     return {
         status: "request-eligible",

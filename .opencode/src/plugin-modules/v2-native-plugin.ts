@@ -1,0 +1,953 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
+import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.ts";
+import {
+  admitV2Subagent,
+  completedV2Subagent,
+  runningV2Subagent,
+  v2JsonResult,
+} from "./v2-dispatch-bridge.ts";
+import type { V2ToolAfter, V2ToolBefore } from "./v2-dispatch-bridge.ts";
+import { validateTaskResult } from "./task-contracts.ts";
+import { appendV2CompactionContext } from "./compaction-handoff.ts";
+import { loadRoutingConfigSelection } from "../routing/routing-config-loader.ts";
+import {
+  normalizeAndValidateRoutingConfig,
+  resolveAllHarnessRoleAssignments,
+  resolveRoutingDecision,
+} from "../routing/routing-policy.ts";
+import {
+  planTraceRootPermissions,
+  TRACE_ONLY_ROLES,
+  TRACE_PERMISSION_ROLES,
+} from "./trace-root-permissions.ts";
+
+type RecordValue = Record<string, unknown>;
+
+interface V2ToolDefinition {
+  name: string;
+  description: string;
+  input: RecordValue;
+  options: { codemode: false };
+  execute(input: RecordValue, context: { sessionID: string }): Promise<{ content: string }>;
+}
+
+interface V2Context {
+  location: { directory: string };
+  agent: {
+    transform(
+      callback: (editor: {
+        list(): readonly RecordValue[];
+        get(id: string): RecordValue | undefined;
+        update(id: string, update: (agent: RecordValue) => void): void;
+      }) => void,
+    ): Promise<unknown>;
+    reload(): Promise<void>;
+    list(): Promise<unknown>;
+  };
+  tool: {
+    transform(
+      callback: (editor: {
+        list(): readonly { id: string }[];
+        update(id: string, update: (tool: RecordValue) => void): void;
+        add(tool: V2ToolDefinition): void;
+      }) => void,
+    ): Promise<unknown>;
+    reload(): Promise<void>;
+    hook(
+      name: "execute.before",
+      callback: (event: V2ToolBefore) => Promise<void>,
+    ): Promise<unknown>;
+    hook(name: "execute.after", callback: (event: V2ToolAfter) => Promise<void>): Promise<unknown>;
+  };
+  session: {
+    hook(
+      name: "compaction" | "context",
+      callback: (event: {
+        sessionID: string;
+        system: { type: "text"; text: string }[];
+      }) => Promise<void>,
+    ): Promise<unknown>;
+    get(input: { sessionID: string }): Promise<unknown>;
+    interrupt(input: { sessionID: string; resume: false }): Promise<unknown>;
+    wait(input: { sessionID: string }): Promise<unknown>;
+  };
+  job?: {
+    get(input: { id: string }): Promise<unknown>;
+    wait(input: { id: string; timeout: number }): Promise<unknown>;
+    cancel(input: { id: string }): Promise<unknown>;
+  };
+  model: { list(): Promise<unknown> };
+  provider: { list(): Promise<unknown> };
+  event: { subscribe(options?: { signal?: AbortSignal }): AsyncIterable<unknown> };
+  plugin: { list(): Promise<unknown> };
+}
+
+function record(value: unknown): RecordValue {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("V2 native event contract unavailable");
+  return value as RecordValue;
+}
+
+function data(value: unknown): RecordValue {
+  const source = record(value);
+  return source.data && typeof source.data === "object" ? record(source.data) : source;
+}
+
+function nativeTool(name: unknown) {
+  const known: Record<string, string> = {
+    shell: "bash",
+    read: "read",
+    grep: "grep",
+    glob: "glob",
+    edit: "edit",
+    write: "write",
+    webfetch: "webfetch",
+  };
+  return known[String(name)] ?? String(name);
+}
+
+function beforeInput(event: V2ToolBefore) {
+  const input = record(event.input);
+  const tool = nativeTool(event.tool);
+  const args = { ...input };
+  if ((tool === "edit" || tool === "write" || tool === "read") && "path" in args)
+    args.filePath = args.path;
+  return { input, tool, args };
+}
+
+function tracePlan(workspaceRoot: string, traceRoot: string, runtimeRoot: string) {
+  const agents = Object.fromEntries(
+    TRACE_PERMISSION_ROLES.map((role) => [role, { permission: {} }]),
+  );
+  const external = planTraceRootPermissions(
+    { agent: agents },
+    {
+      workspaceRoot,
+      traceRoot,
+      runtimeRoot,
+      directory: workspaceRoot,
+      env: {},
+    },
+  );
+  if (!external && traceRoot !== path.join(workspaceRoot, ".memory"))
+    throw new Error("V2 trace root is not the exact project memory directory");
+  const stat = fs.lstatSync(traceRoot);
+  if (
+    !stat.isDirectory() ||
+    stat.isSymbolicLink() ||
+    stat.uid !== process.getuid?.() ||
+    (stat.mode & 0o777) !== 0o700
+  )
+    throw new Error("V2 trace root must be current-user mode 0700");
+  const relativeRoot = path.relative(workspaceRoot, traceRoot).split(path.sep).join("/");
+  const plan = external ?? {
+    schemaVersion: "1.0.0",
+    workspaceRoot,
+    traceRoot,
+    roles: [...TRACE_PERMISSION_ROLES],
+    permissions: TRACE_PERMISSION_ROLES.map((role) => ({
+      role,
+      externalDirectory: `${traceRoot}/orchestrations/*/roles/${role}/*`,
+      edit: TRACE_ONLY_ROLES.includes(role)
+        ? `${relativeRoot}/orchestrations/*/roles/${role}/*.md`
+        : null,
+    })),
+  };
+  const values = {
+    schemaVersion: plan.schemaVersion,
+    workspaceRoot: plan.workspaceRoot,
+    traceRoot: plan.traceRoot,
+    roles: plan.roles,
+    permissions: plan.permissions,
+  };
+  return {
+    ...values,
+    permissionPlanDigest: createHash("sha256").update(JSON.stringify(values)).digest("hex"),
+  };
+}
+
+async function localModelReady(base: string, model: string): Promise<boolean> {
+  if (!/^http:\/\/127\.0\.0\.1:[1-9][0-9]{0,4}\/v1$/.test(base)) return false;
+  const read = async (url: string): Promise<unknown> => {
+    const response = await fetch(url, {
+      method: "GET",
+      headers: { Accept: "application/json" },
+      credentials: "omit",
+      redirect: "error",
+      signal: AbortSignal.timeout(1500),
+    });
+    if (!response.ok || !response.body) throw new Error("local route unavailable");
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    try {
+      while (true) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > 65536) throw new Error("local route response exceeds bound");
+        chunks.push(part.value);
+      }
+    } finally {
+      await reader.cancel();
+    }
+    return JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown;
+  };
+  try {
+    const health = record(await read(new URL("/health", base).href));
+    const models = record(await read(`${base}/models`));
+    return (
+      health.status === "ok" &&
+      Array.isArray(models.data) &&
+      models.data.some((entry) => entry && typeof entry === "object" && entry.id === model)
+    );
+  } catch {
+    return false;
+  }
+}
+
+async function registerRoles(context: V2Context, plan: ReturnType<typeof tracePlan>) {
+  const routing = normalizeAndValidateRoutingConfig(
+    loadRoutingConfigSelection({
+      startPath: plan.workspaceRoot,
+      fallbackDirectory: path.join(process.env.OPENCODE_HARNESS_RUNTIME_ROOT!, "routing"),
+    }).document,
+  );
+  const assignments = resolveAllHarnessRoleAssignments(routing).assignments;
+  const variants = Object.fromEntries(
+    TRACE_PERMISSION_ROLES.map((role) => [
+      role,
+      resolveRoutingDecision({ config: routing, request: { role } }).variant,
+    ]),
+  );
+  const selected = TRACE_PERMISSION_ROLES.map(
+    (role) => assignments[role as keyof typeof assignments]?.model,
+  ).filter((model): model is string => typeof model === "string");
+  if (selected.length) {
+    const response = await context.model.list();
+    const models = Array.isArray(response) ? response : record(response).data;
+    if (!Array.isArray(models)) throw new Error("V2 routing model inventory unavailable");
+    const local = TRACE_PERMISSION_ROLES.some((role) =>
+      Boolean(assignments[role as keyof typeof assignments]?.catalogName),
+    );
+    const providerResponse = local ? await context.provider.list() : [];
+    const providers = Array.isArray(providerResponse)
+      ? providerResponse
+      : record(providerResponse).data;
+    if (!Array.isArray(providers)) throw new Error("V2 routing provider inventory unavailable");
+    for (const model of selected) {
+      const slash = model.indexOf("/");
+      const missing =
+        slash <= 0 ||
+        !models.some(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            entry.providerID === model.slice(0, slash) &&
+            entry.id === model.slice(slash + 1) &&
+            entry.enabled === true,
+        );
+      if (missing) {
+        for (const role of TRACE_PERMISSION_ROLES) {
+          const assignment = assignments[role as keyof typeof assignments];
+          if (assignment?.model !== model) continue;
+          if (assignment.catalogName && !routing.localRouting.forceLocalForHarnessSubagents)
+            assignments[role as keyof typeof assignments] = null;
+          else
+            throw new Error(
+              "V2 routing selection is absent from the active native model inventory",
+            );
+        }
+      }
+      for (const role of TRACE_PERMISSION_ROLES) {
+        const assignment = assignments[role as keyof typeof assignments];
+        const variant = variants[role];
+        if (assignment?.model !== model || !variant) continue;
+        const entry = models.find(
+          (candidate) =>
+            candidate &&
+            typeof candidate === "object" &&
+            candidate.providerID === model.slice(0, slash) &&
+            candidate.id === model.slice(slash + 1),
+        );
+        if (
+          Array.isArray(entry?.variants) &&
+          entry.variants.some(
+            (item: unknown) =>
+              item && typeof item === "object" && "id" in item && item.id === variant,
+          )
+        )
+          continue;
+        if (assignment.catalogName && !routing.localRouting.forceLocalForHarnessSubagents)
+          assignments[role as keyof typeof assignments] = null;
+        else throw new Error("V2 routing variant is absent from the native model inventory");
+      }
+      for (const role of TRACE_PERMISSION_ROLES) {
+        const assignment = assignments[role as keyof typeof assignments];
+        if (assignment?.model !== model || !assignment.catalogName) continue;
+        const provider = providers.find(
+          (entry) =>
+            entry &&
+            typeof entry === "object" &&
+            (entry.id === model.slice(0, slash) || entry.provider?.id === model.slice(0, slash)),
+        );
+        if (
+          (provider?.settings?.baseURL ?? provider?.provider?.settings?.baseURL) ===
+          assignment.routingServiceUrl
+        )
+          continue;
+        if (!routing.localRouting.forceLocalForHarnessSubagents)
+          assignments[role as keyof typeof assignments] = null;
+        else throw new Error("V2 native provider endpoint does not match the selected catalog");
+      }
+    }
+    const readiness = new Map<string, boolean>();
+    for (const role of TRACE_PERMISSION_ROLES) {
+      const assignment = assignments[role as keyof typeof assignments];
+      if (!assignment?.catalogName || !assignment.routingServiceUrl) continue;
+      const key = `${assignment.routingServiceUrl}\0${assignment.model}`;
+      if (!readiness.has(key))
+        readiness.set(
+          key,
+          await localModelReady(
+            assignment.routingServiceUrl,
+            assignment.model.slice(assignment.model.indexOf("/") + 1),
+          ),
+        );
+      if (readiness.get(key)) continue;
+      if (!routing.localRouting.forceLocalForHarnessSubagents)
+        assignments[role as keyof typeof assignments] = null;
+      else throw new Error("V2 required local routing endpoint is unavailable");
+    }
+  }
+  const transformed = new Set<string>();
+  await context.agent.transform((editor) => {
+    // Register only after the native project agent source: later rules win.
+    // Code Mode offers session_move outside normal tool hooks; keep direct
+    // subagent tools while removing that unguarded path from primary agents.
+    for (const item of editor.list()) {
+      if (
+        TRACE_PERMISSION_ROLES.includes(String(item.id)) ||
+        (item.mode !== "primary" && item.mode !== "all") ||
+        item.hidden === true
+      )
+        continue;
+      editor.update(String(item.id), (agent) => {
+        if (!Array.isArray(agent.permissions))
+          throw new Error("V2 primary permissions unavailable");
+        agent.permissions = [
+          ...agent.permissions,
+          { action: "execute", resource: "*", effect: "deny" },
+        ];
+      });
+    }
+    for (const role of TRACE_PERMISSION_ROLES) {
+      if (!editor.get(role)) throw new Error(`V2 harness role unavailable: ${role}`);
+      editor.update(role, (agent) => {
+        const permissions = agent.permissions;
+        if (!Array.isArray(permissions))
+          throw new Error(`V2 role permissions unavailable: ${role}`);
+        const entry = plan.permissions.find((item) => item.role === role)!;
+        const rules = [
+          { action: "execute", resource: "*", effect: "deny" },
+          { action: "subagent", resource: "*", effect: "deny" },
+          { action: "external_directory", resource: entry.externalDirectory, effect: "allow" },
+          ...(entry.edit ? [{ action: "edit", resource: entry.edit, effect: "allow" }] : []),
+        ];
+        agent.permissions = [...permissions, ...rules];
+        const model = assignments[role as keyof typeof assignments]?.model;
+        if (model) {
+          const slash = model.indexOf("/");
+          agent.model = {
+            providerID: model.slice(0, slash),
+            id: model.slice(slash + 1),
+            ...(variants[role] ? { variant: variants[role] } : {}),
+          };
+        }
+      });
+      transformed.add(role);
+    }
+  });
+  return async () => {
+    for (let attempt = 0; attempt < 50; attempt++) {
+      await context.agent.reload();
+      const value = await context.agent.list();
+      const agents = Array.isArray(value) ? value : record(value).data;
+      if (transformed.size === TRACE_PERMISSION_ROLES.length && Array.isArray(agents)) {
+        const ready = TRACE_PERMISSION_ROLES.every((role) => {
+          const agent = agents.find((item) => item && typeof item === "object" && item.id === role);
+          return (
+            agent &&
+            Array.isArray(agent.permissions) &&
+            agent.permissions.some(
+              (item: unknown) =>
+                record(item).action === "execute" && record(item).effect === "deny",
+            ) &&
+            (!assignments[role as keyof typeof assignments]?.model ||
+              (agent.model?.providerID ===
+                assignments[role as keyof typeof assignments]!.model.split("/")[0] &&
+                agent.model?.id ===
+                  assignments[role as keyof typeof assignments]!.model.split("/")
+                    .slice(1)
+                    .join("/") &&
+                (!variants[role] || agent.model?.variant === variants[role])))
+          );
+        });
+        const primaries = agents.filter(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            (item.mode === "primary" || item.mode === "all") &&
+            item.hidden !== true,
+        );
+        if (
+          ready &&
+          primaries.length > 0 &&
+          primaries.every(
+            (agent) =>
+              Array.isArray(agent.permissions) &&
+              agent.permissions.some(
+                (item: unknown) =>
+                  record(item).action === "execute" && record(item).effect === "deny",
+              ),
+          )
+        )
+          return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("V2 effective role permissions unavailable");
+  };
+}
+
+async function waitForNativeAgentSource(context: V2Context, signal: AbortSignal) {
+  const deadline = Date.now() + 30000;
+  for (let attempt = 0; Date.now() < deadline && !signal.aborted; attempt++) {
+    const value = await context.plugin.list();
+    const plugins = Array.isArray(value) ? value : record(value).data;
+    if (
+      Array.isArray(plugins) &&
+      plugins.some(
+        (item) =>
+          item &&
+          typeof item === "object" &&
+          item.id === "opencode.config.agent" &&
+          item.state?.status === "active",
+      )
+    )
+      return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("V2 native agent source is not active");
+}
+
+function activationMarker(plan: ReturnType<typeof tracePlan>) {
+  const filename = process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
+  const nonce = process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
+  if (!filename && !nonce) return;
+  if (
+    !filename ||
+    !path.isAbsolute(filename) ||
+    path.normalize(filename) !== filename ||
+    !/^[a-f0-9]{64}$/.test(nonce ?? "")
+  )
+    throw new Error("V2 activation probe requires exact marker and nonce");
+  const parent = fs.lstatSync(path.dirname(filename));
+  if (
+    !parent.isDirectory() ||
+    parent.isSymbolicLink() ||
+    parent.uid !== process.getuid?.() ||
+    (parent.mode & 0o777) !== 0o700
+  )
+    throw new Error("V2 activation marker parent is unsafe");
+  fs.writeFileSync(filename, JSON.stringify({ ...plan, nonce }) + "\n", {
+    flag: "wx",
+    mode: 0o600,
+  });
+}
+
+export const V2NativePlugin = {
+  id: "opencode-harness.v2",
+  async setup(context: V2Context) {
+    const workspaceRoot = process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
+    const runtimeRoot = process.env.OPENCODE_HARNESS_RUNTIME_ROOT;
+    const traceRoot = process.env.OPENCODE_HARNESS_TRACE_ROOT;
+    if (
+      process.env.OPENCODE_HARNESS_NATIVE_API !== "v2" ||
+      !workspaceRoot ||
+      !path.isAbsolute(workspaceRoot) ||
+      context.location.directory !== workspaceRoot ||
+      !runtimeRoot ||
+      !path.isAbsolute(runtimeRoot) ||
+      !traceRoot ||
+      !path.isAbsolute(traceRoot)
+    )
+      throw new Error("V2 harness requires matching launcher-set roots");
+    const delegation = parseDelegationPolicy(process.env.OPENCODE_HARNESS_DELEGATION);
+    const job = context.job;
+    const backgroundEnabled =
+      process.env.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS === "true" &&
+      job &&
+      typeof job.get === "function" &&
+      typeof job.wait === "function" &&
+      typeof job.cancel === "function";
+    if (delegation.mode === "background" && !backgroundEnabled)
+      throw new Error("V2 background requires native subagent Job get/wait/cancel capability");
+    const plan = tracePlan(workspaceRoot, traceRoot, runtimeRoot);
+    const transport = backgroundEnabled
+      ? {
+          enabled: true,
+          models: async (parent: string, role: string) => {
+            const session = data(await context.session.get({ sessionID: parent }));
+            const response = await context.agent.list();
+            const agents = Array.isArray(response) ? response : record(response).data;
+            if (!Array.isArray(agents)) throw new Error("V2 agent model inventory unavailable");
+            const agent = agents.find((candidate) => candidate?.id === role);
+            const parentModel = record(session.model);
+            const workerModel = agent?.model ? record(agent.model) : parentModel;
+            const ref = (model: RecordValue) => `${model.providerID}/${model.id}`;
+            return { parent: ref(parentModel), worker: ref(workerModel) };
+          },
+          inspect: async (child: string) => {
+            const session = data(await context.session.get({ sessionID: child }));
+            const current = await job!.get({ id: child });
+            const worker = current ? data(current) : null;
+            const terminal = worker && worker.status !== "running";
+            const idle =
+              Boolean(terminal) &&
+              (worker?.status === "completed"
+                ? session.outcome === "succeeded"
+                : Boolean(session.outcome)) &&
+              Boolean(session.time && record(session.time).idle);
+            return {
+              parent: String(session.parentID ?? ""),
+              idle,
+              messages: [],
+              ...(terminal
+                ? {
+                    job: {
+                      status: String(worker.status),
+                      startedAt: Number(worker.started_at),
+                      completedAt: Number(worker.completed_at),
+                      ...(worker.status === "completed" && typeof worker.output === "string"
+                        ? { output: v2JsonResult(worker.output) }
+                        : {}),
+                    },
+                  }
+                : {}),
+            };
+          },
+          abort: async (child: string) => {
+            await context.session.interrupt({ sessionID: child, resume: false });
+            const cancelled = data(await job!.cancel({ id: child }));
+            if (cancelled.status === "running") throw new Error("native Job remains active");
+            const result = data(await job!.wait({ id: child, timeout: 2000 }));
+            if (result.timedOut || !result.info || data(result.info).status === "running")
+              throw new Error("native Job termination unconfirmed");
+            await Promise.race([
+              context.session.wait({ sessionID: child }),
+              new Promise<never>((_resolve, reject) =>
+                setTimeout(() => reject(new Error("native child idle unconfirmed")), 2000),
+              ),
+            ]);
+          },
+        }
+      : undefined;
+    const dispatch = createManagedDispatch({
+      workspaceRoot,
+      traceRoot,
+      delegation,
+      ...(transport ? { backgroundTransport: transport } : {}),
+    });
+    const handoff = (
+      event: { sessionID: string; system: { type: "text"; text: string }[] },
+      kind: "compaction" | "context",
+    ) => {
+      try {
+        appendV2CompactionContext(
+          event.system,
+          traceRoot,
+          dispatch.compactionPointer(event.sessionID)?.orchestrationId ?? null,
+          kind,
+        );
+      } catch {
+        // A malformed handoff is unknown state, never a model instruction.
+      }
+    };
+    await context.session.hook("compaction", async (event) => handoff(event, "compaction"));
+    await context.session.hook("context", async (event) => handoff(event, "context"));
+    const backgroundObservers = new Set<ReturnType<typeof setInterval>>();
+    let ready = false;
+    const abort = new AbortController();
+    const watch = (async () => {
+      for await (const event of context.event.subscribe({ signal: abort.signal })) {
+        const value = record(event);
+        if (value.type === "session.synthetic") {
+          const event = record(value.data);
+          const metadata = event.metadata ? record(event.metadata) : {};
+          if (
+            metadata.source === "subagent" &&
+            typeof metadata.childID === "string" &&
+            ["completed", "error", "cancelled"].includes(String(metadata.state)) &&
+            dispatch.currentTaskView(event.sessionID)?.role === metadata.agent
+          ) {
+            const view = dispatch.currentTaskView(event.sessionID)!;
+            void dispatch
+              .reconcileBackground(metadata.childID)
+              .then(() => {
+                const run = dispatch
+                  .snapshot()
+                  .runs.find((candidate) =>
+                    candidate.attempts.some((attempt) => attempt.id === view.delegationTaskId),
+                  );
+                const attempt = run?.attempts.find((item) => item.id === view.delegationTaskId);
+                if (!attempt || attempt.state === "running") return;
+                const filename = path.join(
+                  traceRoot,
+                  "orchestrations",
+                  view.orchestrationId,
+                  "validation",
+                  `${view.delegationTaskId}-v2-terminal-observation.json`,
+                );
+                try {
+                  fs.writeFileSync(
+                    filename,
+                    JSON.stringify({
+                      kind: "v2-background-terminal-observation",
+                      acceptanceProof: false,
+                      orchestrationId: view.orchestrationId,
+                      delegationTaskId: view.delegationTaskId,
+                      nativeState: metadata.state,
+                      controllerState: attempt.state,
+                    }) + "\n",
+                    { flag: "wx", mode: 0o600 },
+                  );
+                } catch {
+                  // Coordination only; acceptance remains controller- and validator-bound.
+                }
+              })
+              .catch(() => dispatch.interrupt("V2 native background terminal result rejected"));
+          }
+          continue;
+        }
+        if (value.type !== "session.created") continue;
+        const data = record(value.data);
+        if (
+          typeof data.sessionID !== "string" ||
+          (data.parentID !== undefined && typeof data.parentID !== "string")
+        )
+          throw new Error("V2 native session.created identity unavailable");
+        dispatch.sessionCreated({ id: data.sessionID, parentID: data.parentID });
+      }
+    })().catch(() => dispatch.interrupt("V2 native session event stream unavailable"));
+    await context.tool.hook("execute.before", async (event) => {
+      if (event.tool === "subagent") {
+        if (!ready) throw new Error("V2 harness guard activation is incomplete");
+        await admitV2Subagent(event, (input, args) => dispatch.beforeTask(input, args));
+        return;
+      }
+      const { input, tool, args } = beforeInput(event);
+      const checked = dispatch.beforeTool(
+        { sessionID: event.sessionID, callID: event.id, tool },
+        args,
+      );
+      if ("filePath" in checked && "path" in input) input.path = checked.filePath;
+      if ("command" in checked && "command" in input) input.command = checked.command;
+      if ("workdir" in checked && "workdir" in input) input.workdir = checked.workdir;
+      if ("timeout" in checked && "timeout" in input) input.timeout = checked.timeout;
+    });
+    await context.tool.hook("execute.after", async (event) => {
+      if (event.tool !== "subagent") {
+        const result = event.status === "completed" ? record(event.result) : {};
+        const metadata =
+          result.metadata && typeof result.metadata === "object" ? result.metadata : {};
+        dispatch.afterTool(
+          { sessionID: event.sessionID, callID: event.id, tool: nativeTool(event.tool) },
+          { metadata },
+        );
+        return;
+      }
+      let view: ReturnType<typeof dispatch.currentTaskView> = null;
+      const observe = (
+        outcome: string,
+        artifacts: { reference: string; sha256?: string }[] = [],
+        diagnostic: string | null = null,
+      ) => {
+        if (!view) return;
+        const accepted = dispatch
+          .snapshot()
+          .runs.find((run) =>
+            run.attempts.some((attempt) => attempt.id === view!.delegationTaskId),
+          );
+        const target = path.join(
+          traceRoot,
+          "orchestrations",
+          view.orchestrationId,
+          "validation",
+          `${view.delegationTaskId}-v2-observation.json`,
+        );
+        try {
+          fs.mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 });
+          fs.writeFileSync(
+            target,
+            JSON.stringify({
+              kind: "v2-managed-validation-observation",
+              acceptanceProof: false,
+              orchestrationId: view.orchestrationId,
+              delegationTaskId: view.delegationTaskId,
+              role: view.role,
+              outcome,
+              ...(diagnostic ? { diagnostic } : {}),
+              gates: accepted?.gates ?? {},
+              artifacts: artifacts.map((artifact) => ({
+                reference: artifact.reference,
+                ...(artifact.sha256 ? { sha256: artifact.sha256 } : {}),
+              })),
+            }) + "\n",
+            { flag: "wx", mode: 0o600 },
+          );
+        } catch {
+          // Coordination only; a trace pointer is never acceptance proof.
+        }
+      };
+      try {
+        const result = record(event.result);
+        const output = record(result.output);
+        if (typeof output.sessionID !== "string") throw new Error("native child ID unavailable");
+        const response = record(await context.session.get({ sessionID: output.sessionID }));
+        const child =
+          response.data && typeof response.data === "object" ? record(response.data) : response;
+        const checked =
+          output.status === "running"
+            ? runningV2Subagent(
+                event,
+                { id: child.id, parentID: child.parentID, model: child.model },
+                data(await job!.get({ id: output.sessionID })).started_at,
+              )
+            : completedV2Subagent(event, { id: child.id, parentID: child.parentID });
+        dispatch.sessionCreated(child);
+        view = dispatch.currentTaskView(event.sessionID);
+        const completed = dispatch.afterTask(checked.input, checked.output);
+        let diagnostic: string | null = null;
+        if (completed.outcome === "rejected" && view && typeof output.output === "string") {
+          try {
+            validateTaskResult(v2JsonResult(output.output), {
+              orchestrationId: view.orchestrationId,
+              delegationTaskId: view.delegationTaskId,
+              scopeKey: view.scopeKey,
+              role: view.role,
+              taskMode: view.taskMode,
+            });
+            diagnostic = "native wrapper or task-thread correlation rejected";
+          } catch (error) {
+            const text = error instanceof Error ? error.message : "invalid typed result";
+            diagnostic = text.startsWith("Harness task contract:")
+              ? text.slice(0, 120)
+              : "invalid V2 terminal result";
+          }
+        }
+        observe(
+          completed.outcome,
+          "result" in completed ? (completed.result?.artifacts ?? []) : [],
+          diagnostic,
+        );
+        if (completed.outcome === "running" && view) {
+          const current = view;
+          const childID = child.id as string;
+          let pending = false;
+          const timer = setInterval(() => {
+            if (pending) return;
+            pending = true;
+            void dispatch
+              .reconcileBackground(childID)
+              .then(() => {
+                const snapshot = dispatch.snapshot();
+                const run = snapshot.runs.find((candidate) =>
+                  candidate.attempts.some((attempt) => attempt.id === current.delegationTaskId),
+                );
+                const attempt = run?.attempts.find((item) => item.id === current.delegationTaskId);
+                if (!attempt || (attempt.state === "running" && !snapshot.stopped)) return;
+                clearInterval(timer);
+                backgroundObservers.delete(timer);
+                const filename = path.join(
+                  traceRoot,
+                  "orchestrations",
+                  current.orchestrationId,
+                  "validation",
+                  `${current.delegationTaskId}-v2-terminal-observation.json`,
+                );
+                try {
+                  fs.writeFileSync(
+                    filename,
+                    JSON.stringify({
+                      kind: "v2-background-terminal-observation",
+                      acceptanceProof: false,
+                      orchestrationId: current.orchestrationId,
+                      delegationTaskId: current.delegationTaskId,
+                      controllerState: attempt.state,
+                      stopped: snapshot.stopped,
+                    }) + "\n",
+                    { flag: "wx", mode: 0o600 },
+                  );
+                } catch {
+                  // Coordination only; no acceptance proof is inferred.
+                }
+              })
+              .catch(() => {
+                clearInterval(timer);
+                backgroundObservers.delete(timer);
+                dispatch.interrupt("V2 background Job inspection rejected");
+              })
+              .finally(() => {
+                pending = false;
+              });
+          }, 250);
+          timer.unref();
+          backgroundObservers.add(timer);
+        }
+      } catch {
+        dispatch.interrupt("V2 native subagent completion could not be proven");
+        observe("result-proof-failed");
+        if (event.status === "completed" && event.result && typeof event.result === "object")
+          record(event.result).content = [
+            {
+              type: "text",
+              text: "Harness V2 managed result rejected; the workflow is stopped and requires fresh reviewed evidence.",
+            },
+          ];
+      }
+    });
+    await context.tool.transform((editor) => {
+      const direct = new Set([
+        "read",
+        "grep",
+        "glob",
+        "edit",
+        "write",
+        "shell",
+        "webfetch",
+        "subagent",
+      ]);
+      for (const tool of editor.list()) {
+        if (!direct.has(tool.id)) continue;
+        editor.update(tool.id, (value) => {
+          const options =
+            value.options && typeof value.options === "object" ? record(value.options) : {};
+          value.options = { ...options, codemode: false };
+        });
+      }
+      const add = (
+        name: string,
+        description: string,
+        fields: readonly string[],
+        execute: V2ToolDefinition["execute"],
+      ) =>
+        editor.add({
+          name,
+          description,
+          input: {
+            type: "object",
+            properties: Object.fromEntries(fields.map((field) => [field, { type: "string" }])),
+            required: [...fields],
+            additionalProperties: false,
+          },
+          options: { codemode: false },
+          execute,
+        });
+      const output = (value: unknown) => ({ content: JSON.stringify(value ?? null) });
+      add(
+        "harness_verify",
+        "Run the exact assigned managed validator gate",
+        ["command"],
+        async (args, child) =>
+          output(dispatch.verifyCommand(child.sessionID, String(args.command))),
+      );
+      add(
+        "harness_trace",
+        "Create an immutable role trace; filePath must be trace-root-relative orchestrations/<orchestrationId>/roles/<role>/<artifact-id>.md, without a .memory prefix or absolute workspace path",
+        ["filePath", "content"],
+        async (args, child) =>
+          output(dispatch.writeTrace(child.sessionID, String(args.filePath), String(args.content))),
+      );
+      add(
+        "harness_source_edit",
+        "Edit only an exact assigned source file",
+        ["filePath", "expectedContent", "content"],
+        async (args, child) =>
+          output(
+            dispatch.editSource(
+              child.sessionID,
+              String(args.filePath),
+              String(args.expectedContent),
+              String(args.content),
+            ),
+          ),
+      );
+      add(
+        "harness_source_replace",
+        "Replace one unique assigned source fragment",
+        ["filePath", "expectedContent", "content"],
+        async (args, child) =>
+          output(
+            dispatch.replaceSource(
+              child.sessionID,
+              String(args.filePath),
+              String(args.expectedContent),
+              String(args.content),
+            ),
+          ),
+      );
+      add(
+        "harness_recovery_status",
+        "Inspect the exact stopped managed run",
+        [],
+        async (_args, child) => output(await dispatch.recoveryStatus(child.sessionID)),
+      );
+      add(
+        "harness_recovery_resolve",
+        "Resolve the exact stopped native child",
+        [],
+        async (_args, child) => output(await dispatch.resolveRecovery(child.sessionID)),
+      );
+      add(
+        "harness_recovery_release",
+        "Permit only a new reviewed workflow after native proof",
+        ["expectedTreeHash"],
+        async (args, child) =>
+          output(await dispatch.releaseForFresh(child.sessionID, String(args.expectedTreeHash))),
+      );
+    });
+    await context.tool.reload();
+    const activation = Promise.resolve()
+      .then(() => waitForNativeAgentSource(context, abort.signal))
+      .then(() => registerRoles(context, plan))
+      .then((verifyRoles) => verifyRoles())
+      .then(() => {
+        if (abort.signal.aborted) throw new Error("V2 plugin unloaded before activation");
+        activationMarker(plan);
+        ready = true;
+      })
+      .catch((error: unknown) => {
+        const message = error instanceof Error ? error.message : "";
+        const safe =
+          /^V2 (?:effective role|native agent|harness role|primary permissions|role permissions|routing|activation)/.test(
+            message,
+          )
+            ? message.slice(0, 160)
+            : "native role activation unavailable";
+        if (process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH)
+          process.stderr.write(`opencode-harness: V2 role activation failed: ${safe}\n`);
+        dispatch.interrupt("V2 effective permissions or activation marker unavailable");
+      });
+    return () => {
+      for (const timer of backgroundObservers) clearInterval(timer);
+      backgroundObservers.clear();
+      abort.abort();
+      void watch;
+      void activation;
+      dispatch.interrupt("V2 native plugin unloaded");
+    };
+  },
+};

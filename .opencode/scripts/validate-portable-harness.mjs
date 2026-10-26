@@ -74,6 +74,8 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/plugin-modules/dispatch-controller.js",
     ".opencode/plugin-modules/acceptance-proof.js",
     ".opencode/plugin-modules/context-budget.js",
+    ".opencode/plugin-modules/compaction-handoff.js",
+    ".opencode/plugin-modules/compaction-handoff.test.mjs",
     ".opencode/plugin-modules/managed-execution.js",
     ".opencode/plugin-modules/managed-dispatch.js",
     ".opencode/plugin-modules/task-contracts.test.mjs",
@@ -97,6 +99,7 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/bootstrap/memory/INDEX.md",
     ".opencode/bootstrap/memory/protocols/memory-management.md",
     ".opencode/bootstrap/memory/templates/orchestration-index.md",
+    ".opencode/bootstrap/memory/templates/compaction-handoff.md",
     ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
     ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
 ].sort();
@@ -109,6 +112,10 @@ const EXPECTED_MEMORY_SEEDS = [
     [
         ".opencode/bootstrap/memory/templates/orchestration-index.md",
         ".memory/templates/orchestration-index.md",
+    ],
+    [
+        ".opencode/bootstrap/memory/templates/compaction-handoff.md",
+        ".memory/templates/compaction-handoff.md",
     ],
     [
         ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
@@ -218,8 +225,8 @@ function validateManifest(manifest) {
         !Array.isArray(manifest.forbiddenReferences))
         fail("manifest inventories must be arrays");
     const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, ".opencode/"));
-    if (managed.length !== 58)
-        fail(`managed inventory must contain exactly 58 files; got ${managed.length}`);
+    if (managed.length !== 61)
+        fail(`managed inventory must contain exactly 61 files; got ${managed.length}`);
     if (new Set(managed).size !== managed.length ||
         !managed.includes(".opencode/portable.manifest.json"))
         fail("managed inventory must be unique and self-containing");
@@ -399,6 +406,7 @@ async function validateMemory(root, manifest) {
         ".memory/INDEX.md",
         ".memory/protocols/memory-management.md",
         ".memory/templates/orchestration-index.md",
+        ".memory/templates/compaction-handoff.md",
         ".memory/templates/role-trace-artifact.md",
         ".memory/templates/interactive-refinement-test-plan.md",
     ]);

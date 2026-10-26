@@ -9,19 +9,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
 import path from "node:path";
 import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.js";
 import { managedCompactionSafe, reportedInputCompactionDecision } from "./context-budget.js";
-const COMPACTION_HANDOFF = [
-    "Harness compaction handoff: preserve the user's current goal, observed results versus unknowns, blocker, permissions, and exact next action.",
-    "Retain known orchestrationId, scopeKey, delegationTaskId, role/mode, outcome, and validator gates; never infer child success from a running or missing result.",
-    "Keep pointers to the active orchestration INDEX.md, immutable normalized-spec.json, " +
-        "dispatch-started.json, role traces and validator evidence under the configured trace root; " +
-        "these are evidence, not a resumable Task checkpoint.",
-    "For managed delegation the parent reloads delegation-orchestrator/SKILL.md as sole protocol " +
-        "and the immutable memory-management protocol; leaves follow their exact role packets and " +
-        "must not load the parent skill.",
-    "After compaction reconcile actual workspace Git HEAD/index/status, files, marker, child " +
-        "state and gate evidence before dispatch. Interrupted or already-started uncertain work " +
-        "requires a fresh reviewed orchestration ID, never replay of a previous child thread.",
-].join(" ");
+import { COMPACTION_HANDOFF, formatCompactionHandoff, readCompactionHandoff, } from "./compaction-handoff.js";
 function isRecord(value) {
     return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -304,6 +292,17 @@ export const HarnessLifecyclePlugin = async (context = {}, dispatchFactory = cre
             output.context.push(COMPACTION_HANDOFF);
             if (typeof input.sessionID !== "string" || !input.sessionID)
                 return;
+            try {
+                const pointer = dispatch.compactionPointer?.(input.sessionID);
+                if (pointer) {
+                    const handoff = readCompactionHandoff(traceRoot, pointer.orchestrationId);
+                    if (handoff)
+                        output.context.push(formatCompactionHandoff(handoff));
+                }
+            }
+            catch {
+                logDiagnostic("Owner-maintained compaction handoff unavailable or unsafe.", {});
+            }
             try {
                 const hint = taskCompactionHint(dispatch.currentTaskView?.(input.sessionID));
                 if (hint)
