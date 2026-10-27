@@ -93,7 +93,7 @@ test.after(async () => rm(tempParent, { recursive: true, force: true }));
 test("fresh foreign repository installs and validates without source-owned roots or history", async () => {
     const repo = await makeRepo(tempParent, "fresh");
     const installed = await runNode([BOOTSTRAP, "--target", repo]);
-    assert.match(installed.stdout, /created\/updated=61, memory-created=6, unchanged=0, collisions=0/);
+    assert.match(installed.stdout, /created\/updated=65, memory-created=6, unchanged=0, collisions=0/);
     assert.match(installed.stdout, process.platform === "darwin"
         ? /write-safety=darwin-native-race-detecting/
         : /write-safety=linux-descriptor-relative-race-detecting:\/proc\/self\/fd/);
@@ -123,10 +123,10 @@ test("fresh foreign repository installs and validates without source-owned roots
 test("bootstrap is idempotent and dry-run performs no writes", async () => {
     const repo = path.join(tempParent, "fresh");
     const second = await runNode([BOOTSTRAP, "--target", repo]);
-    assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=67, collisions=0/);
+    assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=71, collisions=0/);
     const dryRepo = await makeRepo(tempParent, "dry-run");
     const dry = await runNode([BOOTSTRAP, "--target", dryRepo, "--dry-run"]);
-    assert.match(dry.stdout, /dry-run complete: created\/updated=61, memory-created=6/);
+    assert.match(dry.stdout, /dry-run complete: created\/updated=65, memory-created=6/);
     assert.deepEqual(await readdir(dryRepo), []);
 });
 test("installed validator accepts an explicit root from nested cwd", async () => {
@@ -427,7 +427,7 @@ test("installed validator independently rejects removed inventory entries", asyn
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await rm(path.join(repo, removed));
     const validator = path.join(repo, ".opencode/scripts/validate-portable-harness.mjs");
-    assert.match(await expectFailure([validator, "--root", repo]), /exact portable-core contract|exactly 61 files/);
+    assert.match(await expectFailure([validator, "--root", repo]), /exact portable-core contract|exactly 65 files/);
 });
 test("installed validator rejects missing task-thread policy assets and stale policy wording", async () => {
     const repo = await makeRepo(tempParent, "thread-policy-corruption");

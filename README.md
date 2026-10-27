@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.14
+# OpenCode Harness Runtime 0.1.15
 
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
@@ -6,10 +6,10 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.14` requires Linux, Node.js 24, Git, and OpenCode. There is
+Package version `0.1.15` requires Linux, Node.js 24, Git, and OpenCode. There is
 no OpenCode version allowlist. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
-invoking retained version `0.1.13`.
+invoking retained version `0.1.14`.
 
 ## Prepare and run
 
@@ -113,6 +113,7 @@ the launcher's new flag or edit external infrastructure to add it.
 
 `run` now infers the canonical Git root from the current directory. In this
 source checkout it selects the verified source plugin profile automatically;
+in a validated portable installation it selects that project's V2 plugin;
 in an ordinary consumer repository it selects the no-copy external runtime.
 On V2, `--native-session-db` binds the same owner-only native OpenCode database
 in either profile, preserving provider authentication and native session history.
@@ -134,8 +135,9 @@ files during package installation. The operator's shell function is the
 one-time command integration; no repository-specific mode flag or bootstrap
 is needed for a normal Git worktree. The selected native binary and database
 must pass their existing ownership, mode, path and V2 checks. A project-owned
-portable harness or colliding plugin/config surface still requires explicit
-reconciliation instead of silently loading two guards. The guarded V2 mapping
+portable harness must pass its installed validator and V2 activation probe;
+unrelated plugin/config collisions still require explicit reconciliation.
+The guarded V2 mapping
 supports the TUI, `--continue`, `--session`, `--prompt`, `run`, `models`, and
 read-only `session list`; server selection and `--auto` cannot bypass the guard.
 
@@ -189,7 +191,7 @@ To inspect a local package without publishing it:
 npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
 npm pack --pack-destination /OWNER/ONLY/PACKS
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.14.tgz \
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.15.tgz \
   -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
@@ -617,6 +619,15 @@ Offline evaluation: `node .opencode/scripts/evaluate-controller.mts`. The determ
 ### Portable consumer installation and upgrade
 
 Prefer the no-copy `run --workspace` path above unless the consumer deliberately needs a checked-in portable projection. For that profile, run `node .opencode/scripts/bootstrap-portable-harness.mjs --target /ABSOLUTE/CONSUMER` from this checkout, then run the installed `.opencode/scripts/validate-portable-harness.mjs --root /ABSOLUTE/CONSUMER`. Repeating bootstrap is idempotent. To upgrade, inspect `--dry-run`, review managed-file collisions, then explicitly use `--overwrite-managed`. This replaces managed assets; it is not a merge of edits to those assets. Consumer configuration, private routing overrides and existing memory seeds are preserved. No maintainer design document, source validator or orchestration history is required in the consumer.
+
+On Linux V2, the same guarded `run` command detects an installed portable
+manifest, validates the exact installed inventory, checks the project plugin
+autoload entry and configuration, then proves `opencode-harness.v2` active on
+the native loopback server before attaching the TUI. The portable profile
+includes the V2 plugin dependency closure. Existing project memory seeds may
+contain project guidance; the immutable installed bootstrap protocol remains
+the delegation authority. The interactive-refinement skill is optional and
+project-owned, so installation preserves a consumer's customized copy.
 
 Existing trace seed files are user-owned after first creation. Upgrades, repeat
 launches and rollbacks preserve them and report differing bundled templates;

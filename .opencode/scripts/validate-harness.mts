@@ -676,10 +676,10 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     );
   const packageManifest = json("package.json");
   if (
-    packageManifest.version !== "0.1.14" ||
+    packageManifest.version !== "0.1.15" ||
     runtimeManifest.packageVersion !== packageManifest.version
   )
-    fail("Package and runtime manifest versions must both equal 0.1.14");
+    fail("Package and runtime manifest versions must both equal 0.1.15");
   if (runtimeManifest.compatibility?.opencode !== undefined)
     fail("Runtime manifest must not impose an OpenCode version gate");
   if (
@@ -700,8 +700,8 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
       fail(`Package files must exclude source-only payload: ${pathname}`);
   }
   const launcher = read("bin/opencode-harness.mjs");
-  if (!/value\.packageVersion\s*!==\s*["']0\.1\.14["']/.test(launcher))
-    fail("Runtime launcher must reject package versions other than 0.1.14");
+  if (!/value\.packageVersion\s*!==\s*["']0\.1\.15["']/.test(launcher))
+    fail("Runtime launcher must reject package versions other than 0.1.15");
   for (const snippet of [
     "diagnosticVersion",
     "opencode-${encodeURIComponent(opencodeVersion)}",
@@ -740,19 +740,19 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   }
   const design = read("opencode-harness.design.md");
   for (const snippet of [
-    "opencode-harness-runtime` 0.1.14",
-    "/0.1.14/opencode-<reported-version>/runtime",
-    "0.1.13",
+    "opencode-harness-runtime` 0.1.15",
+    "/0.1.15/opencode-<reported-version>/runtime",
+    "0.1.14",
     "validate-inputs",
   ]) {
     if (!design.includes(snippet)) fail(`Runtime release documentation is missing: ${snippet}`);
   }
   const readme = read("README.md");
   for (const snippet of [
-    "OpenCode Harness Runtime 0.1.14",
-    "opencode-harness-runtime-0.1.14.tgz",
-    "Package version `0.1.14`",
-    "retained version `0.1.13`",
+    "OpenCode Harness Runtime 0.1.15",
+    "opencode-harness-runtime-0.1.15.tgz",
+    "Package version `0.1.15`",
+    "retained version `0.1.14`",
     "no OpenCode version allowlist",
     "opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
   ]) {
@@ -850,7 +850,7 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
   if (!report) fail("npm pack dry-run must return one package report");
   if (
     report.name !== "opencode-harness-runtime" ||
-    report.version !== "0.1.14" ||
+    report.version !== "0.1.15" ||
     !Array.isArray(report.files)
   )
     fail("npm pack report identity is invalid");
@@ -1102,8 +1102,8 @@ function assertMemorySeeds() {
   }
   const portableManifest = json(".opencode/portable.manifest.json");
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 61 || mappings.length !== 6)
-    fail("Portable manifest must contain exactly 61 managed files plus six memory seeds");
+  if (portableManifest.managedFiles?.length !== 65 || mappings.length !== 6)
+    fail("Portable manifest must contain exactly 65 managed files plus six memory seeds");
   const expectedTargets = [
     ".memory/INDEX.md",
     ".memory/protocols/memory-management.md",

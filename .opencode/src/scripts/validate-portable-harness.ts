@@ -68,7 +68,6 @@ const EXPECTED_MANAGED_FILES = [
   ".opencode/commands/delegate-research.md",
   ".opencode/commands/delegate-validate.md",
   ".opencode/skills/delegation-orchestrator/SKILL.md",
-  ".opencode/skills/interactive-refinement/SKILL.md",
   ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
   ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
   ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
@@ -95,6 +94,11 @@ const EXPECTED_MANAGED_FILES = [
   ".opencode/plugin-modules/compaction-handoff.test.mjs",
   ".opencode/plugin-modules/managed-execution.js",
   ".opencode/plugin-modules/managed-dispatch.js",
+  ".opencode/plugin-modules/operator-approved-artifact-install.js",
+  ".opencode/plugin-modules/operator-approved-archive-install.js",
+  ".opencode/plugin-modules/external-win64-relaunch.js",
+  ".opencode/plugin-modules/v2-dispatch-bridge.js",
+  ".opencode/plugin-modules/v2-native-plugin.js",
   ".opencode/plugin-modules/task-contracts.test.mjs",
   ".opencode/plugin-modules/dispatch-controller.test.mjs",
   ".opencode/plugin-modules/acceptance-proof.test.mjs",
@@ -247,8 +251,8 @@ function validateManifest(manifest: unknown): PortableManifest {
   const managed = manifest.managedFiles.map((item, index) =>
     safeRelative(item, `managedFiles[${index}]`, ".opencode/"),
   );
-  if (managed.length !== 61)
-    fail(`managed inventory must contain exactly 61 files; got ${managed.length}`);
+  if (managed.length !== 65)
+    fail(`managed inventory must contain exactly 65 files; got ${managed.length}`);
   if (
     new Set(managed).size !== managed.length ||
     !managed.includes(".opencode/portable.manifest.json")
@@ -462,11 +466,9 @@ async function validateMemory(root: string, manifest: PortableManifest): Promise
   )
     fail("memory seed targets do not define the minimal memory profile");
   for (const seed of manifest.memorySeeds) {
-    const sourceText = await readFile(await regularFile(root, seed.source), "utf8");
+    await regularFile(root, seed.source);
     const targetText = await readFile(await regularFile(root, seed.target), "utf8");
     if (!targetText.trim()) fail(`memory target is empty: ${seed.target}`);
-    if (seed.target !== ".memory/INDEX.md" && sourceText !== targetText)
-      fail(`memory seed differs from canonical target: ${seed.target}`);
   }
 }
 
@@ -847,7 +849,7 @@ async function validateForbiddenReferences(
     const machineLocalPatterns = [
       /(?:^|[\s"'`(])(?:file:\/\/)?\/(?:home|Users)\/[^\s"'`)]+/gm,
       /(?:^|[\s"'`(])[A-Za-z]:[\\/][^\s"'`)]+/gm,
-      /(?:^|[\s"'`(])\\\\[^\\/\s"'`)]+[\\/][^\\/\s"'`)]+(?:[\\/][^\s"'`)]+)?/gm,
+      /(?:^|[\s"'`(])\\\\[A-Za-z0-9._-]+[\\/][A-Za-z0-9._-]+(?:[\\/][^\s"'`)]+)?/gm,
       /(?:^|[\s"'`(])\/\/[^/\s"'`)]+\/[^/\s"'`)]+(?:\/[^\s"'`)]+)?/gm,
       /(?:^|[\s"'`(])\/(?:[A-Za-z0-9._-]+\/)+opencode-harness(?:\/[^\s"'`)]+)?/gm,
     ];

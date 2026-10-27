@@ -435,7 +435,7 @@ function manifest(): RuntimeManifest {
     Object.keys(value).sort().join(",") !== expected.sort().join(",") ||
     value.schemaVersion !== "1.0.0" ||
     value.profile !== "external-runtime" ||
-    value.packageVersion !== "0.1.14" ||
+    value.packageVersion !== "0.1.15" ||
     !Array.isArray(value.files) ||
     !Array.isArray(value.generatedEntries)
   )
@@ -3109,6 +3109,183 @@ function guardedV2ClientArguments(forward: string[], url: string): string[] {
   return [...forward, "--server", url];
 }
 
+function portableProfilePreflight(workspace: string): string {
+  const manifestPath = path.join(workspace, ".opencode/portable.manifest.json");
+  const portable = readJson(manifestPath, "installed portable manifest");
+  if (
+    !isJsonObject(portable) ||
+    portable.profile !== "portable-core" ||
+    !Array.isArray(portable.managedFiles)
+  )
+    fail("installed portable profile has no valid manifest");
+  const managed = portable.managedFiles;
+  if (
+    !managed.includes(".opencode/plugins/index.js") ||
+    !managed.includes(".opencode/plugin-modules/v2-native-plugin.js")
+  )
+    fail("installed portable profile lacks the V2 guard");
+  const extras: string[] = [];
+  for (const relative of managed) {
+    if (typeof relative !== "string") fail("installed portable manifest path is invalid");
+    assertSafeRelative(relative, "installed portable file");
+    readStableFile(path.join(workspace, relative), `installed portable ${relative}`);
+    extras.push(relative);
+  }
+  const plugins = ["plugins", "plugin"].flatMap((dir) =>
+    recursivePluginFiles(path.join(workspace, ".opencode", dir)),
+  );
+  if (plugins.length !== 1 || plugins[0] !== path.join(workspace, ".opencode/plugins/index.js"))
+    fail("installed portable profile requires one harness plugin autoload entry");
+  for (const relative of [
+    "opencode.json",
+    "opencode.jsonc",
+    ".opencode/opencode.json",
+    ".opencode/opencode.jsonc",
+  ]) {
+    const filename = path.join(workspace, relative);
+    if (!fs.existsSync(filename)) continue;
+    const cfg = readProjectConfig(filename, `installed portable ${relative}`);
+    if (!isJsonObject(cfg)) fail("installed portable config is invalid");
+    if (
+      isJsonObject(cfg.skills) &&
+      (Object.hasOwn(cfg.skills, "paths") || Object.hasOwn(cfg.skills, "urls"))
+    )
+      fail("installed portable custom skill paths/URLs are unsupported");
+    for (const field of ["plugin", "plugins"])
+      if (Object.hasOwn(cfg, field) && (!Array.isArray(cfg[field]) || cfg[field].length))
+        fail("installed portable profile permits only its autoloaded harness plugin");
+    if (cfg.instructions !== undefined) {
+      if (!Array.isArray(cfg.instructions))
+        fail("installed portable instructions must be an array");
+      for (const instruction of cfg.instructions) {
+        if (typeof instruction !== "string" || /[*?]/.test(instruction))
+          fail("installed portable instructions require explicit local paths");
+        assertSafeRelative(instruction, "installed portable instruction");
+        readStableFile(path.join(workspace, instruction), "installed portable instruction");
+        extras.push(instruction);
+      }
+    }
+  }
+  return projectSecurityFingerprint(
+    workspace,
+    extras.map((relative) => path.join(workspace, relative)),
+  );
+}
+
+async function runPortableProfile(options: LauncherOptions, workspace: string): Promise<number> {
+  if (
+    options.providerConfig ||
+    options.catalog ||
+    options.profile ||
+    options.allowProjectPlugins ||
+    options.v2AuthDataHome
+  )
+    fail("installed portable profile does not accept external projections or plugin overrides");
+  assertNodeCompatibility(manifest());
+  const fingerprint = portableProfilePreflight(workspace);
+  const checked = spawnSync(
+    process.execPath,
+    [path.join(workspace, ".opencode/scripts/validate-portable-harness.mjs"), "--root", workspace],
+    {
+      cwd: workspace,
+      encoding: "utf8",
+      env: { ...process.env, OPENCODE_HARNESS_LOCAL_READINESS: undefined },
+      timeout: 120000,
+      maxBuffer: 1024 * 1024,
+    },
+  );
+  if (checked.error || checked.status !== 0)
+    fail("installed portable validation failed; run its validator separately for diagnostics");
+  const selected = resolveCompatibleExecutable(options.opencodeBin);
+  if (!nativeV2(selected.version))
+    fail("installed portable terminal profile requires V2 native OpenCode");
+  guardedV2ClientArguments(options.forward, "http://127.0.0.1:1");
+  if (portableProfilePreflight(workspace) !== fingerprint)
+    fail("installed portable profile changed during validation or version probe");
+  recheckExecutable(selected.executable, selected.identity, "installed portable validation");
+  const stateRoot = path.join(cacheRootFrom(options), "portable-tui", hash(Buffer.from(workspace)));
+  if (
+    stateRoot === workspace ||
+    stateRoot.startsWith(workspace + path.sep) ||
+    workspace.startsWith(stateRoot + path.sep)
+  )
+    fail("installed portable state must not overlap its workspace");
+  ensurePrivateDirectory(stateRoot);
+  const snapshot = createSnapshots(path.join(stateRoot, "unused-runtime-anchor"), []);
+  let resultStatus = 1;
+  let originalError: unknown = null;
+  try {
+    const runtimeRoot = path.join(workspace, ".opencode");
+    const traceRoot = chooseTraceRoot(
+      workspace,
+      options.traceRoot ?? path.join(stateRoot, "trace"),
+      runtimeRoot,
+    );
+    const nativeSessionDb = options.nativeSessionDb
+      ? verifiedNativeSessionDb(options.nativeSessionDb, workspace, runtimeRoot, traceRoot)
+      : undefined;
+    const marker = path.join(snapshot.directory, "trace-permission-probe.json");
+    snapshot.paths.probeMarker = marker;
+    const nonce = randomBytes(32).toString("hex");
+    const env = activationEnv(
+      process.env,
+      runtimeRoot,
+      workspace,
+      traceRoot,
+      snapshot,
+      true,
+      nativeSessionDb,
+    );
+    env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
+    env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
+    resultStatus = await probeV2Activation(
+      selected.executable,
+      workspace,
+      env,
+      marker,
+      expectedTracePermissionMarker(workspace, traceRoot, nonce),
+      snapshot.directory,
+      async (url, password) => {
+        recheckExecutable(
+          selected.executable,
+          selected.identity,
+          "installed portable guard readiness",
+        );
+        if (portableProfilePreflight(workspace) !== fingerprint)
+          fail("installed portable profile changed after V2 guard readiness");
+        const clientEnv: NodeJS.ProcessEnv = { ...env, OPENCODE_PASSWORD: password };
+        delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
+        delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
+        const client = spawnSync(
+          selected.executable,
+          guardedV2ClientArguments(options.forward, url),
+          {
+            cwd: workspace,
+            stdio: "inherit",
+            env: clientEnv,
+          },
+        );
+        if (client.error)
+          fail(`cannot start guarded installed portable client: ${client.error.message}`);
+        return client.status ?? 1;
+      },
+    );
+  } catch (error) {
+    if (errorMessage(error).includes("V2 activation termination unconfirmed")) throw error;
+    originalError = error;
+  }
+  cleanupSnapshot(
+    snapshot,
+    originalError
+      ? errorMessage(originalError)
+      : resultStatus
+        ? `OpenCode child exited with status ${resultStatus}`
+        : null,
+  );
+  if (originalError) throw originalError;
+  return resultStatus;
+}
+
 async function runSourceProfile(
   options: LauncherOptions,
   mode: "source-web" | "source-tui",
@@ -3270,6 +3447,8 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
   const workspace = workspaceFromRunOption(options.workspace);
   if (command === "run" && workspace === PACKAGE_ROOT)
     return runSourceProfile({ ...options, workspace }, "source-tui");
+  if (command === "run" && fs.existsSync(path.join(workspace, ".opencode/portable.manifest.json")))
+    return runPortableProfile(options, workspace);
   process.stderr.write(
     options.nativeSessionDb
       ? "opencode-harness: native session database selected; managed workflows remain ephemeral and cannot resume after interruption.\n"
