@@ -420,11 +420,11 @@ test("prepare accepts arbitrary releases and separates diagnostic-version caches
   const maximum = fake("version-maximum", "1.18.25");
   const accepted = run(["prepare", "--cache-root", cache], { OPENCODE_BIN: maximum.executable });
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout.trim(), /\/0\.1\.12\/opencode-1\.18\.25\/runtime$/);
+  assert.match(accepted.stdout.trim(), /\/0\.1\.13\/opencode-1\.18\.25\/runtime$/);
   const marker = JSON.parse(
     fs.readFileSync(path.join(accepted.stdout.trim(), ".harness-runtime.json"), "utf8"),
   );
-  assert.deepEqual(marker, { packageVersion: "0.1.12", opencodeVersion: "1.18.25" });
+  assert.deepEqual(marker, { packageVersion: "0.1.13", opencodeVersion: "1.18.25" });
 
   for (const version of [
     "1.18.17",
@@ -501,7 +501,7 @@ test("prepare refuses managed drift and symlink collisions without repairing the
   assert.notEqual(drift.status, 0);
   assert.match(drift.stderr, /managed runtime drift/);
   const collisionCache = path.join(temp, "symlink-cache");
-  const runtime = path.join(collisionCache, "0.1.12/opencode-1.18.18/runtime");
+  const runtime = path.join(collisionCache, "0.1.13/opencode-1.18.18/runtime");
   fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
   fs.symlinkSync(temp, runtime);
   const collision = run(["prepare", "--cache-root", collisionCache]);
@@ -550,7 +550,7 @@ test("capabilities is deterministic, closed, offline, and no-write", () => {
   assert.equal(first.stdout, second.stdout);
   assert.equal(first.stderr, "");
   assert.deepEqual(JSON.parse(first.stdout), {
-    packageVersion: "0.1.12",
+    packageVersion: "0.1.13",
     launchContractVersion: "1.0.0",
     routingProfileVersion: "2.0.0",
     supportedModes: ["cloud-only", "local-only", "mixed"],
@@ -589,7 +589,7 @@ test("validate-inputs accepts exactly the three supported combinations with dete
     ],
   ];
   for (const [args, inputs] of cases) {
-    const expected = `${JSON.stringify({ schemaVersion: "1.0.0", valid: true, packageVersion: "0.1.12", inputs })}\n`;
+    const expected = `${JSON.stringify({ schemaVersion: "1.0.0", valid: true, packageVersion: "0.1.13", inputs })}\n`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = run(["validate-inputs", ...args], {}, "/");
       assert.equal(result.status, 0, result.stderr);
@@ -1010,8 +1010,10 @@ test("recursive runtime inventory rejects undeclared leaves, symlinked intermedi
     ],
     [
       "generated-mode",
-      (runtime) =>
-        fs.writeFileSync(path.join(runtime, ".gitignore"), "node_modules\n", { mode: 0o644 }),
+      (runtime) => {
+        fs.writeFileSync(path.join(runtime, ".gitignore"), "node_modules\n", { mode: 0o644 });
+        fs.chmodSync(path.join(runtime, ".gitignore"), 0o644);
+      },
       /expected 600/,
     ],
     [
@@ -1315,6 +1317,7 @@ test("trace roots seed once, preserve edits on repeat, and reject unsafe modes",
   assert.equal(fs.readFileSync(path.join(trace, "INDEX.md"), "utf8"), "collision\n");
   const unsafe = path.join(temp, "unsafe-trace");
   fs.mkdirSync(unsafe, { mode: 0o755 });
+  fs.chmodSync(unsafe, 0o755);
   assert.match(
     run(
       [
@@ -1828,6 +1831,38 @@ test("ambient database state is rejected without changing parent database or aut
   assert.equal(fs.existsSync(opencode.capture), false);
 });
 
+test("explicit V2 native session database is validated without modifying it during failed activation", () => {
+  const workspace = repo("native-session-db-repo");
+  const directory = path.join(temp, "native-session-db-home", "opencode");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const database = path.join(directory, "opencode.db");
+  fs.writeFileSync(database, "native-db-canary\n", { mode: 0o600 });
+  const cache = path.join(temp, "native-session-db-cache");
+  const args = [
+    "run",
+    "--workspace",
+    workspace,
+    "--cache-root",
+    cache,
+    "--native-session-db",
+    database,
+  ];
+  const v1 = fake("native-session-db-v1");
+  const deniedV1 = run(args, { OPENCODE_BIN: v1.executable });
+  assert.notEqual(deniedV1.status, 0);
+  assert.match(deniedV1.stderr, /requires a verified V2 native CLI contract/);
+  const v2 = fake("native-session-db-v2", "opencode v2.1.4");
+  fs.chmodSync(database, 0o644);
+  const deniedMode = run(args, { OPENCODE_BIN: v2.executable });
+  assert.notEqual(deniedMode.status, 0);
+  assert.match(deniedMode.stderr, /expected 600/);
+  fs.chmodSync(database, 0o600);
+  const attempted = run(args, { OPENCODE_BIN: v2.executable });
+  assert.notEqual(attempted.status, 0);
+  assert.match(attempted.stderr, /V2 activation server did not report a bounded live endpoint/);
+  assert.equal(fs.readFileSync(database, "utf8"), "native-db-canary\n");
+});
+
 test("database rejection quarantines and removes unexpected files, directories, and symlinks without touching external targets", () => {
   const workspace = repo("database-cleanup-repo");
   const target = path.join(temp, "database-symlink-target");
@@ -2162,7 +2197,7 @@ test("snapshot construction failure removes every partial launch directory", () 
     },
   );
   assert.match(result.stderr, /injected snapshot construction failure/);
-  const launches = path.join(cache, "0.1.12/opencode-1.18.18/launches");
+  const launches = path.join(cache, "0.1.13/opencode-1.18.18/launches");
   assert.deepEqual(
     fs.readdirSync(launches).filter((name) => name.startsWith("launch-")),
     [],

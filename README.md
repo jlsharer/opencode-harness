@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.12
+# OpenCode Harness Runtime 0.1.13
 
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
@@ -6,10 +6,10 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.12` requires Linux, Node.js 24, Git, and OpenCode. There is
+Package version `0.1.13` requires Linux, Node.js 24, Git, and OpenCode. There is
 no OpenCode version allowlist. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
-invoking retained version `0.1.11`.
+invoking retained version `0.1.12`.
 
 ## Prepare and run
 
@@ -39,6 +39,7 @@ opencode-harness doctor [--opencode-bin ABS]
 opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]
   [--provider-config FILE]
   [--routing-catalog FILE --routing-profile FILE]
+  [--native-session-db ABS]
   [--allow-project-plugins] [-- OPENCODE_ARGS...]
 ```
 
@@ -59,6 +60,16 @@ runtime/cache and makes no provider call. Its JSON reports the selected path,
 selection source, reported version, runtime capability verification, and ephemeral/non-resumable
 session policy. Prepare/run report selection to stderr while preserving stdout.
 It checks executable trust and reports version diagnostics; it does not prove plugin activation or provider health.
+
+By default, `run` uses a private database that is removed after exit. An owner
+who explicitly authorizes the harness to use an existing V2 OpenCode session
+database can pass `--native-session-db /absolute/path/to/opencode.db`. The
+launcher checks its canonical path, current-user ownership, mode 0600, single
+link and WAL/SHM companions, then binds the guarded server and client to that
+database. Existing sessions and authentication remain available. The harness
+does not delete this database. Managed workflow state remains in memory and
+cannot resume after interruption; a visible native session is not a managed
+Task checkpoint. Do not combine this option with `--v2-auth-data-home`.
 
 Offline native routing checks have passed with OpenCode 1.18.18 and 1.18.34.
 OpenCode v2.1.4 has a separate native plugin path and guarded loopback server
@@ -97,6 +108,42 @@ required. For an existing environment-preserving wrapper, use an invocation-loca
 override, for example `OPENCODE_BIN=/ABSOLUTE/TRUSTED/opencode opencode-local launch`.
 External wrappers may have their own argument grammar: do not assume they accept
 the launcher's new flag or edit external infrastructure to add it.
+
+### Optional `opencode` command in one project
+
+Installing or preparing this harness **does not** replace the global `opencode`
+command, change shell startup files, or alter PATH. Launching `opencode`
+directly in a consumer worktree therefore does not activate the harness. Use
+`opencode-harness run --workspace ABS` (or the `node bin/opencode-harness.mjs`
+form above) by default. If an operator explicitly wants the bare command in an
+interactive zsh session, they can add a scoped function to their own `~/.zshrc`
+after installing the runtime and selecting a trusted native executable:
+
+```zsh
+opencode() {
+  case "$PWD" in
+    /ABSOLUTE/GIT/WORKSPACE|/ABSOLUTE/GIT/WORKSPACE/*)
+      node /ABSOLUTE/HARNESS/bin/opencode-harness.mjs run \
+        --workspace /ABSOLUTE/GIT/WORKSPACE \
+        --opencode-bin /ABSOLUTE/TRUSTED/V2/opencode \
+        --cache-root /ABSOLUTE/OWNER-ONLY/CACHE \
+        --trace-root /ABSOLUTE/OWNER-ONLY/TRACES -- "$@"
+      ;;
+    *) command opencode "$@" ;;
+  esac
+}
+```
+
+Replace every example path with a canonical absolute path. Start a new zsh
+after editing; verify `opencode --version` from the consumer root through the
+guarded launcher, and check that outside the project it still invokes the
+global binary. On V2, unsupported forwarded commands fail closed: bare
+`opencode`, `opencode --version`, `opencode run ...` and `opencode models ...`
+have verified mappings. The wrapper is an **operator opt-in**, not a package
+install step: automatically replacing a user's shell command would affect
+unrelated projects and could disguise an unguarded launch. Updating the global
+OpenCode executable does not update a separately pinned `--opencode-bin`;
+recheck the latter with `doctor` and the guarded startup before changing pins.
 
 For repeatable credential-free V2 iteration, keep the exact v2.1.4 Linux x64
 native archive and extracted executable in an existing owner-only cache outside
@@ -148,7 +195,7 @@ To inspect a local package without publishing it:
 npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
 npm pack --pack-destination /OWNER/ONLY/PACKS
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.12.tgz \
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.13.tgz \
   -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
@@ -517,6 +564,8 @@ still requires a trusted executable and independently observed guard behavior.
 ## Refined managed execution
 
 Managed delegation requires a trace-root `orchestrations/<id>/normalized-spec.json`; arbitrary Task prompts are rejected. The runtime is ephemeral and cannot resume interrupted work. The adapter serializes tasks, enforces declared attempt budgets, and binds independent validator acceptance to the exact resulting tree and artifact hashes. Use fresh workflows for post-acceptance changes.
+
+The plugin retains an unlimited number of distinct workflow controllers per launch by default (completed and blocked workflows count too). To impose a finite cap, launch the guarded client with a positive safe integer such as `OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY=32`; invalid values fail closed, and the previously supported `unlimited` value remains accepted. Unlimited retention increases process memory and repeated marker/spec verification work as the session grows. This setting does not remove the one-active-worker rule, per-workflow budgets, immutable `dispatch-started.json` refusal, parent/child identity checks, or stopped-run recovery rules. A running client cannot pick up a plugin change or this setting: build/install the updated runtime separately, fully quit OpenCode, then start a fresh guarded session. Old started IDs/children never become reusable.
 
 When the managed guard stops, the bound orchestrator can call `harness_recovery_status` for a bounded diagnosis and current workspace proof. For uncertain termination of an acknowledged background child, `harness_recovery_resolve` retries native abort and verifies the child is idle under the exact parent; status can then be retried. A pending native launch must yield its correlated callback before termination can be proven; an idle session alone does not settle it. If native termination, the original marker/spec and in-scope effects are verified, review the reported effects and call `harness_recovery_release` with the exact reviewed tree hash. Release permits only a NEW orchestration ID with fresh tasks and independent revalidation in the same OpenCode process; no previous child, approval or gate resumes. Missing launch/idle/abort identity, unsafe effects or a changing tree leave the guard closed until proof is available; if native proof never arrives, reconcile effects and restart OpenCode. A completed old child's late error/deletion event does not stop an unrelated current worker.
 

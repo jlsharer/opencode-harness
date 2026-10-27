@@ -130,6 +130,7 @@ interface LauncherOptions {
   catalog?: string;
   profile?: string;
   v2AuthDataHome?: string;
+  nativeSessionDb?: string;
 }
 
 interface ExecutableIdentity {
@@ -434,7 +435,7 @@ function manifest(): RuntimeManifest {
     Object.keys(value).sort().join(",") !== expected.sort().join(",") ||
     value.schemaVersion !== "1.0.0" ||
     value.profile !== "external-runtime" ||
-    value.packageVersion !== "0.1.12" ||
+    value.packageVersion !== "0.1.13" ||
     !Array.isArray(value.files) ||
     !Array.isArray(value.generatedEntries)
   )
@@ -2126,11 +2127,12 @@ function activationEnv(
   traceRoot: string,
   snapshot: Snapshot,
   v2 = false,
+  nativeSessionDb?: string,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
     OPENCODE_CONFIG_DIR: runtimeRoot,
-    OPENCODE_DB: snapshot.database,
+    OPENCODE_DB: nativeSessionDb ?? snapshot.database,
     OPENCODE_HARNESS_RUNTIME_ROOT: runtimeRoot,
     OPENCODE_HARNESS_WORKSPACE_ROOT: workspace,
     OPENCODE_HARNESS_TRACE_ROOT: traceRoot,
@@ -2147,6 +2149,35 @@ function activationEnv(
     env.PWD = workspace;
   }
   return env;
+}
+
+function verifiedNativeSessionDb(
+  filename: string,
+  workspace: string,
+  runtimeRoot: string,
+  traceRoot: string,
+): string {
+  assertCanonicalAbsolute(filename, "--native-session-db");
+  if (path.basename(filename) !== "opencode.db")
+    fail("--native-session-db must name an existing opencode.db");
+  for (const root of [workspace, runtimeRoot, traceRoot])
+    if (filename === root || filename.startsWith(`${root}${path.sep}`))
+      fail("--native-session-db must be outside workspace, runtime, and trace roots");
+  trustedDirectoryPath(path.dirname(filename), "native session database directory");
+  for (const suffix of ["", "-wal", "-shm"]) {
+    const candidate = `${filename}${suffix}`;
+    if (suffix) {
+      try {
+        fs.lstatSync(candidate);
+      } catch (error) {
+        if (errorCode(error) === "ENOENT") continue;
+        throw error;
+      }
+    }
+    const stat = lstatOwned(candidate, `native session database${suffix}`, "file", 0o600);
+    if (stat.nlink !== 1n) fail(`native session database${suffix} must have one link`);
+  }
+  return filename;
 }
 
 async function backupV2AuthSource(snapshot: Snapshot, dataHome: string) {
@@ -2765,10 +2796,12 @@ function parse(argv: string[]): ParsedArguments {
         | "profile"
         | "opencodeBin"
         | "v2AuthDataHome"
+        | "nativeSessionDb"
       >
     >([
       ["--opencode-bin", "opencodeBin"],
       ["--v2-auth-data-home", "v2AuthDataHome"],
+      ["--native-session-db", "nativeSessionDb"],
       ["--workspace", "workspace"],
       ["--trace-root", "traceRoot"],
       ["--cache-root", "cacheRoot"],
@@ -2788,6 +2821,10 @@ function parse(argv: string[]): ParsedArguments {
     fail("doctor accepts only --opencode-bin ABS");
   if (options.v2AuthDataHome && command !== "run")
     fail("--v2-auth-data-home is available only for an explicit V2 run");
+  if (options.nativeSessionDb && command !== "run")
+    fail("--native-session-db is available only for an explicit V2 run");
+  if (options.nativeSessionDb && options.v2AuthDataHome)
+    fail("--native-session-db cannot be combined with --v2-auth-data-home");
   if (command === "run" && options.forward.some((arg) => arg === "serve" || arg === "web"))
     fail("run cannot forward server command tokens serve/web; use authenticated loopback web mode");
   if (command === "source-web" || command === "source-tui") {
@@ -2834,6 +2871,7 @@ function usage(): string {
     "  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "  opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]",
     "    [--v2-auth-data-home ABS] (explicit owner-only V2 OpenAI credential source)",
+    "    [--native-session-db ABS] (explicit existing V2 native session database)",
     "    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "    [--allow-project-plugins] [-- OPENCODE_ARGS...]",
     "",
@@ -3150,7 +3188,9 @@ async function runSourceProfile(
 
 async function run(options: LauncherOptions, command: "run" | "web" = "run"): Promise<number> {
   process.stderr.write(
-    "opencode-harness: ephemeral execution; interrupted runs cannot resume; launch database is removed after exit.\n",
+    options.nativeSessionDb
+      ? "opencode-harness: native session database selected; managed workflows remain ephemeral and cannot resume after interruption.\n"
+      : "opencode-harness: ephemeral execution; interrupted runs cannot resume; launch database is removed after exit.\n",
   );
   for (const name of RESERVED_ENV)
     if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
@@ -3183,8 +3223,13 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
   }
   if (options.v2AuthDataHome && !v2)
     fail("--v2-auth-data-home requires a verified V2 native CLI contract");
+  if (options.nativeSessionDb && !v2)
+    fail("--native-session-db requires a verified V2 native CLI contract");
   const runtimeRoot = prepareRuntime(options, version);
   const traceRoot = chooseTraceRoot(workspace, options.traceRoot, runtimeRoot);
+  const nativeSessionDb = options.nativeSessionDb
+    ? verifiedNativeSessionDb(options.nativeSessionDb, workspace, runtimeRoot, traceRoot)
+    : undefined;
   const rootPairs: readonly (readonly [string, string, string])[] = [
     [workspace, runtimeRoot, "workspace/runtime"],
     [runtimeRoot, traceRoot, "runtime/trace"],
@@ -3225,7 +3270,15 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
       const marker = path.join(snapshots.directory, "trace-permission-probe.json");
       snapshots.paths.probeMarker = marker;
       const nonce = randomBytes(32).toString("hex");
-      const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshots, true);
+      const env = activationEnv(
+        process.env,
+        runtimeRoot,
+        workspace,
+        traceRoot,
+        snapshots,
+        true,
+        nativeSessionDb,
+      );
       if (command === "web") delete env.OPENCODE_SERVER_PASSWORD;
       env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
       env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
