@@ -979,7 +979,12 @@ export function createManagedDispatch(options) {
     function beforeTool(input, args) {
         if (input.tool === "harness_external_artifact_download" ||
             input.tool === "harness_external_archive_install" ||
-            input.tool === "harness_external_recovery_build") {
+            input.tool === "harness_external_recovery_build" ||
+            input.tool === "harness_external_win64_relaunch" ||
+            input.tool === "harness_win64_build_plan" ||
+            input.tool === "harness_external_win64_build" ||
+            input.tool === "harness_win64_cases_plan" ||
+            input.tool === "harness_external_win64_cases") {
             if (typeof input.sessionID !== "string" || knownChildren.has(input.sessionID))
                 throw new Error("external artifact action requires a primary session");
             return args;

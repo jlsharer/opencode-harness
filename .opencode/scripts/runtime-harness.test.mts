@@ -420,11 +420,11 @@ test("prepare accepts arbitrary releases and separates diagnostic-version caches
   const maximum = fake("version-maximum", "1.18.25");
   const accepted = run(["prepare", "--cache-root", cache], { OPENCODE_BIN: maximum.executable });
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout.trim(), /\/0\.1\.15\/opencode-1\.18\.25\/runtime$/);
+  assert.match(accepted.stdout.trim(), /\/0\.1\.16\/opencode-1\.18\.25\/runtime$/);
   const marker = JSON.parse(
     fs.readFileSync(path.join(accepted.stdout.trim(), ".harness-runtime.json"), "utf8"),
   );
-  assert.deepEqual(marker, { packageVersion: "0.1.15", opencodeVersion: "1.18.25" });
+  assert.deepEqual(marker, { packageVersion: "0.1.16", opencodeVersion: "1.18.25" });
 
   for (const version of [
     "1.18.17",
@@ -501,7 +501,7 @@ test("prepare refuses managed drift and symlink collisions without repairing the
   assert.notEqual(drift.status, 0);
   assert.match(drift.stderr, /managed runtime drift/);
   const collisionCache = path.join(temp, "symlink-cache");
-  const runtime = path.join(collisionCache, "0.1.15/opencode-1.18.18/runtime");
+  const runtime = path.join(collisionCache, "0.1.16/opencode-1.18.18/runtime");
   fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
   fs.symlinkSync(temp, runtime);
   const collision = run(["prepare", "--cache-root", collisionCache]);
@@ -550,7 +550,7 @@ test("capabilities is deterministic, closed, offline, and no-write", () => {
   assert.equal(first.stdout, second.stdout);
   assert.equal(first.stderr, "");
   assert.deepEqual(JSON.parse(first.stdout), {
-    packageVersion: "0.1.15",
+    packageVersion: "0.1.16",
     launchContractVersion: "1.0.0",
     routingProfileVersion: "2.0.0",
     supportedModes: ["cloud-only", "local-only", "mixed"],
@@ -589,7 +589,7 @@ test("validate-inputs accepts exactly the three supported combinations with dete
     ],
   ];
   for (const [args, inputs] of cases) {
-    const expected = `${JSON.stringify({ schemaVersion: "1.0.0", valid: true, packageVersion: "0.1.15", inputs })}\n`;
+    const expected = `${JSON.stringify({ schemaVersion: "1.0.0", valid: true, packageVersion: "0.1.16", inputs })}\n`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = run(["validate-inputs", ...args], {}, "/");
       assert.equal(result.status, 0, result.stderr);
@@ -2197,7 +2197,7 @@ test("snapshot construction failure removes every partial launch directory", () 
     },
   );
   assert.match(result.stderr, /injected snapshot construction failure/);
-  const launches = path.join(cache, "0.1.15/opencode-1.18.18/launches");
+  const launches = path.join(cache, "0.1.16/opencode-1.18.18/launches");
   assert.deepEqual(
     fs.readdirSync(launches).filter((name) => name.startsWith("launch-")),
     [],

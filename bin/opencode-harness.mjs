@@ -290,7 +290,7 @@ function manifest() {
     if (Object.keys(value).sort().join(",") !== expected.sort().join(",") ||
         value.schemaVersion !== "1.0.0" ||
         value.profile !== "external-runtime" ||
-        value.packageVersion !== "0.1.15" ||
+        value.packageVersion !== "0.1.16" ||
         !Array.isArray(value.files) ||
         !Array.isArray(value.generatedEntries))
         fail("unsupported runtime manifest");

@@ -29,6 +29,12 @@ import { appendV2CompactionContext } from "./compaction-handoff.ts";
 import {
   parseWin64RelaunchPolicy,
   relaunchExistingWin64Snapshot,
+  planWin64Build,
+  buildWin64Snapshot,
+  type Win64BuildRequest,
+  planWin64Cases,
+  runWin64Cases,
+  type Win64CasesRequest,
 } from "./external-win64-relaunch.ts";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.ts";
 import {
@@ -90,6 +96,8 @@ export function forceExactActionAsk(event: { action: string; effect: "allow" | "
       "harness.external-archive-install",
       "harness.external-recovery-build",
       "harness.external-recovery-shell",
+      "harness.external-win64-build",
+      "harness.external-win64-cases",
     ].includes(event.action)
   )
     event.effect = "ask";
@@ -1241,6 +1249,118 @@ export const V2NativePlugin = {
             );
           },
         );
+      add(
+        "harness_win64_build_plan",
+        "Read-only exact source, script and new Win64 snapshot destination plan; no build or managed gate",
+        ["snapshot"],
+        async (args, caller) => {
+          if (!ready || activationFailed) throw new Error("V2 harness guard is not active");
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          return output(planWin64Build(workspaceRoot, String(args.snapshot)));
+        },
+      );
+      add(
+        "harness_external_win64_build",
+        "Primary-only, exact owner-approved nonoverwriting Win64 Editor build from pinned source and script; no managed gate or case acceptance",
+        ["request"],
+        async (args, caller) => {
+          if (!ready || activationFailed || !caller.agent)
+            throw new Error("V2 harness guard or build caller unavailable");
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          const request = exactActionRequest(args.request, [
+            "snapshot",
+            "destination",
+            "scriptSha256",
+            "sourceSha256",
+            "scriptPolicy",
+            "permittedWrites",
+            "timeoutMs",
+            "maxOutputBytes",
+          ]) as unknown as Win64BuildRequest;
+          const planned = planWin64Build(workspaceRoot, request.snapshot);
+          for (const key of [
+            "destination",
+            "scriptSha256",
+            "sourceSha256",
+            "scriptPolicy",
+            "permittedWrites",
+          ] as const)
+            if (request[key] !== planned[key]) throw new Error(`Win64 build plan changed: ${key}`);
+          await context.permission.assert({
+            sessionID: caller.sessionID,
+            agent: caller.agent,
+            source: v2PermissionSource(caller),
+            action: "harness.external-win64-build",
+            resources: [
+              JSON.stringify({
+                ...request,
+                networkPolicy: "no-network-requested",
+                managedGate: false,
+              }),
+            ],
+          });
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          return output(buildWin64Snapshot(workspaceRoot, request));
+        },
+      );
+      add(
+        "harness_win64_cases_plan",
+        "Read-only exact existing Win64 snapshot and case-log plan; no test execution or managed gate",
+        ["snapshot"],
+        async (args, caller) => {
+          if (!ready || activationFailed) throw new Error("V2 harness guard is not active");
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          return output(planWin64Cases(workspaceRoot, String(args.snapshot)));
+        },
+      );
+      add(
+        "harness_external_win64_cases",
+        "Primary-only owner-approved nine native cases on an existing pinned snapshot; individual results required, never a managed gate",
+        ["request"],
+        async (args, caller) => {
+          if (!ready || activationFailed || !caller.agent)
+            throw new Error("V2 harness guard or cases caller unavailable");
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          const request = exactActionRequest(args.request, [
+            "snapshot",
+            "destination",
+            "scriptSha256",
+            "sourceSha256",
+            "manifestSha256",
+            "caseLog",
+            "scriptPolicy",
+            "permittedWrites",
+            "timeoutMs",
+            "maxOutputBytes",
+          ]) as unknown as Win64CasesRequest;
+          const planned = planWin64Cases(workspaceRoot, request.snapshot);
+          for (const key of [
+            "destination",
+            "scriptSha256",
+            "sourceSha256",
+            "manifestSha256",
+            "caseLog",
+            "scriptPolicy",
+            "permittedWrites",
+          ] as const)
+            if (request[key] !== planned[key]) throw new Error(`Win64 cases plan changed: ${key}`);
+          await context.permission.assert({
+            sessionID: caller.sessionID,
+            agent: caller.agent,
+            source: v2PermissionSource(caller),
+            action: "harness.external-win64-cases",
+            resources: [
+              JSON.stringify({
+                ...request,
+                networkPolicy: "no-network-requested",
+                managedGate: false,
+              }),
+            ],
+          });
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          return output(runWin64Cases(workspaceRoot, request));
+        },
+      );
       add(
         "harness_verify",
         "Run the exact assigned managed validator gate",

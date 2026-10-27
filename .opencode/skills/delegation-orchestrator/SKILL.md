@@ -57,6 +57,7 @@ Every leaf packet must name exactly one `taskMode`, one work-unit ID/scope key, 
 - A finding blocks only when command-backed evidence ties it to the stated goal, an acceptance gate, or changed behavior. Unsupported preferences and trace/index progress alone do not block.
 - Hooks and plugins are guardrails/telemetry, not acceptance evidence.
 - Acceptance requires concrete validator evidence for every declared acceptance gate, honest skipped-check rationale, and a parent synthesis of outputs, limitations, and residual risks.
+- A factual status or handoff correction after completed validation may cite the validator's immutable trace and observed command exit directly. It does not reopen that completed task or claim the corrected documentation tree was independently accepted. Use a fresh scoped task only if new substantive work or a new acceptance claim needs validation.
 
 ## Routing and Runtime Boundary
 
@@ -87,6 +88,8 @@ Give leaves the full structured JSON result shape and artifact-proof convention.
 
 Before freezing a specification, assign only reviewed read-only commands to managed acceptance gates: their inputs must be tracked or explicitly declared safe `validationInputs`, their dependencies must remain available after ignored-path masking, and all writes must fit private temporary storage. Do not assign full source/portable validators, `npm pack`, npm builds/tests, or other commands that need host caches or ignored dependency trees. The controller rejects known incompatible gate commands before the first dispatch; it cannot classify arbitrary scripts. Arrange required full source/runtime/package QA as a separately authorized external verification step with recorded exit codes and the exact tested tree; external output is never managed gate proof. A failed managed gate still blocks acceptance and requires a fresh reviewed workflow after exhausted remediation.
 
+
+For OpenCourt Win64 native checks, the primary may request read-only `harness_win64_build_plan` or `harness_win64_cases_plan`, then separately request exact approval for `harness_external_win64_build` or `harness_external_win64_cases`. The build creates one named nonoverwriting snapshot; the case action runs the fixed nine-case command only on a manifest-verified snapshot and reports every case separately. Both actions remain outside managed acceptance. A successful process exit without nine individual successes is a failed case result.
 
 ## Optional background execution
 
