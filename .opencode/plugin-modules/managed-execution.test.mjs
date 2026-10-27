@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
-import { enforceManagedTool } from "./managed-execution.js";
+import { enforceManagedTool, enforceRecoveryShell } from "./managed-execution.js";
 function fixture(run) {
     const root = mkdtempSync("/var/tmp/managed-execution-");
     try {
@@ -100,3 +100,15 @@ test("focused syntax check succeeds under the read-only managed shell", () => fi
     });
     assert.equal(execFileSync("/bin/sh", ["-c", String(guarded.command)], { encoding: "utf8" }), "");
 }));
+test("same-session recovery shell writes when its private root is under /tmp", () => {
+    const root = mkdtempSync("/tmp/managed-recovery-");
+    try {
+        const wrapped = enforceRecoveryShell({ command: "printf recovered > result.txt" }, root);
+        assert.equal(wrapped.workdir, root);
+        execFileSync("/bin/sh", ["-c", String(wrapped.command)], { stdio: "pipe" });
+        assert.equal(readFileSync(path.join(root, "result.txt"), "utf8"), "recovered");
+    }
+    finally {
+        rmSync(root, { recursive: true, force: true });
+    }
+});

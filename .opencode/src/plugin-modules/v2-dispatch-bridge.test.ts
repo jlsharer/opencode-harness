@@ -6,7 +6,62 @@ import {
   runningV2Subagent,
   v2JsonResult,
 } from "./v2-dispatch-bridge.ts";
-import { v2DispatchStatus } from "./v2-native-plugin.ts";
+import {
+  forceExactActionAsk,
+  v2DispatchStatus,
+  v2HarnessToolCodeMode,
+  v2PermissionSource,
+} from "./v2-native-plugin.ts";
+
+test("V2 exact actions force a fresh ask and bind the native tool call source", () => {
+  assert.deepEqual(
+    v2PermissionSource({
+      sessionID: "primary",
+      agent: "build",
+      messageID: "message",
+      id: "call",
+    }),
+    { type: "tool", messageID: "message", id: "call" },
+  );
+  assert.throws(() => v2PermissionSource({ sessionID: "primary", agent: "build" }));
+  for (const action of [
+    "harness.external-artifact-download",
+    "harness.external-archive-install",
+    "harness.external-recovery-build",
+    "harness.external-recovery-shell",
+  ]) {
+    const event = { action, effect: "allow" as "allow" | "deny" | "ask" };
+    forceExactActionAsk(event);
+    assert.equal(event.effect, "ask");
+    const denied = { action, effect: "deny" as "allow" | "deny" | "ask" };
+    forceExactActionAsk(denied);
+    assert.equal(denied.effect, "deny");
+  }
+  const unrelated = { action: "read", effect: "allow" as "allow" | "deny" | "ask" };
+  forceExactActionAsk(unrelated);
+  assert.equal(unrelated.effect, "allow");
+});
+
+test("only the read-only status alias enters Code Mode; direct status remains available", () => {
+  assert.equal(v2HarnessToolCodeMode("harness_dispatch_status_code"), true);
+  for (const name of [
+    "harness_dispatch_status",
+    "subagent",
+    "harness_verify",
+    "harness_trace",
+    "harness_source_edit",
+    "harness_source_replace",
+    "harness_recovery_status",
+    "harness_recovery_resolve",
+    "harness_recovery_release",
+    "harness_external_win64_relaunch",
+    "harness_external_artifact_download",
+    "harness_external_archive_install",
+    "harness_external_recovery_build",
+  ]) {
+    assert.equal(v2HarnessToolCodeMode(name), false, name);
+  }
+});
 
 test("V2 dispatch diagnostic reports readiness only with live four-role verification", async () => {
   const checked = async () => {};

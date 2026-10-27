@@ -21,12 +21,15 @@
     { "path": "node_modules", "kind": "directory", "mode": "0700", "recursive": true, "required": false }
   ],
   "files": [
+    {"source": ".opencode/plugin-modules/operator-approved-artifact-install.js", "destination": "plugin-modules/operator-approved-artifact-install.js"},
+    {"source": ".opencode/plugin-modules/operator-approved-archive-install.js", "destination": "plugin-modules/operator-approved-archive-install.js"},
     {"source": ".opencode/plugin-modules/task-contracts.js", "destination": "plugin-modules/task-contracts.js"},
     {"source": ".opencode/plugin-modules/dispatch-controller.js", "destination": "plugin-modules/dispatch-controller.js"},
     {"source": ".opencode/plugin-modules/acceptance-proof.js", "destination": "plugin-modules/acceptance-proof.js"},
     {"source": ".opencode/plugin-modules/context-budget.js", "destination": "plugin-modules/context-budget.js"},
     {"source": ".opencode/plugin-modules/compaction-handoff.js", "destination": "plugin-modules/compaction-handoff.js"},
     {"source": ".opencode/plugin-modules/managed-execution.js", "destination": "plugin-modules/managed-execution.js"},
+    {"source": ".opencode/plugin-modules/external-win64-relaunch.js", "destination": "plugin-modules/external-win64-relaunch.js"},
     {"source": ".opencode/plugin-modules/managed-dispatch.js", "destination": "plugin-modules/managed-dispatch.js"},
     {"source": ".opencode/plugin-modules/v2-dispatch-bridge.js", "destination": "plugin-modules/v2-dispatch-bridge.js"},
     {"source": ".opencode/plugin-modules/v2-native-plugin.js", "destination": "plugin-modules/v2-native-plugin.js"},

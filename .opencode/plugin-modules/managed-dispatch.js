@@ -1,12 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { withinScope, createDispatchController } from "./dispatch-controller.js";
 import { formatTaskResultWrapper, createTaskThreadPolicy } from "./task-thread-policy.js";
 import { validateTaskPacket } from "./task-contracts.js";
 import { captureWorkspace, ignoredWorkspacePaths, captureArtifacts, assertAllowedTransition, verifyAcceptance, } from "./acceptance-proof.js";
-import { enforceManagedTool } from "./managed-execution.js";
+import { enforceManagedTool, enforceRecoveryShell } from "./managed-execution.js";
 import { expandIndexedReferences, validateUsageTelemetry } from "./context-budget.js";
 function record(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -131,6 +132,7 @@ export function createManagedDispatch(options) {
     let reconcileAgain = false;
     const runs = new Map();
     const knownChildren = new Set();
+    const recoveryPrimaries = new Set();
     let active = null;
     let stopped = false;
     let recoveryOwner = null;
@@ -138,12 +140,78 @@ export function createManagedDispatch(options) {
     let recoveryReason = null;
     let recoveryBefore = null;
     let recoveryAllowedPaths = [];
-    let recoveryProofReady = false;
     let recoveryResolving = false;
     let recoveryFault = false;
     let terminationReconciled = false;
     let recoveries = 0;
+    let recoveryShellRoot = null;
     const report = options.telemetry ?? (() => { });
+    function contains(a, b) {
+        return a === b || b.startsWith(a + path.sep);
+    }
+    function privateRecoveryParent(value, allowOwnedHome = false) {
+        if (!path.isAbsolute(value) ||
+            value !== path.resolve(value) ||
+            fs.realpathSync(value) !== value)
+            return false;
+        let current = path.parse(value).root;
+        for (const part of value.slice(current.length).split(path.sep).filter(Boolean)) {
+            current = path.join(current, part);
+            if (fs.lstatSync(current).isSymbolicLink())
+                return false;
+        }
+        const stat = fs.lstatSync(value);
+        return (stat.isDirectory() &&
+            stat.uid === process.getuid?.() &&
+            ((stat.mode & 0o777) === 0o700 || (allowOwnedHome && (stat.mode & 0o022) === 0)));
+    }
+    function ensureRecoveryShellRoot(explicit) {
+        if (recoveryShellRoot) {
+            const stat = fs.lstatSync(recoveryShellRoot.path);
+            if (stat.isSymbolicLink() ||
+                !stat.isDirectory() ||
+                stat.dev !== recoveryShellRoot.dev ||
+                stat.ino !== recoveryShellRoot.ino ||
+                stat.uid !== process.getuid?.() ||
+                (stat.mode & 0o777) !== 0o700)
+                throw new Error("recovery shell root identity changed");
+            return recoveryShellRoot.path;
+        }
+        const candidates = explicit === undefined
+            ? [
+                { value: options.recoveryParent },
+                { value: process.env.XDG_STATE_HOME },
+                { value: path.join(options.recoveryHome ?? os.homedir(), ".local/state") },
+                { value: path.dirname(options.traceRoot) },
+                { value: options.recoveryHome ?? os.homedir(), ownedHome: true },
+            ]
+            : [{ value: explicit }];
+        for (const { value, ownedHome } of candidates) {
+            if (typeof value !== "string")
+                continue;
+            try {
+                if (!privateRecoveryParent(value, ownedHome))
+                    continue;
+                const base = path.join(value, "opencode-harness-recovery");
+                if ([options.workspaceRoot, options.traceRoot, options.runtimeRoot].some((root) => root && (contains(root, base) || contains(base, root))))
+                    continue;
+                fs.mkdirSync(base, { mode: 0o700 });
+            }
+            catch (error) {
+                if (error.code !== "EEXIST")
+                    continue;
+            }
+            const base = path.join(value, "opencode-harness-recovery");
+            if (!privateRecoveryParent(base))
+                continue;
+            const root = path.join(base, `stopped-${randomUUID()}`);
+            fs.mkdirSync(root, { mode: 0o700 });
+            const stat = fs.lstatSync(root);
+            recoveryShellRoot = { path: root, dev: stat.dev, ino: stat.ino };
+            return root;
+        }
+        throw new Error("recovery shell needs an existing current-user mode-0700 external parent via workdir; no unrestricted fallback");
+    }
     function snapshot(id, validationInputs = runs.get(id)?.controller.spec.validationInputs ?? []) {
         return captureWorkspace(options.workspaceRoot, {
             validationInputs,
@@ -161,7 +229,6 @@ export function createManagedDispatch(options) {
     function interrupt(reason, terminal) {
         if (stopped && active && !terminal)
             recoveryFault = true;
-        recoveryProofReady = false;
         if (!stopped) {
             recoveryOwner = active?.run.parent ?? terminal?.parent ?? null;
             recoveryId = active?.context.orchestrationId ?? terminal?.orchestrationId ?? null;
@@ -389,9 +456,48 @@ export function createManagedDispatch(options) {
         }
     }
     let dispatching = false;
-    function recoveryCaller(sessionID) {
+    function recoveryReader(sessionID) {
         const id = identifier(sessionID);
-        if (!stopped || !recoveryOwner || id !== recoveryOwner || knownChildren.has(id))
+        if (!stopped || knownChildren.has(id))
+            throw new Error("managed recovery status requires a primary session during a stopped run");
+        return id;
+    }
+    function authorizeRecoveryPrimary(sessionID, parentID) {
+        const id = recoveryReader(sessionID);
+        if (parentID !== undefined && parentID !== null)
+            throw new Error("recovery shell requires a native primary session identity");
+        recoveryPrimaries.add(id);
+    }
+    function isActiveParent(sessionID) {
+        return !stopped && typeof sessionID === "string" && active?.run.parent === sessionID;
+    }
+    function authorizeIsolatedPrimary(sessionID, parentID) {
+        const id = identifier(sessionID);
+        if (stopped)
+            recoveryReader(id);
+        else if (!options.allowActiveIsolatedShell || !isActiveParent(id) || knownChildren.has(id))
+            throw new Error("isolated shell requires the bound native primary session");
+        if (parentID !== undefined && parentID !== null)
+            throw new Error("isolated shell requires a native primary session identity");
+        recoveryPrimaries.add(id);
+    }
+    function isolatedPrimaryShellRoot(sessionID) {
+        const id = identifier(sessionID);
+        if (!recoveryPrimaries.has(id) || !(stopped || isActiveParent(id)))
+            throw new Error("isolated shell requires an authenticated bound primary session");
+        return ensureRecoveryShellRoot();
+    }
+    function recoveryActionRoot(sessionID) {
+        const id = recoveryReader(sessionID);
+        if (!recoveryPrimaries.has(id))
+            throw new Error("recovery action requires an authenticated native primary session");
+        return ensureRecoveryShellRoot();
+    }
+    function recoveryCaller(sessionID) {
+        if (!stopped)
+            throw new Error("managed recovery requires the bound stopped parent");
+        const id = recoveryReader(sessionID);
+        if (!recoveryOwner || id !== recoveryOwner)
             throw new Error("managed recovery requires the bound stopped parent");
         return id;
     }
@@ -416,7 +522,6 @@ export function createManagedDispatch(options) {
                 reason: "native launch or child identity has not been reconciled; await the native Task callback",
             };
         recoveryResolving = true;
-        recoveryProofReady = false;
         try {
             // A completed blocking Task needs only inspection. For an interrupted
             // background Task, a fresh abort acknowledgement is required even if an
@@ -463,13 +568,13 @@ export function createManagedDispatch(options) {
         }
     }
     async function recoveryStatus(sessionID) {
-        const parent = recoveryCaller(sessionID);
-        recoveryProofReady = false;
+        const reader = recoveryReader(sessionID);
         const blocked = (reason) => ({
             state: "blocked",
             orchestrationId: recoveryId,
             reason,
-            nextAction: "retain the old marker; await pending native callbacks or retry harness_recovery_resolve, then request status again",
+            recoveryShellRoot: recoveryShellRoot?.path ?? null,
+            nextAction: "retain the old marker; use the same-session recovery shell for isolated writes, while the bound parent awaits callbacks or retries resolve",
         });
         if (!recoveryId ||
             !recoveryReason ||
@@ -490,7 +595,7 @@ export function createManagedDispatch(options) {
                 return blocked("native worker launch or termination remains unverified");
             try {
                 const observed = await transport.inspect(task.childId);
-                if (!stopped || active !== task || observed.parent !== parent || !observed.idle)
+                if (!stopped || active !== task || observed.parent !== recoveryOwner || !observed.idle)
                     return blocked("native worker is not confirmed idle under the bound parent");
             }
             catch {
@@ -511,14 +616,16 @@ export function createManagedDispatch(options) {
                 .sort();
             if (changed.length > 32)
                 return blocked("workspace effects exceed review bound");
-            recoveryProofReady = true;
             return {
                 state: "ready",
                 orchestrationId: recoveryId,
                 treeHash: current.treeHash,
                 changedFiles: changed,
                 reason: recoveryReason,
-                nextAction: "review workspace effects, then request fresh-only release with this tree hash",
+                recoveryShellRoot: recoveryShellRoot?.path ?? null,
+                nextAction: reader === recoveryOwner
+                    ? "review workspace effects, then request fresh-only release with this tree hash"
+                    : "review workspace effects; only the bound parent may release this old run, while this primary session can use the isolated recovery shell for writes",
             };
         }
         catch {
@@ -545,8 +652,8 @@ export function createManagedDispatch(options) {
         recoveryId = null;
         recoveryReason = null;
         recoveryBefore = null;
+        recoveryShellRoot = null;
         recoveryAllowedPaths = [];
-        recoveryProofReady = false;
         recoveryFault = false;
         terminationReconciled = false;
         recoveries++;
@@ -870,8 +977,18 @@ export function createManagedDispatch(options) {
         }
     }
     function beforeTool(input, args) {
+        if (input.tool === "harness_external_artifact_download" ||
+            input.tool === "harness_external_archive_install" ||
+            input.tool === "harness_external_recovery_build") {
+            if (typeof input.sessionID !== "string" || knownChildren.has(input.sessionID))
+                throw new Error("external artifact action requires a primary session");
+            return args;
+        }
         if (["harness_recovery_status", "harness_recovery_resolve", "harness_recovery_release"].includes(String(input.tool))) {
-            recoveryCaller(input.sessionID);
+            if (input.tool === "harness_recovery_status")
+                recoveryReader(input.sessionID);
+            else
+                recoveryCaller(input.sessionID);
             if (input.tool !== "harness_recovery_release" && Object.keys(args).length)
                 throw new Error("managed recovery status and resolve have no arguments");
             if (input.tool === "harness_recovery_release" &&
@@ -880,17 +997,30 @@ export function createManagedDispatch(options) {
             return args;
         }
         if (stopped &&
-            recoveryProofReady &&
-            input.sessionID === recoveryOwner &&
+            typeof input.sessionID === "string" &&
+            !knownChildren.has(input.sessionID) &&
             ["read", "grep", "glob", "list"].includes(String(input.tool)))
             return args;
+        if (stopped && input.tool === "bash") {
+            const session = identifier(input.sessionID);
+            if (knownChildren.has(session) || !recoveryPrimaries.has(session))
+                throw new Error("recovery shell requires an authenticated native primary session");
+            const requestedParent = typeof args.workdir === "string" && !contains(options.workspaceRoot, args.workdir)
+                ? args.workdir
+                : undefined;
+            return enforceRecoveryShell(args, ensureRecoveryShellRoot(requestedParent));
+        }
         if (stopped)
-            throw new Error("managed run interrupted; tools disabled until a new reviewed workflow process");
+            throw new Error("managed run interrupted; use the isolated recovery shell or reconcile native termination");
         if (!active) {
             if (typeof input.sessionID === "string" && knownChildren.has(input.sessionID))
                 throw new Error("terminal managed child cannot execute tools");
             return args;
         }
+        if (options.allowActiveIsolatedShell &&
+            input.tool === "bash" &&
+            isActiveParent(input.sessionID))
+            return enforceRecoveryShell(args, isolatedPrimaryShellRoot(input.sessionID));
         if (active.background && input.sessionID === active.run.parent) {
             if (["question", "todowrite", "todoread"].includes(String(input.tool)))
                 return args;
@@ -1323,9 +1453,21 @@ export function createManagedDispatch(options) {
         const latest = [...runs.values()].filter((run) => run.parent === querySessionId).at(-1);
         return latest ? { orchestrationId: latest.controller.spec.orchestrationId } : null;
     }
+    function assertExternalActionCaller(querySessionId) {
+        if (stopped ||
+            typeof querySessionId !== "string" ||
+            !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,159}$/.test(querySessionId) ||
+            knownChildren.has(querySessionId) ||
+            (active !== null && active.run.parent !== querySessionId))
+            throw new Error("external action requires the bound native primary session");
+    }
     return {
         currentTaskView,
         compactionPointer,
+        assertExternalActionCaller,
+        isActiveParent,
+        authorizeIsolatedPrimary,
+        isolatedPrimaryShellRoot,
         beforeTask,
         beforeTool,
         afterTool,
@@ -1338,6 +1480,8 @@ export function createManagedDispatch(options) {
         interrupt,
         interruptIfCurrent,
         recoveryStatus,
+        authorizeRecoveryPrimary,
+        recoveryActionRoot,
         resolveRecovery,
         releaseForFresh,
         reconcileBackground,

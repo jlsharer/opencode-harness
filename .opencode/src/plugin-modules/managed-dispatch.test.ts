@@ -9,7 +9,7 @@ import {
   parseWorkflowRegistryCapacity,
 } from "./managed-dispatch.ts";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.ts";
-import { captureArtifacts } from "./acceptance-proof.ts";
+import { captureArtifacts, captureWorkspace } from "./acceptance-proof.ts";
 import {
   TASK_THREAD_ROLE_PACKET_FIELDS,
   formatTaskThreadEnvelope,
@@ -103,6 +103,7 @@ function fixture(role: TaskThreadRole = "researcher", timeoutMs = 10) {
   const options = {
     workspaceRoot: workspace,
     traceRoot: trace,
+    recoveryParent: root,
     now: () => now,
     timeoutMs,
     telemetry: (r: Record<string, unknown>) => telemetry.push(r),
@@ -261,6 +262,20 @@ test("compaction pointer stays parent-bound after terminal work without reviving
   f.finish(f.success());
   assert.deepEqual(f.managed.compactionPointer("parent"), { orchestrationId: "fixture" });
   assert.equal(f.managed.compactionPointer("child"), null);
+});
+
+test("external action admits the bound primary but denies children and a stopped guard", async () => {
+  const f = fixture("researcher");
+  f.managed.assertExternalActionCaller("parent");
+  assert.throws(() => f.managed.assertExternalActionCaller(""), /bound native primary/);
+  await f.start();
+  f.managed.assertExternalActionCaller("parent");
+  assert.throws(() => f.managed.assertExternalActionCaller("child"), /bound native primary/);
+  f.finish(f.success());
+  f.managed.assertExternalActionCaller("parent");
+  assert.throws(() => f.managed.assertExternalActionCaller("child"), /bound native primary/);
+  f.managed.interrupt("fixture stop");
+  assert.throws(() => f.managed.assertExternalActionCaller("parent"), /bound native primary/);
 });
 
 test("current task view fails closed on unsafe goals and stale reservations", async () => {
@@ -483,6 +498,38 @@ test("managed runtime rejects null packets without reservation and serializes sa
   assert.equal(outcomes.filter((v) => v.status === "fulfilled").length, 1);
   assert.equal(f.managed.snapshot().runs[0]!.active, 1);
 });
+test("exact external actions remain available to the bound primary during managed work", async () => {
+  const f = fixture();
+  await f.managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+  assert.doesNotThrow(() => f.managed.assertExternalActionCaller("parent"));
+  assert.throws(() => f.managed.assertExternalActionCaller("other"), /bound native primary/);
+  f.managed.sessionCreated({ id: "child", parentID: "parent" });
+  assert.throws(() => f.managed.assertExternalActionCaller("child"), /bound native primary/);
+});
+test("active primary shell writes only to its isolated external directory", async () => {
+  const f = fixture();
+  const managed = createManagedDispatch({ ...f.options, allowActiveIsolatedShell: true });
+  await managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args());
+  assert.throws(() => managed.authorizeIsolatedPrimary("other", null), /bound native primary/);
+  managed.authorizeIsolatedPrimary("parent", null);
+  const root = managed.isolatedPrimaryShellRoot("parent");
+  const checked = managed.beforeTool(
+    { sessionID: "parent", callID: "shell", tool: "bash" },
+    { command: "printf safe > result.txt", workdir: f.workspace },
+  );
+  assert.equal(checked.workdir, root);
+  assert.match(String(checked.command), /bwrap/);
+  assert.ok(!root.startsWith(f.workspace + path.sep));
+  assert.ok(!root.startsWith(f.trace + path.sep));
+  assert.equal(spawnSync("/bin/sh", ["-c", String(checked.command)]).status, 0);
+  assert.equal(fs.readFileSync(path.join(root, "result.txt"), "utf8"), "safe");
+  const denied = managed.beforeTool(
+    { sessionID: "parent", callID: "denied-shell", tool: "bash" },
+    { command: `printf bad > ${path.join(f.workspace, "src/forbidden.txt")}` },
+  );
+  assert.notEqual(spawnSync("/bin/sh", ["-c", String(denied.command)]).status, 0);
+  assert.equal(fs.existsSync(path.join(f.workspace, "src/forbidden.txt")), false);
+});
 test("known write-producing managed gate rejects before creating a refusal marker", async () => {
   const f = fixture();
   fs.writeFileSync(
@@ -569,7 +616,7 @@ test("orchestrator can release a stopped adapter only after completed native chi
   assert.equal(managed.snapshot().stopped, true);
   assert.throws(
     () => managed.beforeTool({ sessionID: "child", tool: "harness_recovery_status" }, {}),
-    /bound stopped parent/,
+    /primary session/,
   );
   assert.deepEqual(
     managed.beforeTool({ sessionID: "parent", tool: "harness_recovery_status" }, {}),
@@ -578,9 +625,16 @@ test("orchestrator can release a stopped adapter only after completed native chi
   const status = await managed.recoveryStatus("parent");
   assert.equal(status.state, "ready");
   if (status.state !== "ready") throw new Error("expected native termination proof");
+  const otherPrimary = await managed.recoveryStatus("new-primary");
+  assert.equal(otherPrimary.state, "ready");
+  assert.match(otherPrimary.nextAction, /only the bound parent/);
+  await assert.rejects(
+    () => managed.releaseForFresh("new-primary", status.treeHash),
+    /bound stopped parent/,
+  );
   assert.throws(
     () => managed.beforeTool({ sessionID: "parent", tool: "write" }, { filePath: "src/a.txt" }),
-    /tools disabled/,
+    /isolated recovery shell/,
   );
   assert.equal(
     managed.beforeTool({ sessionID: "parent", tool: "read" }, { filePath: "src/a.txt" }).filePath,
@@ -1008,7 +1062,7 @@ test("completed child stays constrained and cannot become a new orchestrator", a
         { sessionID: "parent", callID: "late", tool: "bash" },
         { command: "true" },
       ),
-    /interrupted/,
+    /authenticated native primary/,
   );
 });
 
@@ -1568,7 +1622,7 @@ test("the bound orchestrator can use the recovery tools while ordinary stopped t
         { tool: "harness_recovery_status", sessionID: "child" },
         { args: {} },
       ),
-    /bound stopped parent/,
+    /primary session/,
   );
   const input = { tool: "harness_recovery_status", sessionID: "parent" };
   const output = { args: {} };
@@ -1605,6 +1659,137 @@ test("background stale workspace proof fails and restart cannot restore reservat
   );
 });
 
+test("lost parent keeps old callback uncertain while a separate workspace and trace admit fresh progress", async () => {
+  const old = fixture();
+  await old.managed.beforeTask({ sessionID: "lost-parent", callID: "pending" }, old.args());
+  old.managed.interrupt("parent session lost before native callback");
+  const status = await old.managed.recoveryStatus("new-primary");
+  assert.equal(status.state, "blocked");
+  assert.match(status.nextAction, /same-session recovery shell/);
+  assert.deepEqual(
+    old.managed.beforeTool({ sessionID: "new-primary", tool: "read" }, { filePath: "src/a.txt" }),
+    { filePath: "src/a.txt" },
+  );
+  assert.throws(
+    () => old.managed.authorizeRecoveryPrimary("child", "lost-parent"),
+    /native primary/,
+  );
+  assert.throws(
+    () => old.managed.beforeTool({ sessionID: "new-primary", tool: "bash" }, { command: "true" }),
+    /authenticated native primary/,
+  );
+  old.managed.authorizeRecoveryPrimary("new-primary", undefined);
+  const shell = old.managed.beforeTool(
+    { sessionID: "new-primary", callID: "recovery-shell", tool: "bash" },
+    { command: "printf progress > result.txt" },
+  );
+  assert.equal(typeof shell.workdir, "string");
+  const recoveryRoot = String(shell.workdir);
+  assert.equal(spawnSync("/bin/sh", ["-c", String(shell.command)]).status, 0);
+  assert.equal(fs.readFileSync(path.join(recoveryRoot, "result.txt"), "utf8"), "progress");
+  const nested = old.managed.beforeTool(
+    { sessionID: "new-primary", callID: "nested-workdir", tool: "bash" },
+    { command: "printf nested > nested.txt", workdir: path.join(old.workspace, "src") },
+  );
+  assert.equal(nested.workdir, recoveryRoot);
+  assert.equal(spawnSync("/bin/sh", ["-c", String(nested.command)]).status, 0);
+  assert.equal(fs.readFileSync(path.join(recoveryRoot, "nested.txt"), "utf8"), "nested");
+  const denied = old.managed.beforeTool(
+    { sessionID: "new-primary", callID: "recovery-denied", tool: "bash" },
+    { command: `printf bad > ${path.join(old.workspace, "src/forbidden.txt")}` },
+  );
+  assert.notEqual(spawnSync("/bin/sh", ["-c", String(denied.command)]).status, 0);
+  assert.equal(fs.existsSync(path.join(old.workspace, "src/forbidden.txt")), false);
+  const traceDenied = old.managed.beforeTool(
+    { sessionID: "new-primary", callID: "recovery-trace-denied", tool: "bash" },
+    { command: `printf bad > ${path.join(old.trace, "forbidden.txt")}` },
+  );
+  assert.notEqual(spawnSync("/bin/sh", ["-c", String(traceDenied.command)]).status, 0);
+  assert.equal(fs.existsSync(path.join(old.trace, "forbidden.txt")), false);
+  assert.equal((await old.managed.recoveryStatus("new-primary")).recoveryShellRoot, recoveryRoot);
+  assert.throws(
+    () => old.managed.beforeTool({ sessionID: "child", tool: "bash" }, { command: "true" }),
+    /authenticated native primary/,
+  );
+  fs.renameSync(recoveryRoot, recoveryRoot + "-moved");
+  assert.throws(
+    () => old.managed.beforeTool({ sessionID: "new-primary", tool: "bash" }, { command: "true" }),
+    /ENOENT|identity changed/,
+  );
+  await assert.rejects(() => old.managed.resolveRecovery("new-primary"), /bound stopped parent/);
+  await assert.rejects(
+    () => old.managed.beforeTask({ sessionID: "new-primary", callID: "replay" }, old.args()),
+    /interrupted/,
+  );
+  const oldMarker = path.join(old.trace, "orchestrations/fixture/dispatch-started.json");
+  assert.equal(fs.existsSync(oldMarker), true);
+
+  const fresh = fixture();
+  const freshId = "fresh-isolated-after-loss";
+  fs.mkdirSync(path.join(fresh.trace, "orchestrations", freshId));
+  fs.writeFileSync(
+    path.join(fresh.trace, "orchestrations", freshId, "normalized-spec.json"),
+    JSON.stringify({ ...fresh.spec, orchestrationId: freshId }),
+  );
+  const before = captureWorkspace(fresh.workspace).treeHash;
+  fs.writeFileSync(path.join(old.workspace, "src/a.txt"), "old worker side effect remains unknown");
+  assert.equal(captureWorkspace(fresh.workspace).treeHash, before);
+  await fresh.managed.beforeTask(
+    { sessionID: "fresh-parent", callID: "fresh-call" },
+    fresh.args({ ...fresh.packet("fresh-task"), orchestrationId: freshId }),
+  );
+  assert.equal(fresh.managed.snapshot().stopped, false);
+  assert.equal(fresh.managed.snapshot().runs[0]!.attempts[0]!.state, "running");
+  assert.equal(fs.existsSync(oldMarker), true);
+  assert.equal(
+    fs.existsSync(path.join(fresh.trace, "orchestrations", freshId, "dispatch-started.json")),
+    true,
+  );
+});
+
+test("stopped V1-style run creates a private same-session shell beneath an owned home", async () => {
+  const f = fixture();
+  const home = path.join(f.root, "home");
+  fs.mkdirSync(home, { mode: 0o755 });
+  const priorState = process.env.XDG_STATE_HOME;
+  delete process.env.XDG_STATE_HOME;
+  try {
+    const { recoveryParent: _unused, ...options } = f.options;
+    const managed = createManagedDispatch({
+      ...options,
+      recoveryHome: home,
+      traceRoot: path.join(f.workspace, ".memory"),
+    });
+    managed.interrupt("native callback identity unavailable");
+    managed.authorizeRecoveryPrimary("primary", undefined);
+    const shell = managed.beforeTool(
+      { sessionID: "primary", tool: "bash" },
+      { command: "printf progress > result.txt" },
+    );
+    assert.ok(String(shell.workdir).startsWith(path.join(home, "opencode-harness-recovery")));
+    assert.equal(spawnSync("/bin/sh", ["-c", String(shell.command)]).status, 0);
+    assert.equal(
+      fs.readFileSync(path.join(String(shell.workdir), "result.txt"), "utf8"),
+      "progress",
+    );
+    fs.chmodSync(home, 0o777);
+    const unsafe = createManagedDispatch({
+      ...options,
+      recoveryHome: home,
+      traceRoot: path.join(f.workspace, ".memory"),
+    });
+    unsafe.interrupt("native callback identity unavailable");
+    unsafe.authorizeRecoveryPrimary("primary", undefined);
+    assert.throws(
+      () => unsafe.beforeTool({ sessionID: "primary", tool: "bash" }, { command: "true" }),
+      /existing current-user mode-0700 external parent/,
+    );
+  } finally {
+    if (priorState === undefined) delete process.env.XDG_STATE_HOME;
+    else process.env.XDG_STATE_HOME = priorState;
+  }
+});
+
 test("failed native abort retains uncertain capacity", async () => {
   const f = backgroundFixture();
   await f.start();
@@ -1614,7 +1799,7 @@ test("failed native abort retains uncertain capacity", async () => {
   assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "cancel-requested");
   assert.equal(f.managed.snapshot().stopped, true);
   assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
-  await assert.rejects(() => f.managed.resolveRecovery("child"), /bound stopped parent/);
+  await assert.rejects(() => f.managed.resolveRecovery("child"), /primary session/);
   assert.equal((await f.managed.resolveRecovery("parent")).state, "blocked");
   f.restoreAbort();
   assert.equal((await f.managed.resolveRecovery("parent")).state, "terminated");

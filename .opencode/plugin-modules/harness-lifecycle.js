@@ -131,6 +131,9 @@ export const HarnessLifecyclePlugin = async (context = {}, dispatchFactory = cre
     const dispatch = dispatchFactory({
         workspaceRoot,
         traceRoot,
+        ...(process.env.OPENCODE_HARNESS_RUNTIME_ROOT
+            ? { runtimeRoot: process.env.OPENCODE_HARNESS_RUNTIME_ROOT }
+            : {}),
         telemetry: (event) => logDiagnostic("Harness task state changed.", event),
         delegation,
         registryCapacity: parseWorkflowRegistryCapacity(process.env.OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY),
@@ -371,6 +374,17 @@ export const HarnessLifecyclePlugin = async (context = {}, dispatchFactory = cre
                     managedSessions.add(input.sessionID);
             }
             else {
+                const state = dispatch.snapshot?.();
+                if (input?.tool === "bash" && isRecord(state) && state.stopped === true) {
+                    const native = await sessionCall("get", String(input.sessionID));
+                    if (!isRecord(native) ||
+                        native.id !== input.sessionID ||
+                        (native.parentID !== undefined && native.parentID !== null))
+                        throw new Error("native primary session identity unavailable for recovery shell");
+                    if (!dispatch.authorizeRecoveryPrimary)
+                        throw new Error("native recovery shell guard unavailable");
+                    dispatch.authorizeRecoveryPrimary(input.sessionID, native.parentID);
+                }
                 output.args = dispatch.beforeTool(input, args ?? {});
             }
             const command = input?.tool === "bash" ? String(args?.command ?? "") : "";

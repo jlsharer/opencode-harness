@@ -51,6 +51,8 @@ export function v2JsonResult(text: string): string {
 export interface V2ToolBefore {
   tool: unknown;
   sessionID: unknown;
+  messageID?: unknown;
+  agent?: unknown;
   id: unknown;
   input: unknown;
 }

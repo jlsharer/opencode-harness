@@ -7,6 +7,16 @@ export type GeneratedArtifact = Readonly<{
 
 export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
   {
+    source: ".opencode/scripts/operator-approved-artifact-install.mjs",
+    output: ".opencode/plugin-modules/operator-approved-artifact-install.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/scripts/operator-approved-archive-install.mjs",
+    output: ".opencode/plugin-modules/operator-approved-archive-install.js",
+    mode: 0o644,
+  },
+  {
     source: ".opencode/src/plugin-modules/task-contracts.js",
     output: ".opencode/plugin-modules/task-contracts.js",
     mode: 0o644,
@@ -64,6 +74,16 @@ export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
   {
     source: ".opencode/src/plugin-modules/managed-execution.test.js",
     output: ".opencode/plugin-modules/managed-execution.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/external-win64-relaunch.js",
+    output: ".opencode/plugin-modules/external-win64-relaunch.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/external-win64-relaunch.test.js",
+    output: ".opencode/plugin-modules/external-win64-relaunch.test.mjs",
     mode: 0o644,
   },
   {

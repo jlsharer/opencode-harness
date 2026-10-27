@@ -11,6 +11,8 @@
     "README.md",
     "bin/opencode-harness.mjs",
     ".opencode/runtime.manifest.json",
+    ".opencode/plugin-modules/operator-approved-artifact-install.js",
+    ".opencode/plugin-modules/operator-approved-archive-install.js",
     ".opencode/agents",
     ".opencode/agents/researcher.md",
     ".opencode/commands/delegate-*.md",
@@ -44,6 +46,7 @@
     ".opencode/plugin-modules/context-budget.js",
     ".opencode/plugin-modules/compaction-handoff.js",
     ".opencode/plugin-modules/managed-execution.js",
+    ".opencode/plugin-modules/external-win64-relaunch.js",
     ".opencode/plugin-modules/managed-dispatch.js",
     ".opencode/plugin-modules/v2-dispatch-bridge.js",
     ".opencode/plugin-modules/v2-native-plugin.js"
@@ -63,7 +66,7 @@
     "check:generated": "node .opencode/scripts/build-typescript.mts --check",
     "check:source-policy": "node .opencode/scripts/check-typescript-policy.mts",
     "test:v2-bridge": "node --test .opencode/src/plugin-modules/v2-dispatch-bridge.test.ts",
-    "test:harness": "node --test .opencode/scripts/operator-external-qa.test.mts && node --test .opencode/scripts/paired-benchmark.test.mts && node --test .opencode/src/plugin-modules/task-contracts.test.ts .opencode/src/plugin-modules/dispatch-controller.test.ts .opencode/src/plugin-modules/acceptance-proof.test.ts .opencode/src/plugin-modules/context-budget.test.ts .opencode/src/plugin-modules/compaction-handoff.test.ts .opencode/src/plugin-modules/managed-execution.test.ts .opencode/src/plugin-modules/managed-dispatch.test.ts && node .opencode/scripts/evaluate-controller.mts && node .opencode/src/routing/routing-policy.test.ts && node --test .opencode/src/plugin-modules/task-thread-policy.test.ts && node --test .opencode/src/plugin-modules/trace-root-permissions.test.ts && node --test .opencode/scripts/darwin-portable-fs.test.mts && node --test .opencode/scripts/runtime-harness.test.mts && node --test .opencode/scripts/runtime-foreign-repo.test.mts && node .opencode/scripts/portable-harness.test.mjs && node .opencode/scripts/validate-harness.mts && node .opencode/scripts/validate-portable-harness.mjs --root .",
+    "test:harness": "node --test .opencode/scripts/operator-approved-artifact-install.test.mts .opencode/scripts/operator-approved-archive-install.test.mts && node --test .opencode/scripts/operator-external-qa.test.mts && node --test .opencode/scripts/paired-benchmark.test.mts && node --test .opencode/src/plugin-modules/task-contracts.test.ts .opencode/src/plugin-modules/dispatch-controller.test.ts .opencode/src/plugin-modules/acceptance-proof.test.ts .opencode/src/plugin-modules/context-budget.test.ts .opencode/src/plugin-modules/compaction-handoff.test.ts .opencode/src/plugin-modules/managed-execution.test.ts .opencode/src/plugin-modules/external-win64-relaunch.test.ts .opencode/src/plugin-modules/managed-dispatch.test.ts && node .opencode/scripts/evaluate-controller.mts && node .opencode/src/routing/routing-policy.test.ts && node --test .opencode/src/plugin-modules/task-thread-policy.test.ts && node --test .opencode/src/plugin-modules/trace-root-permissions.test.ts && node --test .opencode/scripts/darwin-portable-fs.test.mts && node --test .opencode/scripts/runtime-harness.test.mts && node --test .opencode/scripts/runtime-foreign-repo.test.mts && node .opencode/scripts/portable-harness.test.mjs && node .opencode/scripts/validate-harness.mts && node .opencode/scripts/validate-portable-harness.mjs --root .",
     "test": "npm run check:format && npm run typecheck && npm run check:generated && npm run check:source-policy && npm run test:v2-bridge && npm run test:harness",
     "precommit": "npm run format",
     "hooks:install": "git config --local core.hooksPath .githooks"

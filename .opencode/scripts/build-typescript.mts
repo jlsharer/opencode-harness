@@ -42,7 +42,9 @@ function rewriteGeneratedImports(artifact: GeneratedArtifact, source: string): s
     const publishedSpecifier = relativeSpecifier(artifact.output, target.output);
     rewritten = rewritten
       .replaceAll(`"${emittedSpecifier}"`, `"${publishedSpecifier}"`)
-      .replaceAll(`'${emittedSpecifier}'`, `'${publishedSpecifier}'`);
+      .replaceAll(`'${emittedSpecifier}'`, `'${publishedSpecifier}'`)
+      .replaceAll(`"${emittedSpecifier.replace(/\.js$/u, ".ts")}"`, `"${publishedSpecifier}"`)
+      .replaceAll(`'${emittedSpecifier.replace(/\.js$/u, ".ts")}'`, `'${publishedSpecifier}'`);
   }
   return rewritten;
 }

@@ -735,6 +735,28 @@ test("lifecycle forwards managed hook boundaries and relevant session interrupti
         "managed session deleted",
     ]);
 });
+test("stopped V1 shell requires native primary identity before recovery authorization", async () => {
+    let native = { id: "primary", parentID: "other" };
+    const authorized = [];
+    const hooks = await HarnessLifecyclePlugin({
+        client: {
+            app: { log: () => { } },
+            session: { get: async () => ({ data: native }) },
+        },
+    }, (options) => ({
+        ...standalonePolicyFactory(options),
+        snapshot: () => ({ stopped: true }),
+        authorizeRecoveryPrimary: (id) => authorized.push(String(id)),
+        beforeTool: (_input, args) => ({ ...args, recovery: true }),
+    }));
+    const output = { args: { command: "true" } };
+    await assert.rejects(() => hooks["tool.execute.before"]({ tool: "bash", sessionID: "primary" }, output), /native primary session identity/);
+    assert.deepEqual(authorized, []);
+    native = { id: "primary" };
+    await hooks["tool.execute.before"]({ tool: "bash", sessionID: "primary" }, output);
+    assert.deepEqual(authorized, ["primary"]);
+    assert.equal(output.args.recovery, true);
+});
 test("managed lifecycle refuses a different native project directory", async () => {
     const original = process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
     process.env.OPENCODE_HARNESS_WORKSPACE_ROOT = "/fixture/expected";

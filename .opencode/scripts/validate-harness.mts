@@ -208,6 +208,8 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/plugin-modules/compaction-handoff.js",
   ".opencode/plugin-modules/compaction-handoff.test.mjs",
   ".opencode/plugin-modules/managed-execution.js",
+  ".opencode/plugin-modules/external-win64-relaunch.js",
+  ".opencode/plugin-modules/external-win64-relaunch.test.mjs",
   ".opencode/plugin-modules/managed-dispatch.js",
   ".opencode/plugin-modules/task-contracts.test.mjs",
   ".opencode/plugin-modules/dispatch-controller.test.mjs",
@@ -226,6 +228,8 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/src/plugin-modules/compaction-handoff.ts",
   ".opencode/src/plugin-modules/compaction-handoff.test.ts",
   ".opencode/src/plugin-modules/managed-execution.ts",
+  ".opencode/src/plugin-modules/external-win64-relaunch.ts",
+  ".opencode/src/plugin-modules/external-win64-relaunch.test.ts",
   ".opencode/src/plugin-modules/managed-dispatch.ts",
   ".opencode/src/plugin-modules/task-contracts.test.ts",
   ".opencode/src/plugin-modules/dispatch-controller.test.ts",
@@ -278,6 +282,12 @@ const STATIC_MANIFEST_PATHS = [
   ".opencode/scripts/validate-harness.mts",
   ".opencode/scripts/operator-external-qa.mts",
   ".opencode/scripts/operator-external-qa.test.mts",
+  ".opencode/scripts/operator-approved-artifact-install.mts",
+  ".opencode/plugin-modules/operator-approved-artifact-install.js",
+  ".opencode/scripts/operator-approved-artifact-install.test.mts",
+  ".opencode/scripts/operator-approved-archive-install.mts",
+  ".opencode/plugin-modules/operator-approved-archive-install.js",
+  ".opencode/scripts/operator-approved-archive-install.test.mts",
   ".opencode/scripts/native-v2-plugin-fixture.mts",
   ".opencode/scripts/native-v2-plugin-fixture.test.mts",
   ".opencode/scripts/runtime-harness.test.mts",
@@ -645,6 +655,9 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     "context-budget.js",
     "compaction-handoff.js",
     "managed-execution.js",
+    "operator-approved-artifact-install.js",
+    "operator-approved-archive-install.js",
+    "external-win64-relaunch.js",
     "managed-dispatch.js",
     "v2-dispatch-bridge.js",
     "v2-native-plugin.js",
@@ -654,12 +667,12 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   if (!destinations.includes("schemas/opencode-provider-projection.schema.json"))
     fail("Runtime manifest must include the provider projection schema");
   if (
-    runtimeManifest.files.length !== 49 ||
+    runtimeManifest.files.length !== 52 ||
     !destinations.includes("plugin-modules/task-thread-policy.js") ||
     !destinations.includes("plugin-modules/trace-root-permissions.js")
   )
     fail(
-      "Runtime manifest must contain the exact 49-file external runtime including compaction handoff",
+      "Runtime manifest must contain the exact 52-file external runtime including compaction handoff and scoped external actions",
     );
   const packageManifest = json("package.json");
   if (
@@ -773,8 +786,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     devDependencies["typescript-eslint"] !== "8.68.0"
   )
     fail("Package must pin the approved ESLint TypeScript stylistic toolchain");
-  if (packageManifest.files.length !== 39 || new Set(packageManifest.files).size !== 39)
-    fail("Package files selector allowlist must contain exactly 39 unique entries");
+  if (packageManifest.files.length !== 42 || new Set(packageManifest.files).size !== 42)
+    fail("Package files selector allowlist must contain exactly 42 unique entries");
   const selectors = [
     ".opencode/plugin-modules/task-contracts.js",
     ".opencode/plugin-modules/dispatch-controller.js",
@@ -782,6 +795,9 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/plugin-modules/context-budget.js",
     ".opencode/plugin-modules/compaction-handoff.js",
     ".opencode/plugin-modules/managed-execution.js",
+    ".opencode/plugin-modules/operator-approved-artifact-install.js",
+    ".opencode/plugin-modules/operator-approved-archive-install.js",
+    ".opencode/plugin-modules/external-win64-relaunch.js",
     ".opencode/plugin-modules/managed-dispatch.js",
     ".opencode/plugin-modules/v2-dispatch-bridge.js",
     ".opencode/plugin-modules/v2-native-plugin.js",
@@ -848,8 +864,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/runtime.manifest.json",
     ...runtimeManifest.files.map((entry) => entry.source),
   ];
-  if (actual.length !== 53 || new Set(actual).size !== 53)
-    fail(`npm payload must contain exactly 53 unique paths; got ${actual.length}`);
+  if (actual.length !== 56 || new Set(actual).size !== 56)
+    fail(`npm payload must contain exactly 56 unique paths; got ${actual.length}`);
   sameSet(actual, expected, "exact npm payload allowlist");
   const launcher = report.files.find((entry) => entry.path === "bin/opencode-harness.mjs");
   if (!launcher || launcher.mode !== 0o755) fail("npm payload launcher must retain mode 0755");

@@ -102,6 +102,56 @@ function assertSandboxAvailable() {
         throw new Error("managed shell unavailable: trusted /usr/bin/bwrap with working user namespaces is required; no unrestricted fallback; use separately authorized external verification");
     }
 }
+/** A stopped parent can keep working in a private writable directory. The old
+ * workspace, trace and host remain read-only in this shell, even if its child is live.
+ */
+export function enforceRecoveryShell(args, recoveryRoot) {
+    canonicalWorkspace(recoveryRoot);
+    const stat = lstatSync(recoveryRoot);
+    if (!stat.isDirectory() || stat.uid !== process.getuid?.() || (stat.mode & 0o777) !== 0o700)
+        throw new Error("recovery shell root must be current-user mode 0700");
+    if (typeof args.command !== "string" || !args.command.trim() || args.command.length > 16384)
+        throw new Error("recovery shell requires a bounded command");
+    assertSandboxAvailable();
+    const command = [
+        BWRAP,
+        "--unshare-all",
+        "--ro-bind",
+        "/",
+        "/",
+        "--dev",
+        "/dev",
+        "--proc",
+        "/proc",
+        ...(recoveryRoot.startsWith("/tmp/") ? [] : ["--tmpfs", "/tmp"]),
+        "--bind",
+        recoveryRoot,
+        recoveryRoot,
+        "--clearenv",
+        "--setenv",
+        "PATH",
+        "/usr/bin:/bin",
+        "--setenv",
+        "HOME",
+        recoveryRoot,
+        "--setenv",
+        "TMPDIR",
+        recoveryRoot,
+        "--chdir",
+        recoveryRoot,
+        "/bin/sh",
+        "-c",
+        args.command,
+    ];
+    return {
+        ...args,
+        command: command.map(quote).join(" "),
+        workdir: recoveryRoot,
+        timeout: Math.min(typeof args.timeout === "number" && Number.isSafeInteger(args.timeout) && args.timeout > 0
+            ? args.timeout
+            : 300000, 300000),
+    };
+}
 export function enforceManagedTool(input) {
     canonicalWorkspace(input.workspaceRoot);
     const args = { ...input.args };

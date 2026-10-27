@@ -1,4 +1,14 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import {
+  acquireArtifact,
+  type Acquisition,
+} from "../../scripts/operator-approved-artifact-install.mts";
+import {
+  installArchive,
+  verifyInstall,
+  type InstallRequest,
+} from "../../scripts/operator-approved-archive-install.mts";
 import fs from "node:fs";
 import path from "node:path";
 import {
@@ -6,6 +16,7 @@ import {
   parseDelegationPolicy,
   parseWorkflowRegistryCapacity,
 } from "./managed-dispatch.ts";
+import { enforceRecoveryShell } from "./managed-execution.ts";
 import {
   admitV2Subagent,
   completedV2Subagent,
@@ -15,6 +26,10 @@ import {
 import type { V2ToolAfter, V2ToolBefore } from "./v2-dispatch-bridge.ts";
 import { validateTaskResult } from "./task-contracts.ts";
 import { appendV2CompactionContext } from "./compaction-handoff.ts";
+import {
+  parseWin64RelaunchPolicy,
+  relaunchExistingWin64Snapshot,
+} from "./external-win64-relaunch.ts";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.ts";
 import {
   normalizeAndValidateRoutingConfig,
@@ -29,16 +44,72 @@ import {
 
 type RecordValue = Record<string, unknown>;
 
+function exactActionRequest(raw: unknown, names: string[]): RecordValue {
+  if (typeof raw !== "string" || raw.length > 4096)
+    throw new Error("bounded action request required");
+  const value: unknown = JSON.parse(raw);
+  if (
+    !value ||
+    typeof value !== "object" ||
+    Array.isArray(value) ||
+    Object.keys(value).sort().join("\0") !== [...names].sort().join("\0")
+  )
+    throw new Error("exact action request fields required");
+  return value as RecordValue;
+}
+
 interface V2ToolDefinition {
   name: string;
   description: string;
   input: RecordValue;
-  options: { codemode: false };
-  execute(input: RecordValue, context: { sessionID: string }): Promise<{ content: string }>;
+  options: { codemode: boolean };
+  execute(input: RecordValue, context: V2ToolCaller): Promise<{ content: string }>;
+}
+
+interface V2ToolCaller {
+  sessionID: string;
+  agent: string;
+  assistantMessageID?: string;
+  toolCallID?: string;
+  messageID?: string;
+  id?: string;
+}
+
+export function v2PermissionSource(caller: V2ToolCaller) {
+  const messageID = caller.assistantMessageID ?? caller.messageID;
+  const id = caller.id ?? caller.toolCallID;
+  if (!messageID || !id) throw new Error("native V2 tool invocation identity unavailable");
+  return { type: "tool" as const, messageID, id };
+}
+
+export function forceExactActionAsk(event: { action: string; effect: "allow" | "deny" | "ask" }) {
+  if (
+    event.effect === "allow" &&
+    [
+      "harness.external-artifact-download",
+      "harness.external-archive-install",
+      "harness.external-recovery-build",
+      "harness.external-recovery-shell",
+    ].includes(event.action)
+  )
+    event.effect = "ask";
 }
 
 interface V2Context {
   location: { directory: string };
+  permission: {
+    hook(
+      name: "evaluate",
+      callback: (event: { action: string; effect: "allow" | "deny" | "ask" }) => Promise<void>,
+    ): Promise<unknown>;
+    assert(input: {
+      sessionID: string;
+      agent: string;
+      source: { type: "tool"; messageID: string; id: string };
+      action: string;
+      resources: string[];
+    }): Promise<void>;
+  };
   agent: {
     transform(
       callback: (editor: {
@@ -498,6 +569,11 @@ export async function v2DispatchStatus(
   }
 }
 
+/** Only the read-only Code Mode alias enters the Code Mode catalog. */
+export function v2HarnessToolCodeMode(name: string): boolean {
+  return name === "harness_dispatch_status_code";
+}
+
 export const V2NativePlugin = {
   id: "opencode-harness.v2",
   async setup(context: V2Context) {
@@ -516,6 +592,7 @@ export const V2NativePlugin = {
     )
       throw new Error("V2 harness requires matching launcher-set roots");
     const delegation = parseDelegationPolicy(process.env.OPENCODE_HARNESS_DELEGATION);
+    const externalRelaunch = parseWin64RelaunchPolicy(process.env.OPENCODE_HARNESS_WIN64_RELAUNCH);
     const job = context.job;
     const backgroundEnabled =
       process.env.OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS === "true" &&
@@ -588,6 +665,8 @@ export const V2NativePlugin = {
     const dispatch = createManagedDispatch({
       workspaceRoot,
       traceRoot,
+      runtimeRoot,
+      allowActiveIsolatedShell: true,
       delegation,
       registryCapacity: parseWorkflowRegistryCapacity(
         process.env.OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY,
@@ -677,6 +756,9 @@ export const V2NativePlugin = {
         dispatch.sessionCreated({ id: data.sessionID, parentID: data.parentID });
       }
     })().catch(() => dispatch.interrupt("V2 native session event stream unavailable"));
+    await context.permission.hook("evaluate", async (event) => {
+      forceExactActionAsk(event);
+    });
     await context.tool.hook("execute.before", async (event) => {
       if (event.tool === "subagent") {
         if (!ready) throw new Error("V2 harness guard activation is incomplete");
@@ -684,6 +766,54 @@ export const V2NativePlugin = {
         return;
       }
       const { input, tool, args } = beforeInput(event);
+      if (
+        tool === "bash" &&
+        (dispatch.snapshot().stopped || dispatch.isActiveParent(event.sessionID))
+      ) {
+        if (typeof event.sessionID !== "string")
+          throw new Error("native recovery session identity unavailable");
+        const native = data(await context.session.get({ sessionID: event.sessionID }));
+        if (
+          native.id !== event.sessionID ||
+          (native.parentID !== undefined && native.parentID !== null)
+        )
+          throw new Error("native primary session identity unavailable for recovery shell");
+        dispatch.authorizeIsolatedPrimary(event.sessionID, native.parentID);
+        const root = dispatch.isolatedPrimaryShellRoot(event.sessionID);
+        if (
+          typeof event.messageID !== "string" ||
+          typeof event.id !== "string" ||
+          typeof event.agent !== "string" ||
+          typeof args.command !== "string"
+        )
+          throw new Error("native recovery shell permission identity unavailable");
+        if (!args.command.trim() || args.command.length > 16384)
+          throw new Error("recovery shell requires a bounded command");
+        const timeoutMs =
+          typeof args.timeout === "number" && Number.isSafeInteger(args.timeout) && args.timeout > 0
+            ? Math.min(args.timeout, 300000)
+            : 300000;
+        await context.permission.assert({
+          sessionID: event.sessionID,
+          agent: event.agent,
+          source: { type: "tool", messageID: event.messageID, id: event.id },
+          action: "harness.external-recovery-shell",
+          resources: [
+            JSON.stringify({
+              command: args.command,
+              writeRoot: root,
+              network: false,
+              scriptPolicy: "allow-exact-command",
+              timeoutMs,
+            }),
+          ],
+        });
+        if (
+          !(dispatch.snapshot().stopped || dispatch.isActiveParent(event.sessionID)) ||
+          dispatch.isolatedPrimaryShellRoot(event.sessionID) !== root
+        )
+          throw new Error("isolated shell state changed after approval");
+      }
       const checked = dispatch.beforeTool(
         { sessionID: event.sessionID, callID: event.id, tool },
         args,
@@ -888,10 +1018,174 @@ export const V2NativePlugin = {
             required: [...fields],
             additionalProperties: false,
           },
-          options: { codemode: false },
+          options: { codemode: v2HarnessToolCodeMode(name) },
           execute,
         });
       const output = (value: unknown) => ({ content: JSON.stringify(value ?? null) });
+      const within = (root: string, target: string) => target.startsWith(root + path.sep);
+      const actionRoot = async (caller: V2ToolCaller): Promise<string | null> => {
+        if (
+          ((!ready || activationFailed) && !dispatch.snapshot().stopped) ||
+          !caller.sessionID ||
+          !caller.agent
+        )
+          throw new Error("V2 external action caller unavailable");
+        v2PermissionSource(caller);
+        const native = data(await context.session.get({ sessionID: caller.sessionID }));
+        if (
+          native.id !== caller.sessionID ||
+          (native.parentID !== undefined && native.parentID !== null)
+        )
+          throw new Error("external action requires native primary session identity");
+        if (dispatch.snapshot().stopped) {
+          dispatch.authorizeRecoveryPrimary(caller.sessionID, native.parentID);
+          return dispatch.recoveryActionRoot(caller.sessionID);
+        }
+        dispatch.assertExternalActionCaller(caller.sessionID);
+        return null;
+      };
+      const actionPath = (target: unknown, recoveryRoot: string | null) => {
+        if (
+          typeof target !== "string" ||
+          !path.isAbsolute(target) ||
+          path.resolve(target) !== target
+        )
+          throw new Error("external action requires canonical absolute target");
+        if (
+          [workspaceRoot, traceRoot, runtimeRoot].some(
+            (root) => target === root || within(root, target) || within(target, root),
+          ) ||
+          (recoveryRoot !== null && !within(recoveryRoot, target))
+        )
+          throw new Error("external action target outside isolated recovery scope");
+      };
+      add(
+        "harness_external_artifact_download",
+        "Primary-only exact owner-approved HTTPS download to a new private external file; no managed gate",
+        ["request"],
+        async (args, caller) => {
+          const request = exactActionRequest(args.request, [
+            "url",
+            "sha256",
+            "destination",
+            "maxBytes",
+            "timeoutMs",
+          ]) as unknown as Acquisition;
+          const root = await actionRoot(caller);
+          actionPath(request.destination, root);
+          const bytes = await acquireArtifact(request, async (challenge) => {
+            await context.permission.assert({
+              sessionID: caller.sessionID,
+              agent: caller.agent,
+              source: v2PermissionSource(caller),
+              action: "harness.external-artifact-download",
+              resources: [challenge],
+            });
+            actionPath(request.destination, await actionRoot(caller));
+            return challenge;
+          });
+          return output({ destination: request.destination, sha256: request.sha256, bytes });
+        },
+      );
+      add(
+        "harness_external_archive_install",
+        "Primary-only exact owner-approved inert SHA-pinned archive install and independent verification; no managed gate",
+        ["request"],
+        async (args, caller) => {
+          const request = exactActionRequest(args.request, [
+            "sourceUrl",
+            "version",
+            "archive",
+            "sha256",
+            "destination",
+            "maxArchiveBytes",
+            "maxExpandedBytes",
+            "maxFiles",
+            "scriptPolicy",
+          ]) as unknown as InstallRequest;
+          const root = await actionRoot(caller);
+          actionPath(request.archive, root);
+          actionPath(request.destination, root);
+          const result = await installArchive(request, async (challenge) => {
+            await context.permission.assert({
+              sessionID: caller.sessionID,
+              agent: caller.agent,
+              source: v2PermissionSource(caller),
+              action: "harness.external-archive-install",
+              resources: [challenge],
+            });
+            const currentRoot = await actionRoot(caller);
+            actionPath(request.archive, currentRoot);
+            actionPath(request.destination, currentRoot);
+            return challenge;
+          });
+          const proof = await verifyInstall(
+            request.destination,
+            request.archive,
+            request.sha256,
+            request.version,
+          );
+          return output({ ...result, proof, destination: request.destination });
+        },
+      );
+      add(
+        "harness_external_recovery_build",
+        "Primary-only exact owner-approved offline build in the isolated stopped-run recovery directory; no managed gate",
+        ["request"],
+        async (args, caller) => {
+          const request = exactActionRequest(args.request, [
+            "command",
+            "timeoutMs",
+            "maxOutputBytes",
+            "scriptPolicy",
+          ]);
+          if (
+            typeof request.command !== "string" ||
+            !request.command.trim() ||
+            request.command.length > 16384 ||
+            !Number.isSafeInteger(request.timeoutMs) ||
+            (request.timeoutMs as number) < 1 ||
+            (request.timeoutMs as number) > 300000 ||
+            !Number.isSafeInteger(request.maxOutputBytes) ||
+            (request.maxOutputBytes as number) < 1 ||
+            (request.maxOutputBytes as number) > 1048576 ||
+            request.scriptPolicy !== "allow-exact-command"
+          )
+            throw new Error("invalid exact recovery build policy or limits");
+          const root = await actionRoot(caller);
+          if (root === null) throw new Error("recovery build requires a stopped run");
+          const challenge = JSON.stringify({ ...request, writeRoot: root, network: false });
+          await context.permission.assert({
+            sessionID: caller.sessionID,
+            agent: caller.agent,
+            source: v2PermissionSource(caller),
+            action: "harness.external-recovery-build",
+            resources: [challenge],
+          });
+          if ((await actionRoot(caller)) !== root)
+            throw new Error("recovery build scope changed after approval");
+          const wrapped = enforceRecoveryShell(
+            { command: request.command, timeout: request.timeoutMs },
+            root,
+          );
+          const result = spawnSync("/bin/sh", ["-c", String(wrapped.command)], {
+            cwd: root,
+            encoding: "utf8",
+            timeout: request.timeoutMs as number,
+            maxBuffer: request.maxOutputBytes as number,
+            env: { PATH: "/usr/bin:/bin", HOME: root, TMPDIR: root },
+          });
+          return output({
+            exitCode: result.status,
+            signal: result.signal,
+            error: result.error?.message ?? null,
+            stdout: result.stdout ?? "",
+            stderr: result.stderr ?? "",
+            writeRoot: root,
+            accepted: false,
+          });
+        },
+      );
       add(
         "harness_dispatch_status",
         "Check whether this V2 session has an activated guarded subagent route and all four harness roles; not an authorization to dispatch",
@@ -906,6 +1200,47 @@ export const V2NativePlugin = {
             ),
           ),
       );
+      add(
+        "harness_dispatch_status_code",
+        "Read-only Code Mode alias for the exact V2 guarded dispatch status; not an authorization to dispatch",
+        [],
+        async () =>
+          output(
+            await v2DispatchStatus(
+              ready,
+              activationFailed,
+              dispatch.snapshot().stopped,
+              verifyRoles,
+            ),
+          ),
+      );
+      if (externalRelaunch)
+        add(
+          "harness_external_win64_relaunch",
+          "Operator-pinned external action: verify and relaunch one EXISTING Win64 snapshot without preparing/building; not a managed validation gate",
+          ["snapshot"],
+          async (args, caller) => {
+            if (!ready || activationFailed) throw new Error("V2 harness guard is not active");
+            dispatch.assertExternalActionCaller(caller.sessionID);
+            if (args.snapshot !== externalRelaunch.snapshot || !caller.agent)
+              throw new Error("external relaunch caller or snapshot is not authorized");
+            await context.permission.assert({
+              sessionID: caller.sessionID,
+              agent: caller.agent,
+              source: v2PermissionSource(caller),
+              action: "harness.external-win64-relaunch",
+              resources: [externalRelaunch.snapshot],
+            });
+            dispatch.assertExternalActionCaller(caller.sessionID);
+            return output(
+              relaunchExistingWin64Snapshot(
+                workspaceRoot,
+                externalRelaunch,
+                externalRelaunch.snapshot,
+              ),
+            );
+          },
+        );
       add(
         "harness_verify",
         "Run the exact assigned managed validator gate",
