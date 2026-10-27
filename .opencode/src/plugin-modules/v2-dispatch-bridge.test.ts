@@ -6,6 +6,35 @@ import {
   runningV2Subagent,
   v2JsonResult,
 } from "./v2-dispatch-bridge.ts";
+import { v2DispatchStatus } from "./v2-native-plugin.ts";
+
+test("V2 dispatch diagnostic reports readiness only with live four-role verification", async () => {
+  const checked = async () => {};
+  assert.deepEqual(await v2DispatchStatus(false, false, false, null), {
+    status: "activating",
+    managedSubagent: false,
+  });
+  assert.deepEqual(await v2DispatchStatus(false, true, false, null), {
+    status: "unavailable",
+    managedSubagent: false,
+  });
+  assert.deepEqual(await v2DispatchStatus(true, false, true, checked), {
+    status: "stopped",
+    managedSubagent: false,
+  });
+  assert.deepEqual(
+    await v2DispatchStatus(true, false, false, async () => {
+      throw new Error("role missing");
+    }),
+    { status: "unavailable", managedSubagent: false },
+  );
+  assert.deepEqual(await v2DispatchStatus(true, false, false, checked), {
+    status: "ready",
+    managedSubagent: true,
+    nativeTool: "subagent",
+    roles: ["implementer", "planner", "researcher", "validator"],
+  });
+});
 
 test("V2 admission binds the controller-selected foreground or background mode and denies foreign roles", async () => {
   const input = {
@@ -38,6 +67,36 @@ test("V2 admission binds the controller-selected foreground or background mode a
     /contract/,
   );
   assert.equal(calls, 2);
+});
+
+test("V2 admission forwards each harness role to the guard and propagates refusal", async () => {
+  for (const role of ["researcher", "planner", "implementer", "validator"]) {
+    const input = {
+      tool: "subagent",
+      sessionID: "parent",
+      id: `call-${role}`,
+      input: { agent: role, description: "Scoped task", prompt: "typed packet" },
+    };
+    await admitV2Subagent(input, async (context, args) => {
+      assert.equal(context.callID, `call-${role}`);
+      assert.equal(args.subagent_type, role);
+      assert.equal(Object.hasOwn(args, "task_id"), false);
+      args.background = false;
+    });
+    assert.equal((input.input as Record<string, unknown>).background, false);
+  }
+  const rejected = {
+    tool: "subagent",
+    sessionID: "parent",
+    id: "refused",
+    input: { agent: "researcher", description: "Scoped task", prompt: "untyped" },
+  };
+  await assert.rejects(
+    admitV2Subagent(rejected, async () => {
+      throw new Error("guard refused packet");
+    }),
+    /guard refused packet/,
+  );
 });
 
 test("V2 continuation maps sessionID only under the bound policy and fails without foreground proof", async () => {
@@ -74,7 +133,7 @@ test("V2 running acknowledgement binds child, native metadata, and Job generatio
     result: {
       output: { sessionID: "child", status: "running", output: text },
       metadata: { sessionID: "child", status: "running" },
-      content: [{ type: "text", text }],
+      content: text,
     },
   };
   const child = {
@@ -90,6 +149,14 @@ test("V2 running acknowledgement binds child, native metadata, and Job generatio
     jobStartedAt: 123,
     model: { providerID: "fixture", modelID: "worker" },
   });
+  assert.deepEqual(
+    runningV2Subagent(
+      { ...event, result: { ...event.result, content: [{ type: "text", text }] } },
+      child,
+      123,
+    ),
+    checked,
+  );
   assert.throws(() => runningV2Subagent(event, { ...child, parentID: "foreign" }, 123), /identity/);
   assert.throws(() => runningV2Subagent(event, child, 0), /identity/);
   assert.throws(
@@ -114,17 +181,30 @@ test("V2 native completion must bind wrapper, metadata and actual child's parent
     result: {
       output: { sessionID: "child", status: "completed", output: text },
       metadata: { sessionID: "child", status: "completed" },
-      content: [
-        {
-          type: "text",
-          text: `<subagent sessionID="child" state="completed">\n${text}\n</subagent>`,
-        },
-      ],
+      content: `<subagent sessionID="child" state="completed">\n${text}\n</subagent>`,
     },
   };
   const checked = completedV2Subagent(event, { id: "child", parentID: "parent" });
   assert.deepEqual(checked.input, { sessionID: "parent", callID: "call-1" });
   assert.match(checked.output.output, /<task id="child" state="completed">/);
+  assert.deepEqual(
+    completedV2Subagent(
+      {
+        ...event,
+        result: { ...event.result, content: [{ type: "text", text: event.result.content }] },
+      },
+      { id: "child", parentID: "parent" },
+    ),
+    checked,
+  );
+  assert.throws(
+    () =>
+      completedV2Subagent(
+        { ...event, result: { ...event.result, content: "forged" } },
+        { id: "child", parentID: "parent" },
+      ),
+    /wrapper/,
+  );
   assert.throws(() => completedV2Subagent(event, { id: "child", parentID: "other" }), /identity/);
   assert.throws(
     () =>

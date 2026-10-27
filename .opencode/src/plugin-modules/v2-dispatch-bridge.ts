@@ -20,6 +20,19 @@ function modelID(value: unknown): string {
   return value;
 }
 
+function matchesTextContent(value: unknown, expected: string): boolean {
+  if (typeof value === "string") return value === expected;
+  if (!Array.isArray(value) || value.length !== 1) return false;
+  const content = value[0];
+  return (
+    content !== null &&
+    typeof content === "object" &&
+    !Array.isArray(content) &&
+    content.type === "text" &&
+    content.text === expected
+  );
+}
+
 const ROLES = new Set(["researcher", "planner", "implementer", "validator"]);
 
 /** V2 models may render their sole JSON result in one exact JSON code fence. */
@@ -117,10 +130,7 @@ export function runningV2Subagent(
     child.parentID !== parent ||
     typeof output.output !== "string" ||
     output.output.length > 4096 ||
-    !Array.isArray(result.content) ||
-    result.content.length !== 1 ||
-    record(result.content[0], "background content").type !== "text" ||
-    record(result.content[0], "background content").text !== output.output ||
+    !matchesTextContent(result.content, output.output) ||
     typeof startedAt !== "number" ||
     !Number.isSafeInteger(startedAt) ||
     startedAt <= 0
@@ -166,16 +176,14 @@ export function completedV2Subagent(
     metadata.status !== "completed" ||
     child.id !== childID ||
     child.parentID !== parent ||
-    typeof output.output !== "string" ||
-    !Array.isArray(result.content) ||
-    result.content.length !== 1
+    typeof output.output !== "string"
   )
     throw new Error("V2 native subagent output and child identity mismatch");
-  const content = record(result.content[0], "subagent content");
   if (
-    content.type !== "text" ||
-    content.text !==
-      `<subagent sessionID="${childID}" state="completed">\n${output.output}\n</subagent>`
+    !matchesTextContent(
+      result.content,
+      `<subagent sessionID="${childID}" state="completed">\n${output.output}\n</subagent>`,
+    )
   )
     throw new Error("V2 native completed wrapper mismatch");
   return {

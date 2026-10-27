@@ -7,7 +7,7 @@ var __rewriteRelativeImportExtension = (this && this.__rewriteRelativeImportExte
     return path;
 };
 import path from "node:path";
-import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.js";
+import { createManagedDispatch, parseDelegationPolicy, parseWorkflowRegistryCapacity, } from "./managed-dispatch.js";
 import { managedCompactionSafe, reportedInputCompactionDecision } from "./context-budget.js";
 import { COMPACTION_HANDOFF, formatCompactionHandoff, readCompactionHandoff, } from "./compaction-handoff.js";
 function isRecord(value) {
@@ -133,6 +133,7 @@ export const HarnessLifecyclePlugin = async (context = {}, dispatchFactory = cre
         traceRoot,
         telemetry: (event) => logDiagnostic("Harness task state changed.", event),
         delegation,
+        registryCapacity: parseWorkflowRegistryCapacity(process.env.OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY),
         backgroundTransport: transport,
     });
     function noManagedWork() {

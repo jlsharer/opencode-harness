@@ -3,7 +3,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
-import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.ts";
+import {
+  createManagedDispatch,
+  parseDelegationPolicy,
+  parseWorkflowRegistryCapacity,
+} from "./managed-dispatch.ts";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.ts";
 import { captureArtifacts } from "./acceptance-proof.ts";
 import {
@@ -323,6 +327,103 @@ test("a terminal blocked run permits a different fresh orchestration in the same
   assert.equal(f.managed.currentTaskView("child"), null);
   assert.equal(f.managed.currentTaskView("next-child")?.delegationTaskId, "new-task");
   assert.ok(fs.existsSync(path.join(f.trace, "orchestrations", nextId, "dispatch-started.json")));
+});
+
+test("workflow capacity defaults to unlimited and finite overrides retain start-marker refusal", async () => {
+  assert.equal(parseWorkflowRegistryCapacity(), null);
+  assert.equal(parseWorkflowRegistryCapacity("unlimited"), null);
+  assert.equal(parseWorkflowRegistryCapacity("1"), 1);
+  assert.equal(parseWorkflowRegistryCapacity("16"), 16);
+  assert.equal(parseWorkflowRegistryCapacity("9007199254740991"), Number.MAX_SAFE_INTEGER);
+  for (const invalid of ["0", "01", "1.5", "-1", "1e3", "9007199254740992", "", 0, null, true])
+    assert.throws(() => parseWorkflowRegistryCapacity(invalid), /workflow registry capacity/);
+
+  const f = fixture();
+  const unlimited = createManagedDispatch(f.options);
+  for (let index = 0; index < 17; index++) {
+    const id = `capacity-${index}`;
+    fs.mkdirSync(path.join(f.trace, "orchestrations", id));
+    fs.writeFileSync(
+      path.join(f.trace, "orchestrations", id, "normalized-spec.json"),
+      JSON.stringify({ ...f.spec, orchestrationId: id }),
+    );
+    const callID = `call-${index}`;
+    const child = `child-${index}`;
+    await unlimited.beforeTask(
+      { sessionID: "parent", callID },
+      f.args({ ...f.packet(`task-${index}`), orchestrationId: id }),
+    );
+    unlimited.sessionCreated({ id: child, parentID: "parent" });
+    const { outputContract: _unused, ...result } = f.success();
+    const blocked = {
+      ...result,
+      orchestrationId: id,
+      delegationTaskId: `task-${index}`,
+      outcome: "blocked",
+      reason: "measurement incomplete",
+      artifacts: [],
+    };
+    unlimited.afterTask(
+      { callID },
+      {
+        metadata: { sessionId: child },
+        output: formatTaskResultWrapper(JSON.stringify(blocked), child),
+      },
+    );
+  }
+  assert.equal(unlimited.snapshot().runs.length, 17);
+  assert.ok(fs.existsSync(path.join(f.trace, "orchestrations/capacity-16/dispatch-started.json")));
+  await assert.rejects(
+    unlimited.beforeTask(
+      { sessionID: "parent", callID: "replay" },
+      f.args({ ...f.packet("task-0"), orchestrationId: "capacity-0" }),
+    ),
+    /fresh child task|duplicate dispatch/,
+  );
+  const restarted = createManagedDispatch({ ...f.options, registryCapacity: null });
+  await assert.rejects(
+    restarted.beforeTask(
+      { sessionID: "parent", callID: "restart-replay" },
+      f.args({ ...f.packet("restart-task"), orchestrationId: "capacity-0" }),
+    ),
+    /already started or cannot be reserved/,
+  );
+
+  const capped = fixture();
+  const finite = createManagedDispatch({
+    ...capped.options,
+    registryCapacity: parseWorkflowRegistryCapacity("1"),
+  });
+  await finite.beforeTask({ sessionID: "parent", callID: "first" }, capped.args());
+  finite.sessionCreated({ id: "first-child", parentID: "parent" });
+  const { outputContract: _unused, ...result } = capped.success();
+  finite.afterTask(
+    { callID: "first" },
+    {
+      metadata: { sessionId: "first-child" },
+      output: formatTaskResultWrapper(
+        JSON.stringify({ ...result, outcome: "blocked", reason: "done" }),
+        "first-child",
+      ),
+    },
+  );
+  const nextId = "over-capacity";
+  fs.mkdirSync(path.join(capped.trace, "orchestrations", nextId));
+  fs.writeFileSync(
+    path.join(capped.trace, "orchestrations", nextId, "normalized-spec.json"),
+    JSON.stringify({ ...capped.spec, orchestrationId: nextId }),
+  );
+  await assert.rejects(
+    finite.beforeTask(
+      { sessionID: "parent", callID: "second" },
+      capped.args({ ...capped.packet("second-task"), orchestrationId: nextId }),
+    ),
+    /workflow registry capacity reached/,
+  );
+  assert.equal(
+    fs.existsSync(path.join(capped.trace, "orchestrations", nextId, "dispatch-started.json")),
+    false,
+  );
 });
 test("late events from a completed child cannot stop a later managed task", async () => {
   const f = fixture();

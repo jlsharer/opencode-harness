@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.js";
+import { createManagedDispatch, parseDelegationPolicy, parseWorkflowRegistryCapacity, } from "./managed-dispatch.js";
 import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
 import { validateTaskResult } from "./task-contracts.js";
 import { appendV2CompactionContext } from "./compaction-handoff.js";
@@ -332,6 +332,28 @@ function activationMarker(plan) {
         mode: 0o600,
     });
 }
+/** Diagnostic only: native admission and typed packets remain the authorization boundary. */
+export async function v2DispatchStatus(ready, activationFailed, stopped, verifyRoles) {
+    if (stopped)
+        return { status: "stopped", managedSubagent: false };
+    if (!ready || !verifyRoles)
+        return {
+            status: activationFailed ? "unavailable" : "activating",
+            managedSubagent: false,
+        };
+    try {
+        await verifyRoles();
+        return {
+            status: "ready",
+            managedSubagent: true,
+            nativeTool: "subagent",
+            roles: [...TRACE_PERMISSION_ROLES],
+        };
+    }
+    catch {
+        return { status: "unavailable", managedSubagent: false };
+    }
+}
 export const V2NativePlugin = {
     id: "opencode-harness.v2",
     async setup(context) {
@@ -419,6 +441,7 @@ export const V2NativePlugin = {
             workspaceRoot,
             traceRoot,
             delegation,
+            registryCapacity: parseWorkflowRegistryCapacity(process.env.OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY),
             ...(transport ? { backgroundTransport: transport } : {}),
         });
         const handoff = (event, kind) => {
@@ -433,6 +456,8 @@ export const V2NativePlugin = {
         await context.session.hook("context", async (event) => handoff(event, "context"));
         const backgroundObservers = new Set();
         let ready = false;
+        let activationFailed = false;
+        let verifyRoles = null;
         const abort = new AbortController();
         const watch = (async () => {
             for await (const event of context.event.subscribe({ signal: abort.signal })) {
@@ -659,6 +684,7 @@ export const V2NativePlugin = {
                 execute,
             });
             const output = (value) => ({ content: JSON.stringify(value ?? null) });
+            add("harness_dispatch_status", "Check whether this V2 session has an activated guarded subagent route and all four harness roles; not an authorization to dispatch", [], async () => output(await v2DispatchStatus(ready, activationFailed, dispatch.snapshot().stopped, verifyRoles)));
             add("harness_verify", "Run the exact assigned managed validator gate", ["command"], async (args, child) => output(dispatch.verifyCommand(child.sessionID, String(args.command))));
             add("harness_trace", "Create an immutable role trace; filePath must be trace-root-relative orchestrations/<orchestrationId>/roles/<role>/<artifact-id>.md, without a .memory prefix or absolute workspace path", ["filePath", "content"], async (args, child) => output(dispatch.writeTrace(child.sessionID, String(args.filePath), String(args.content))));
             add("harness_source_edit", "Edit only an exact assigned source file", ["filePath", "expectedContent", "content"], async (args, child) => output(dispatch.editSource(child.sessionID, String(args.filePath), String(args.expectedContent), String(args.content))));
@@ -671,7 +697,10 @@ export const V2NativePlugin = {
         const activation = Promise.resolve()
             .then(() => waitForNativeAgentSource(context, abort.signal))
             .then(() => registerRoles(context, plan))
-            .then((verifyRoles) => verifyRoles())
+            .then(async (check) => {
+            await check();
+            verifyRoles = check;
+        })
             .then(() => {
             if (abort.signal.aborted)
                 throw new Error("V2 plugin unloaded before activation");
@@ -679,6 +708,7 @@ export const V2NativePlugin = {
             ready = true;
         })
             .catch((error) => {
+            activationFailed = true;
             const message = error instanceof Error ? error.message : "";
             const safe = /^V2 (?:effective role|native agent|harness role|primary permissions|role permissions|routing|activation)/.test(message)
                 ? message.slice(0, 160)

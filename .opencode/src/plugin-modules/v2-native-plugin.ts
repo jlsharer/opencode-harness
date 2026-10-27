@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.ts";
+import {
+  createManagedDispatch,
+  parseDelegationPolicy,
+  parseWorkflowRegistryCapacity,
+} from "./managed-dispatch.ts";
 import {
   admitV2Subagent,
   completedV2Subagent,
@@ -468,6 +472,32 @@ function activationMarker(plan: ReturnType<typeof tracePlan>) {
   });
 }
 
+/** Diagnostic only: native admission and typed packets remain the authorization boundary. */
+export async function v2DispatchStatus(
+  ready: boolean,
+  activationFailed: boolean,
+  stopped: boolean,
+  verifyRoles: (() => Promise<void>) | null,
+) {
+  if (stopped) return { status: "stopped", managedSubagent: false };
+  if (!ready || !verifyRoles)
+    return {
+      status: activationFailed ? "unavailable" : "activating",
+      managedSubagent: false,
+    };
+  try {
+    await verifyRoles();
+    return {
+      status: "ready",
+      managedSubagent: true,
+      nativeTool: "subagent",
+      roles: [...TRACE_PERMISSION_ROLES],
+    };
+  } catch {
+    return { status: "unavailable", managedSubagent: false };
+  }
+}
+
 export const V2NativePlugin = {
   id: "opencode-harness.v2",
   async setup(context: V2Context) {
@@ -559,6 +589,9 @@ export const V2NativePlugin = {
       workspaceRoot,
       traceRoot,
       delegation,
+      registryCapacity: parseWorkflowRegistryCapacity(
+        process.env.OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY,
+      ),
       ...(transport ? { backgroundTransport: transport } : {}),
     });
     const handoff = (
@@ -580,6 +613,8 @@ export const V2NativePlugin = {
     await context.session.hook("context", async (event) => handoff(event, "context"));
     const backgroundObservers = new Set<ReturnType<typeof setInterval>>();
     let ready = false;
+    let activationFailed = false;
+    let verifyRoles: (() => Promise<void>) | null = null;
     const abort = new AbortController();
     const watch = (async () => {
       for await (const event of context.event.subscribe({ signal: abort.signal })) {
@@ -858,6 +893,20 @@ export const V2NativePlugin = {
         });
       const output = (value: unknown) => ({ content: JSON.stringify(value ?? null) });
       add(
+        "harness_dispatch_status",
+        "Check whether this V2 session has an activated guarded subagent route and all four harness roles; not an authorization to dispatch",
+        [],
+        async () =>
+          output(
+            await v2DispatchStatus(
+              ready,
+              activationFailed,
+              dispatch.snapshot().stopped,
+              verifyRoles,
+            ),
+          ),
+      );
+      add(
         "harness_verify",
         "Run the exact assigned managed validator gate",
         ["command"],
@@ -923,13 +972,17 @@ export const V2NativePlugin = {
     const activation = Promise.resolve()
       .then(() => waitForNativeAgentSource(context, abort.signal))
       .then(() => registerRoles(context, plan))
-      .then((verifyRoles) => verifyRoles())
+      .then(async (check) => {
+        await check();
+        verifyRoles = check;
+      })
       .then(() => {
         if (abort.signal.aborted) throw new Error("V2 plugin unloaded before activation");
         activationMarker(plan);
         ready = true;
       })
       .catch((error: unknown) => {
+        activationFailed = true;
         const message = error instanceof Error ? error.message : "";
         const safe =
           /^V2 (?:effective role|native agent|harness role|primary permissions|role permissions|routing|activation)/.test(

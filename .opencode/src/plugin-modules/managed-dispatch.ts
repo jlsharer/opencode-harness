@@ -140,6 +140,16 @@ export interface DelegationPolicy {
   maxUpdateBytes: number;
 }
 
+/** Unlimited by default; an explicit positive integer bounds retained controllers. */
+export function parseWorkflowRegistryCapacity(value?: unknown): number | null {
+  if (value === undefined || value === "unlimited") return null;
+  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
+    const capacity = Number(value);
+    if (Number.isSafeInteger(capacity)) return capacity;
+  }
+  throw new Error("workflow registry capacity must be a positive safe integer when set");
+}
+
 export function parseDelegationPolicy(value?: unknown): DelegationPolicy {
   if (value === undefined)
     return {
@@ -206,8 +216,15 @@ export function createManagedDispatch(options: {
   timeoutMs?: number;
   telemetry?: (record: RecordValue) => void;
   delegation?: unknown;
+  registryCapacity?: number | null;
   backgroundTransport?: BackgroundTransport;
 }) {
+  const registryCapacity = options.registryCapacity === undefined ? null : options.registryCapacity;
+  if (
+    registryCapacity !== null &&
+    (!Number.isSafeInteger(registryCapacity) || registryCapacity < 1)
+  )
+    throw new Error("invalid workflow registry capacity");
   const delegation = parseDelegationPolicy(options.delegation);
   const transport = options.backgroundTransport;
   let reconciling = false;
@@ -793,7 +810,8 @@ export function createManagedDispatch(options: {
     const doc = readDocument(options.traceRoot, source);
     let run = runs.get(orchestrationId);
     if (!run) {
-      if (runs.size >= 16) throw new Error("workflow registry capacity reached");
+      if (registryCapacity !== null && runs.size >= registryCapacity)
+        throw new Error("workflow registry capacity reached");
       const controller = createDispatchController(doc.value, {
         ...(options.now ? { now: options.now } : {}),
         ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),

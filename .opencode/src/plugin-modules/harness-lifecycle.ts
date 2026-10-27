@@ -1,5 +1,9 @@
 import path from "node:path";
-import { createManagedDispatch, parseDelegationPolicy } from "./managed-dispatch.ts";
+import {
+  createManagedDispatch,
+  parseDelegationPolicy,
+  parseWorkflowRegistryCapacity,
+} from "./managed-dispatch.ts";
 import { managedCompactionSafe, reportedInputCompactionDecision } from "./context-budget.ts";
 import {
   COMPACTION_HANDOFF,
@@ -225,6 +229,9 @@ export const HarnessLifecyclePlugin = async (
     traceRoot,
     telemetry: (event) => logDiagnostic("Harness task state changed.", event),
     delegation,
+    registryCapacity: parseWorkflowRegistryCapacity(
+      process.env.OPENCODE_HARNESS_WORKFLOW_REGISTRY_CAPACITY,
+    ),
     backgroundTransport: transport,
   });
 
