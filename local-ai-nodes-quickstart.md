@@ -338,7 +338,7 @@ harness package bytes, and a writable owner-only default cache ancestry.
 `prepare` probes OpenCode and creates or verifies its exact-version local cache;
 it does not contact a provider, authenticate, or download a model. On success it
 exits zero and prints exactly one absolute path ending in
-`/0.1.13/opencode-<exact-version>/runtime`. Stop on any failure or different
+`/0.1.14/opencode-<exact-version>/runtime`. Stop on any failure or different
 output.
 
 **Control host, `/home/joshl/projects/opencode-harness`:**
@@ -352,7 +352,7 @@ OPENCODE_VERSION=$(opencode --version)
    $OPENCODE_VERSION == 1.18.20 || $OPENCODE_VERSION == 1.18.21 || \
    $OPENCODE_VERSION == 1.18.22 || $OPENCODE_VERSION == 1.18.23 || \
    $OPENCODE_VERSION == 1.18.24 || $OPENCODE_VERSION == 1.18.25 ]]
-[[ $PREPARED_RUNTIME == /*/0.1.13/opencode-$OPENCODE_VERSION/runtime ]]
+[[ $PREPARED_RUNTIME == /*/0.1.14/opencode-$OPENCODE_VERSION/runtime ]]
 [[ $PREPARED_RUNTIME != *$'\n'* && -d $PREPARED_RUNTIME ]]
 printf 'prepared runtime: %s\n' "$PREPARED_RUNTIME"
 ```

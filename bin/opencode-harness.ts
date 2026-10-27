@@ -435,7 +435,7 @@ function manifest(): RuntimeManifest {
     Object.keys(value).sort().join(",") !== expected.sort().join(",") ||
     value.schemaVersion !== "1.0.0" ||
     value.profile !== "external-runtime" ||
-    value.packageVersion !== "0.1.13" ||
+    value.packageVersion !== "0.1.14" ||
     !Array.isArray(value.files) ||
     !Array.isArray(value.generatedEntries)
   )
@@ -2775,8 +2775,8 @@ function parse(argv: string[]): ParsedArguments {
       continue;
     }
     if (token === "--") {
-      if (["web", "source-web", "source-tui"].includes(command))
-        fail("source/web modes do not accept forwarded native arguments");
+      if (["web", "source-web"].includes(command))
+        fail("web modes do not accept forwarded native arguments");
       options.forward = argv.splice(0);
       break;
     }
@@ -2821,8 +2821,8 @@ function parse(argv: string[]): ParsedArguments {
     fail("doctor accepts only --opencode-bin ABS");
   if (options.v2AuthDataHome && command !== "run")
     fail("--v2-auth-data-home is available only for an explicit V2 run");
-  if (options.nativeSessionDb && command !== "run")
-    fail("--native-session-db is available only for an explicit V2 run");
+  if (options.nativeSessionDb && !["run", "source-tui"].includes(command))
+    fail("--native-session-db is available only for an explicit V2 terminal run");
   if (options.nativeSessionDb && options.v2AuthDataHome)
     fail("--native-session-db cannot be combined with --v2-auth-data-home");
   if (command === "run" && options.forward.some((arg) => arg === "serve" || arg === "web"))
@@ -2863,7 +2863,7 @@ function usage(): string {
   return [
     "Usage:",
     "  opencode-harness source-web [--opencode-bin ABS] [--port 4096] [--cache-root ABS]",
-    "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS]",
+    "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS] [--native-session-db ABS] [-- TUI_ARGS...]",
     "  opencode-harness capabilities",
     "  opencode-harness web --workspace ABS [--port 4096] [run options; no forwarded arguments]",
     "  opencode-harness doctor [--opencode-bin ABS]",
@@ -2874,6 +2874,7 @@ function usage(): string {
     "    [--native-session-db ABS] (explicit existing V2 native session database)",
     "    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "    [--allow-project-plugins] [-- OPENCODE_ARGS...]",
+    "    (run infers the Git root and selects the source profile in this checkout)",
     "",
   ].join("\n");
 }
@@ -3066,10 +3067,65 @@ function sourceProfilePreflight(): string {
   );
 }
 
+function guardedV2ClientArguments(forward: string[], url: string): string[] {
+  if (forward.length === 0) return ["--server", url];
+  if (forward.length === 1 && ["--version", "-v", "--help", "-h"].includes(forward[0]!))
+    return [...forward];
+  if (["run", "models"].includes(forward[0]!)) {
+    if (
+      forward.includes("--server") ||
+      forward.includes("--standalone") ||
+      forward.includes("--auto")
+    )
+      fail("V2 forwarded command cannot change guarded server or approval policy");
+    return [forward[0]!, "--server", url, ...forward.slice(1)];
+  }
+  if (forward[0] === "session" && forward[1] === "list") {
+    for (let index = 2; index < forward.length; index++) {
+      const flag = forward[index]!;
+      if (!["--max-count", "-n", "--format"].includes(flag))
+        fail(`unsupported guarded session-list option: ${flag}`);
+      const value = forward[++index];
+      if (!value || value.startsWith("--")) fail(`missing guarded session-list value: ${flag}`);
+      if (
+        flag === "--format" ? !["json", "table"].includes(value) : !/^[1-9][0-9]{0,3}$/.test(value)
+      )
+        fail(`invalid guarded session-list value: ${flag}`);
+    }
+    return ["session", "list", "--server", url, ...forward.slice(2)];
+  }
+  const switches = new Set(["--continue", "-c", "--print-logs"]);
+  const values = new Set(["--session", "-s", "--prompt", "--log-level"]);
+  for (let index = 0; index < forward.length; index++) {
+    const arg = forward[index]!;
+    if (switches.has(arg)) continue;
+    if (values.has(arg)) {
+      const value = forward[++index];
+      if (!value || value.startsWith("--")) fail(`missing guarded terminal option value: ${arg}`);
+      continue;
+    }
+    fail(`V2 forwarded command has no verified guarded-server mapping: ${arg}`);
+  }
+  return [...forward, "--server", url];
+}
+
 async function runSourceProfile(
   options: LauncherOptions,
   mode: "source-web" | "source-tui",
 ): Promise<number> {
+  if (
+    options.workspace !== PACKAGE_ROOT ||
+    options.traceRoot ||
+    options.providerConfig ||
+    options.catalog ||
+    options.profile ||
+    options.allowProjectPlugins ||
+    options.v2AuthDataHome ||
+    (mode === "source-web" && options.nativeSessionDb)
+  )
+    fail(
+      "source profile accepts only its own workspace, cache, native executable and terminal options",
+    );
   for (const name of RESERVED_ENV)
     if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
   assertNodeCompatibility(manifest());
@@ -3093,6 +3149,9 @@ async function runSourceProfile(
   }
   const selected = resolveCompatibleExecutable(options.opencodeBin);
   const v2 = nativeV2(selected.version);
+  if (options.nativeSessionDb && !v2)
+    fail("--native-session-db requires a verified V2 native CLI contract");
+  if (mode === "source-tui") guardedV2ClientArguments(options.forward, "http://127.0.0.1:1");
   if (sourceProfilePreflight() !== fingerprint)
     fail("source profile changed during validation or version probe");
   recheckExecutable(selected.executable, selected.identity, "source profile validation");
@@ -3111,6 +3170,9 @@ async function runSourceProfile(
     if (v2) {
       const sourceRuntime = path.join(PACKAGE_ROOT, ".opencode");
       const traceRoot = chooseTraceRoot(PACKAGE_ROOT, path.join(stateRoot, "trace"), sourceRuntime);
+      const nativeSessionDb = options.nativeSessionDb
+        ? verifiedNativeSessionDb(options.nativeSessionDb, PACKAGE_ROOT, sourceRuntime, traceRoot)
+        : undefined;
       const marker = path.join(snapshot.directory, "trace-permission-probe.json");
       snapshot.paths.probeMarker = marker;
       const nonce = randomBytes(32).toString("hex");
@@ -3121,6 +3183,7 @@ async function runSourceProfile(
         traceRoot,
         snapshot,
         true,
+        nativeSessionDb,
       );
       if (mode === "source-web") delete env.OPENCODE_SERVER_PASSWORD;
       env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
@@ -3147,11 +3210,15 @@ async function runSourceProfile(
           const clientEnv: NodeJS.ProcessEnv = { ...env, OPENCODE_PASSWORD: password };
           delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
           delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
-          const client = spawnSync(selected.executable, ["--server", url], {
-            cwd: PACKAGE_ROOT,
-            stdio: "inherit",
-            env: clientEnv,
-          });
+          const client = spawnSync(
+            selected.executable,
+            guardedV2ClientArguments(options.forward, url),
+            {
+              cwd: PACKAGE_ROOT,
+              stdio: "inherit",
+              env: clientEnv,
+            },
+          );
           if (client.error) fail(`cannot start V2 guarded source client: ${client.error.message}`);
           return client.status ?? 1;
         },
@@ -3187,11 +3254,6 @@ async function runSourceProfile(
 }
 
 async function run(options: LauncherOptions, command: "run" | "web" = "run"): Promise<number> {
-  process.stderr.write(
-    options.nativeSessionDb
-      ? "opencode-harness: native session database selected; managed workflows remain ephemeral and cannot resume after interruption.\n"
-      : "opencode-harness: ephemeral execution; interrupted runs cannot resume; launch database is removed after exit.\n",
-  );
   for (const name of RESERVED_ENV)
     if (Object.hasOwn(process.env, name)) fail(`refusing pre-set ${name}`);
   for (const arg of options.forward)
@@ -3206,6 +3268,13 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
   if (Boolean(options.catalog) !== Boolean(options.profile))
     fail("--routing-catalog and --routing-profile are an all-or-none pair");
   const workspace = workspaceFromRunOption(options.workspace);
+  if (command === "run" && workspace === PACKAGE_ROOT)
+    return runSourceProfile({ ...options, workspace }, "source-tui");
+  process.stderr.write(
+    options.nativeSessionDb
+      ? "opencode-harness: native session database selected; managed workflows remain ephemeral and cannot resume after interruption.\n"
+      : "opencode-harness: ephemeral execution; interrupted runs cannot resume; launch database is removed after exit.\n",
+  );
   const projectState = projectPreflight(
     workspace,
     Boolean(options.allowProjectPlugins),
@@ -3299,15 +3368,7 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
           if (refreshed.fingerprint !== projectState.fingerprint)
             fail("project config/plugin/skill surface changed after V2 server readiness");
           const forward = options.forward;
-          let argv: string[];
-          if (command === "web") argv = [];
-          else if (!forward.length) argv = ["--server", url];
-          else if (forward.length === 1 && forward[0] === "--version") argv = ["--version"];
-          else if (forward[0] === "run" || forward[0] === "models") {
-            if (forward.includes("--server") || forward.includes("--standalone"))
-              fail("V2 forwarded server selection cannot bypass the guarded server");
-            argv = [forward[0], "--server", url, ...forward.slice(1)];
-          } else fail("V2 forwarded command has no verified guarded-server mapping");
+          const argv = command === "web" ? [] : guardedV2ClientArguments(forward, url);
           const clientEnv: NodeJS.ProcessEnv = { ...env, OPENCODE_PASSWORD: password };
           delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
           delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;

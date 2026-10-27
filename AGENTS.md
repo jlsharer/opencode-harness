@@ -24,6 +24,8 @@ The installable `portable-core` profile is a narrower boundary defined only by `
 
 ## Harness Conventions
 
+`run` infers the Git worktree root when `--workspace` is omitted and selects the validated source TUI profile automatically for this exact source checkout. On V2, both source and external runtime terminal profiles may use an explicitly selected native session database, preserving native provider authentication and session history without restoring managed Task authorization. A user-owned `opencode` shell entry point may route all Git repositories through `run`; package installation does not silently replace the native command.
+
 - Use delegation-only parent behavior when `delegation-orchestrator` or `/delegate-orchestration` is invoked; outside that invocation, normal project instructions apply.
 - Preserve exactly four active role names: `researcher`, `planner`, `implementer`, and `validator`. Specialties are explicit bounded task modes: planner `plan|synthesis`, implementer `implementation|integration`, and validator `validation|review|artifact-proof|integration-check`.
 - `.opencode/skills/delegation-orchestrator/SKILL.md` is the sole protocol authority. `/delegate-orchestration` is a thin natural-language intake wrapper. The parent assembles and validates the internal orchestration specification, then delegates and synthesizes only; leaf agents deny further delegation and the orchestrator skill.

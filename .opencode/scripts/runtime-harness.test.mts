@@ -420,11 +420,11 @@ test("prepare accepts arbitrary releases and separates diagnostic-version caches
   const maximum = fake("version-maximum", "1.18.25");
   const accepted = run(["prepare", "--cache-root", cache], { OPENCODE_BIN: maximum.executable });
   assert.equal(accepted.status, 0, accepted.stderr);
-  assert.match(accepted.stdout.trim(), /\/0\.1\.13\/opencode-1\.18\.25\/runtime$/);
+  assert.match(accepted.stdout.trim(), /\/0\.1\.14\/opencode-1\.18\.25\/runtime$/);
   const marker = JSON.parse(
     fs.readFileSync(path.join(accepted.stdout.trim(), ".harness-runtime.json"), "utf8"),
   );
-  assert.deepEqual(marker, { packageVersion: "0.1.13", opencodeVersion: "1.18.25" });
+  assert.deepEqual(marker, { packageVersion: "0.1.14", opencodeVersion: "1.18.25" });
 
   for (const version of [
     "1.18.17",
@@ -501,7 +501,7 @@ test("prepare refuses managed drift and symlink collisions without repairing the
   assert.notEqual(drift.status, 0);
   assert.match(drift.stderr, /managed runtime drift/);
   const collisionCache = path.join(temp, "symlink-cache");
-  const runtime = path.join(collisionCache, "0.1.13/opencode-1.18.18/runtime");
+  const runtime = path.join(collisionCache, "0.1.14/opencode-1.18.18/runtime");
   fs.mkdirSync(path.dirname(runtime), { recursive: true, mode: 0o700 });
   fs.symlinkSync(temp, runtime);
   const collision = run(["prepare", "--cache-root", collisionCache]);
@@ -550,7 +550,7 @@ test("capabilities is deterministic, closed, offline, and no-write", () => {
   assert.equal(first.stdout, second.stdout);
   assert.equal(first.stderr, "");
   assert.deepEqual(JSON.parse(first.stdout), {
-    packageVersion: "0.1.13",
+    packageVersion: "0.1.14",
     launchContractVersion: "1.0.0",
     routingProfileVersion: "2.0.0",
     supportedModes: ["cloud-only", "local-only", "mixed"],
@@ -589,7 +589,7 @@ test("validate-inputs accepts exactly the three supported combinations with dete
     ],
   ];
   for (const [args, inputs] of cases) {
-    const expected = `${JSON.stringify({ schemaVersion: "1.0.0", valid: true, packageVersion: "0.1.13", inputs })}\n`;
+    const expected = `${JSON.stringify({ schemaVersion: "1.0.0", valid: true, packageVersion: "0.1.14", inputs })}\n`;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = run(["validate-inputs", ...args], {}, "/");
       assert.equal(result.status, 0, result.stderr);
@@ -2197,7 +2197,7 @@ test("snapshot construction failure removes every partial launch directory", () 
     },
   );
   assert.match(result.stderr, /injected snapshot construction failure/);
-  const launches = path.join(cache, "0.1.13/opencode-1.18.18/launches");
+  const launches = path.join(cache, "0.1.14/opencode-1.18.18/launches");
   assert.deepEqual(
     fs.readdirSync(launches).filter((name) => name.startsWith("launch-")),
     [],
@@ -2757,7 +2757,6 @@ test("source-web validates its own source profile without external injection and
   for (const args of [
     ["--port", "4096"],
     ["--", "serve"],
-    ["--", "--prompt", "unrequested task"],
     ["--workspace", temp],
     ["--provider-config", "/unused"],
   ])
@@ -2781,6 +2780,49 @@ test("source-web validates its own source profile without external injection and
   const tuiFailure = invokeTui([], { HARNESS_TEST_CHILD_FAIL: "1", HARNESS_TEST_DB_FILES: "1" });
   assert.equal(tuiFailure.status, 23, tuiFailure.stderr);
   assert.equal(fs.existsSync(path.dirname(parseCaptured(native.capture).env.OPENCODE_DB)), false);
+  const unified = spawnSync(
+    process.execPath,
+    [
+      path.join(source, "bin/opencode-harness.mjs"),
+      "run",
+      "--workspace",
+      source,
+      "--cache-root",
+      cache,
+    ],
+    { cwd: temp, encoding: "utf8", env: { ...process.env, OPENCODE_BIN: native.executable } },
+  );
+  assert.equal(unified.status, 0, unified.stderr);
+  assert.equal(parseCaptured(native.capture).cwd, source);
+  const nativeData = path.join(temp, "source-native-data");
+  fs.mkdirSync(nativeData, { mode: 0o700 });
+  const nativeDb = path.join(nativeData, "opencode.db");
+  fs.writeFileSync(nativeDb, "source-native-db-canary\n", { mode: 0o600 });
+  const persistentArgs = [
+    path.join(source, "bin/opencode-harness.mjs"),
+    "run",
+    "--workspace",
+    source,
+    "--cache-root",
+    cache,
+    "--native-session-db",
+    nativeDb,
+  ];
+  const rejectedV1 = spawnSync(process.execPath, persistentArgs, {
+    cwd: temp,
+    encoding: "utf8",
+    env: { ...process.env, OPENCODE_BIN: native.executable },
+  });
+  assert.notEqual(rejectedV1.status, 0);
+  assert.match(rejectedV1.stderr, /requires a verified V2 native CLI contract/);
+  const rejectedV2 = spawnSync(process.execPath, persistentArgs, {
+    cwd: temp,
+    encoding: "utf8",
+    env: { ...process.env, OPENCODE_BIN: unguardedV2.executable },
+  });
+  assert.notEqual(rejectedV2.status, 0);
+  assert.match(rejectedV2.stderr, /V2 activation server/);
+  assert.equal(fs.readFileSync(nativeDb, "utf8"), "source-native-db-canary\n");
   const failure = invoke([], { HARNESS_TEST_CHILD_FAIL: "1", HARNESS_TEST_DB_FILES: "1" });
   assert.equal(failure.status, 23, failure.stderr);
   assert.equal(fs.existsSync(path.dirname(parseCaptured(native.capture).env.OPENCODE_DB)), false);

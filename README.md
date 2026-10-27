@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.13
+# OpenCode Harness Runtime 0.1.14
 
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
@@ -6,10 +6,10 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.13` requires Linux, Node.js 24, Git, and OpenCode. There is
+Package version `0.1.14` requires Linux, Node.js 24, Git, and OpenCode. There is
 no OpenCode version allowlist. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
-invoking retained version `0.1.12`.
+invoking retained version `0.1.13`.
 
 ## Prepare and run
 
@@ -109,41 +109,35 @@ override, for example `OPENCODE_BIN=/ABSOLUTE/TRUSTED/opencode opencode-local la
 External wrappers may have their own argument grammar: do not assume they accept
 the launcher's new flag or edit external infrastructure to add it.
 
-### Optional `opencode` command in one project
+### One `opencode` command across Git repositories
 
-Installing or preparing this harness **does not** replace the global `opencode`
-command, change shell startup files, or alter PATH. Launching `opencode`
-directly in a consumer worktree therefore does not activate the harness. Use
-`opencode-harness run --workspace ABS` (or the `node bin/opencode-harness.mjs`
-form above) by default. If an operator explicitly wants the bare command in an
-interactive zsh session, they can add a scoped function to their own `~/.zshrc`
-after installing the runtime and selecting a trusted native executable:
+`run` now infers the canonical Git root from the current directory. In this
+source checkout it selects the verified source plugin profile automatically;
+in an ordinary consumer repository it selects the no-copy external runtime.
+On V2, `--native-session-db` binds the same owner-only native OpenCode database
+in either profile, preserving provider authentication and native session history.
+Managed Task authorization remains ephemeral and cannot be resumed merely
+because a native session is visible.
+
+An operator can make the bare command use that single path in interactive zsh:
 
 ```zsh
 opencode() {
-  case "$PWD" in
-    /ABSOLUTE/GIT/WORKSPACE|/ABSOLUTE/GIT/WORKSPACE/*)
-      node /ABSOLUTE/HARNESS/bin/opencode-harness.mjs run \
-        --workspace /ABSOLUTE/GIT/WORKSPACE \
-        --opencode-bin /ABSOLUTE/TRUSTED/V2/opencode \
-        --cache-root /ABSOLUTE/OWNER-ONLY/CACHE \
-        --trace-root /ABSOLUTE/OWNER-ONLY/TRACES -- "$@"
-      ;;
-    *) command opencode "$@" ;;
-  esac
+  (unset OPENCODE_DB; node /ABSOLUTE/HARNESS/bin/opencode-harness.mjs run \
+    --opencode-bin /ABSOLUTE/TRUSTED/V2/opencode \
+    --native-session-db /ABSOLUTE/OWNER-ONLY/DATA/opencode.db -- "$@")
 }
 ```
 
-Replace every example path with a canonical absolute path. Start a new zsh
-after editing; verify `opencode --version` from the consumer root through the
-guarded launcher, and check that outside the project it still invokes the
-global binary. On V2, unsupported forwarded commands fail closed: bare
-`opencode`, `opencode --version`, `opencode run ...` and `opencode models ...`
-have verified mappings. The wrapper is an **operator opt-in**, not a package
-install step: automatically replacing a user's shell command would affect
-unrelated projects and could disguise an unguarded launch. Updating the global
-OpenCode executable does not update a separately pinned `--opencode-bin`;
-recheck the latter with `doctor` and the guarded startup before changing pins.
+The launcher does not replace the native executable or edit shell startup
+files during package installation. The operator's shell function is the
+one-time command integration; no repository-specific mode flag or bootstrap
+is needed for a normal Git worktree. The selected native binary and database
+must pass their existing ownership, mode, path and V2 checks. A project-owned
+portable harness or colliding plugin/config surface still requires explicit
+reconciliation instead of silently loading two guards. The guarded V2 mapping
+supports the TUI, `--continue`, `--session`, `--prompt`, `run`, `models`, and
+read-only `session list`; server selection and `--auto` cannot bypass the guard.
 
 For repeatable credential-free V2 iteration, keep the exact v2.1.4 Linux x64
 native archive and extracted executable in an existing owner-only cache outside
@@ -195,7 +189,7 @@ To inspect a local package without publishing it:
 npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
 npm pack --pack-destination /OWNER/ONLY/PACKS
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.13.tgz \
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.14.tgz \
   -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
@@ -655,7 +649,15 @@ For this harness source checkout itself, use `node bin/opencode-harness.mjs sour
 
 `source-web` accepts only the normal executable/cache selection, fixed-loopback port, and an optional workspace equal to its own root; provider/catalog/profile projections, custom trace roots, plugin overrides, native forwarded arguments and arbitrary workspaces are rejected. Native/global configuration outside the source project remains operator-owned; source preflight does not claim to confine native APIs or erase global CORS/plugin policy. Its private per-launch database is cleaned on ordinary child exit. Stop the native child cleanly; abrupt process/host termination may retain private launch state for inspection. The external `web` profile still rejects source-owned asset collisions in other workspaces.
 
-For the source checkout's native terminal UI, use `node bin/opencode-harness.mjs source-tui`. This mode shares the source-profile validation, workspace pinning and private database lifecycle described above. V1 invokes OpenCode's default TUI; V2 activates the guarded loopback server first, then attaches a TUI to that same server with an ephemeral password and external owner-only trace root. Neither requires an owner-supplied web password. It accepts only source-profile launcher options and no forwarded native arguments. It does not create a tmux session or configure mobile transport. External project terminal sessions continue to use `run --workspace ABS`. Assistant-mediated terminal input is separate from a directly interactive phone terminal; existing sessions must be identified before sending input.
+For this checkout's native terminal UI, `opencode-harness run` automatically
+selects the source profile; the explicit `source-tui` spelling remains available.
+Both verify source assets and activate the V2 guard before attaching the client
+to its loopback server. Without `--native-session-db`, a private launch database
+is removed after exit. With a validated existing V2 database, authentication
+and native session history persist across launches and the launcher never
+deletes that database. Vetted terminal flags and `session list` are forwarded
+to the guarded server. V1 retains its separate default-TUI behavior. Neither
+profile creates a tmux session or configures mobile transport.
 
 Native session model selection is inherited by default. Explicit valid cloud routes override it. Optional catalog-backed local routes override it only when their native provider/model metadata exists and bounded, credential-free loopback probes report `/health` status `ok` and the exact model ID in `/v1/models`. An unavailable optional local route leaves the role model unset so OpenCode inherits the session-selected model; the harness does not choose a replacement provider. Malformed routing, conflicting provider restrictions and mismatched endpoint configuration still fail. Selection and availability are frozen for the plugin instance: restart after changing routing or endpoint availability. A model lost later may fail its native request; no mid-task provider switching occurs.
 
