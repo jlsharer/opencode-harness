@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.18
+# OpenCode Harness Runtime 0.1.19
 
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
@@ -6,7 +6,7 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.18` requires Linux, Node.js 24, Git, and OpenCode. There is
+Package version `0.1.19` requires Linux, Node.js 24, Git, and OpenCode. There is
 no OpenCode version allowlist. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
 invoking retained version `0.1.16`.
@@ -191,7 +191,7 @@ To inspect a local package without publishing it:
 npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
 npm pack --pack-destination /OWNER/ONLY/PACKS
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.18.tgz \
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.19.tgz \
   -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
@@ -588,7 +588,7 @@ For example, a primary orchestrator can request separate native approval for `gi
 
 Read-only shell verification uses an already installed `/usr/bin/bwrap` with working user namespaces. It never falls back to an unrestricted shell or installs dependencies. Write-producing verification, parallel writers, workspaces beneath `/tmp`, and missing native child/exit metadata are explicit unsupported cases. Scope checks are not a general sandbox. See `.memory/protocols/memory-management.md` for the structured result protocol.
 
-For an owner-approved **existing** Win64 snapshot relaunch from WSL, a V2 operator may opt in at guarded launch with `OPENCODE_HARNESS_WIN64_RELAUNCH='{"snapshot":"OpenCourtPlayProbe-...","scriptSha256":"<64 lowercase hex>"}'`. Only the exact chosen snapshot and SHA-pinned project `scripts/launch_local_play.ps1` are accepted. From an idle primary session, `harness_external_win64_relaunch` requests a native permission decision before running the existing project script without `-Prepare` or build. This is an external, unsandboxed Windows action, not managed validation, not a general shell tool, and not evidence of playable PIE; the guarded process must be restarted after installing changes. Leave the opt-in unset for other projects.
+For an owner-approved **existing** Win64 snapshot relaunch from WSL, `harness_win64_relaunch_plan` read-only checks the current source, snapshot manifest, module hashes and all nine individual case results. `harness_external_win64_verified_relaunch` then asks native permission for that exact snapshot, script hash, destination, evidence, writes and limits before invoking the fixed project script without `-Prepare` or a build. A matching bounded `Allow always` policy can cover later passing snapshots with the same source, script, destination parent and limits; each exact plan is rechecked before launch. This path needs no snapshot-specific launch variable or new OpenCode session for each snapshot. The older `OPENCODE_HARNESS_WIN64_RELAUNCH` opt-in remains available for a single exact snapshot. Editor launch is an external Windows action, not managed validation or evidence of playable PIE. Restart OpenCode after installing this plugin version so a running client loads the new tool.
 
 The OpenCourt primary can use `harness_win64_build_plan` to inspect the exact current source hash, script hash and absent destination. `harness_external_win64_build` requires a native decision or a matching saved bounded policy for the current plan and limits, then runs only the pinned project script to create one new nonoverwriting snapshot. After build verification, `harness_win64_snapshot_verify` independently checks every manifest-listed source and module hash, including PowerShell UTF-8 BOM manifests; it reports that the original build-tool exit was not observed when recovering an existing snapshot. `harness_win64_cases_plan` inspects its manifest and fresh case-log destination; `harness_external_win64_cases` requires its own native decision or matching saved bounded policy before running the fixed nine-case native command. If the Windows native process outlives its PowerShell caller, the action reports pending; `harness_win64_cases_verify` reads the existing log without rerunning cases and reports each named result and the log hash. It leaves the native process exit unobserved when the caller returned early. A queue-empty marker alone never passes the cases. OpenCode V2 offers `Allow once` and `Allow always`. For these external tools, `Allow always` saves a project-scoped policy tied to the pinned source or artifact, script, destination parent, script policy and limits; a changed value prompts again. The tool revalidates the exact current destination and refuses occupied snapshots or case logs even when a saved policy matches. Configured denials still take precedence. The case and build policies are separate, and neither grants a general networked shell. These Windows actions are outside the Linux managed shell and its acceptance gates; their approval states the allowed snapshot writes and script policy. A failed or interrupted action retains the snapshot and available log for inspection, and an occupied destination or existing case log requires a new reviewed action. Restart OpenCode after installing this plugin version; running sessions retain their loaded plugin.
 

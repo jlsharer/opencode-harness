@@ -9,7 +9,7 @@ import { enforceRecoveryShell } from "./managed-execution.js";
 import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
 import { validateTaskResult } from "./task-contracts.js";
 import { appendV2CompactionContext } from "./compaction-handoff.js";
-import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, verifyWin64CaseLog, } from "./external-win64-relaunch.js";
+import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, verifyWin64CaseLog, planVerifiedWin64Relaunch, launchVerifiedWin64Snapshot, } from "./external-win64-relaunch.js";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.mjs";
 import { normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, } from "../routing/routing-policy.mjs";
 import { planTraceRootPermissions, TRACE_ONLY_ROLES, TRACE_PERMISSION_ROLES, } from "./trace-root-permissions.js";
@@ -38,6 +38,7 @@ export const BOUNDED_APPROVAL_ACTIONS = [
     "harness.external-recovery-shell",
     "harness.external-win64-build",
     "harness.external-win64-cases",
+    "harness.external-win64-verified-relaunch",
 ];
 export function boundedApproval(action, challenge, policy) {
     if (!challenge || challenge.length > 16384)
@@ -1020,6 +1021,55 @@ export const V2NativePlugin = {
                     throw new Error("V2 harness guard is not active");
                 dispatch.assertExternalActionCaller(caller.sessionID);
                 return output(verifyWin64CaseLog(workspaceRoot, String(args.snapshot)));
+            });
+            add("harness_win64_relaunch_plan", "Read-only exact Editor relaunch plan for an existing snapshot with nine verified passing native case results", ["snapshot"], async (args, caller) => {
+                if (!ready || activationFailed)
+                    throw new Error("V2 harness guard is not active");
+                dispatch.assertExternalActionCaller(caller.sessionID);
+                return output(planVerifiedWin64Relaunch(workspaceRoot, String(args.snapshot)));
+            });
+            add("harness_external_win64_verified_relaunch", "Primary-only owner-approved Editor launch of an exact verified passing Win64 snapshot; never a managed gate or PIE verdict", ["request"], async (args, caller) => {
+                if (!ready || activationFailed || !caller.agent)
+                    throw new Error("V2 harness guard or relaunch caller unavailable");
+                dispatch.assertExternalActionCaller(caller.sessionID);
+                const request = exactActionRequest(args.request, [
+                    "snapshot",
+                    "destination",
+                    "scriptSha256",
+                    "sourceSha256",
+                    "manifestSha256",
+                    "caseLogSha256",
+                    "scriptPolicy",
+                    "permittedWrites",
+                    "timeoutMs",
+                    "maxOutputBytes",
+                ]);
+                const planned = planVerifiedWin64Relaunch(workspaceRoot, request.snapshot);
+                for (const key of Object.keys(planned))
+                    if (request[key] !== planned[key])
+                        throw new Error(`Win64 relaunch plan changed: ${key}`);
+                await context.permission.assert({
+                    sessionID: caller.sessionID,
+                    agent: caller.agent,
+                    source: v2PermissionSource(caller),
+                    action: "harness.external-win64-verified-relaunch",
+                    ...boundedApproval("harness.external-win64-verified-relaunch", JSON.stringify({
+                        ...request,
+                        networkPolicy: "no-network-requested",
+                        managedGate: false,
+                    }), {
+                        workspaceRoot,
+                        destinationParent: path.win32.dirname(request.destination),
+                        scriptSha256: request.scriptSha256,
+                        sourceSha256: request.sourceSha256,
+                        scriptPolicy: request.scriptPolicy,
+                        permittedWrites: request.permittedWrites,
+                        timeoutMs: request.timeoutMs,
+                        maxOutputBytes: request.maxOutputBytes,
+                    }),
+                });
+                dispatch.assertExternalActionCaller(caller.sessionID);
+                return output(launchVerifiedWin64Snapshot(workspaceRoot, request));
             });
             add("harness_external_win64_cases", "Primary-only owner-approved nine native cases on an existing pinned snapshot; individual results required, never a managed gate", ["request"], async (args, caller) => {
                 if (!ready || activationFailed || !caller.agent)

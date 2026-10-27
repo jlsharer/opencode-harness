@@ -29,6 +29,7 @@ test("V2 bounded actions offer project-scoped saved patterns and bind the native
     ])
         assert.notDeepEqual(boundedApproval(action, "{exact first snapshot}", changed).save, one.save);
     assert.notDeepEqual(boundedApproval("harness.external-win64-cases", "same", policy).save, one.save);
+    assert.notDeepEqual(boundedApproval("harness.external-win64-verified-relaunch", "same", policy).save, one.save);
     const rules = primaryExternalApprovalRules([
         { action: "*", resource: "*", effect: "allow" },
         { action, resource: "C:\\Protected\\*", effect: "deny" },

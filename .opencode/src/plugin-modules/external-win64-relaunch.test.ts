@@ -21,6 +21,8 @@ import {
   runWin64Cases,
   verifyWin64Snapshot,
   verifyWin64CaseLog,
+  planVerifiedWin64Relaunch,
+  launchVerifiedWin64Snapshot,
 } from "./external-win64-relaunch.ts";
 
 const snapshot = "OpenCourtPlayProbe-DirectionalMannyR1-20261026";
@@ -302,6 +304,104 @@ test("one pinned snapshot launches through fixed executable without Prepare or a
       /hash changed/,
     );
     assert.equal(calls.length, 2);
+  } finally {
+    rmSync(workspace, { recursive: true, force: true });
+  }
+});
+
+test("verified passing snapshot can be exactly approved for Editor relaunch without launch-time opt-in", () => {
+  const workspace = mkdtempSync(path.join(os.tmpdir(), "harness-win64-verified-relaunch-"));
+  const destination = path.join(workspace, "snapshot");
+  const named = "OpenCourtPlayProbe-PassingR2";
+  const windowsDestination = "C:\\Private\\OpenCourtPlayProbe-PassingR2";
+  try {
+    for (const relative of ["scripts", "Config", "Content", "Source"])
+      mkdirSync(path.join(workspace, relative));
+    for (const relative of ["scripts/launch_local_play.ps1", ...sourceFiles])
+      writeFileSync(path.join(workspace, relative), `${relative}\n`);
+    fixtureSnapshot(workspace, destination, named);
+    const caseNames = [
+      "AxisAndPawn",
+      "BallContact",
+      "BallContactNoContact",
+      "CameraFacingPlayer",
+      "CameraFollowProxy",
+      "FreeHandPhysicalHit",
+      "JumpLanding",
+      "PlayScene",
+      "UnsupportedAndNonFloor",
+    ];
+    const log = path.join(destination, `OpenCourtAutomation-${named}.log`);
+    writeFileSync(
+      log,
+      caseNames
+        .map(
+          (name) =>
+            `Result={Success} Name={${name}} Path={OpenCourt.Player.ExperimentalMovement.${name}}`,
+        )
+        .join("\n") + "\n9 tests performed\nTestExit: Automation Test Queue Empty\n",
+    );
+    const launches: string[][] = [];
+    const run = (file: string, args: string[]) => {
+      if (file === "/usr/bin/wslpath")
+        return {
+          status: 0,
+          stdout:
+            args[0] === "-u"
+              ? `${destination}\n`
+              : "\\\\wsl.localhost\\Ubuntu\\home\\test\\scripts\\launch_local_play.ps1\n",
+          stderr: "",
+        };
+      if (args.includes("-Plan"))
+        return {
+          status: 0,
+          stdout: JSON.stringify({
+            snapshot: named,
+            destination: windowsDestination,
+            exists: true,
+            engineVersion: "5.8.3",
+          }),
+          stderr: "",
+        };
+      launches.push(args);
+      return { status: 0, stdout: `Started ${named} (PID 42)\n`, stderr: "" };
+    };
+    const plan = planVerifiedWin64Relaunch(workspace, named, run);
+    assert.equal(plan.permittedWrites, "existing-snapshot-editor-generated-only");
+    assert.throws(
+      () =>
+        launchVerifiedWin64Snapshot(
+          workspace,
+          {
+            ...plan,
+            manifestSha256: "0".repeat(64),
+            timeoutMs: 30000,
+            maxOutputBytes: 4096,
+          },
+          run,
+        ),
+      /plan changed/,
+    );
+    assert.equal(launches.length, 0);
+    const result = launchVerifiedWin64Snapshot(
+      workspace,
+      {
+        ...plan,
+        timeoutMs: 30000,
+        maxOutputBytes: 4096,
+      },
+      run,
+    );
+    assert.equal(result.status, "launched");
+    assert.equal(result.managedGate, false);
+    assert.deepEqual(launches[0]?.slice(-4), [
+      "-Snapshot",
+      named,
+      "-ExpectedDestination",
+      windowsDestination,
+    ]);
+    writeFileSync(log, "incomplete log");
+    assert.throws(() => planVerifiedWin64Relaunch(workspace, named, run), /nine verified passing/);
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

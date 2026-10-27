@@ -550,6 +550,87 @@ export function verifyWin64CaseLog(workspaceRoot: string, snapshot: string, run:
   };
 }
 
+export function planVerifiedWin64Relaunch(
+  workspaceRoot: string,
+  snapshot: string,
+  run: Run = nativeRun,
+) {
+  const verified = verifyWin64Snapshot(workspaceRoot, snapshot, run);
+  const cases = verifyWin64CaseLog(workspaceRoot, snapshot, run);
+  if (cases.status !== "observed-pass" || !cases.logSha256)
+    throw new Error(
+      "Win64 snapshot needs nine verified passing case results before Editor relaunch",
+    );
+  return {
+    snapshot,
+    destination: verified.destination,
+    scriptSha256: verified.scriptSha256,
+    sourceSha256: verified.sourceSha256,
+    manifestSha256: verified.manifestSha256,
+    caseLogSha256: cases.logSha256,
+    scriptPolicy: "allow-exact-script" as const,
+    permittedWrites: "existing-snapshot-editor-generated-only" as const,
+  };
+}
+
+export interface VerifiedWin64RelaunchRequest extends ReturnType<typeof planVerifiedWin64Relaunch> {
+  timeoutMs: number;
+  maxOutputBytes: number;
+}
+
+export function launchVerifiedWin64Snapshot(
+  workspaceRoot: string,
+  request: VerifiedWin64RelaunchRequest,
+  run: Run = nativeRun,
+) {
+  if (
+    !Number.isSafeInteger(request.timeoutMs) ||
+    request.timeoutMs < 1 ||
+    request.timeoutMs > 120000 ||
+    !Number.isSafeInteger(request.maxOutputBytes) ||
+    request.maxOutputBytes < 1 ||
+    request.maxOutputBytes > 16384
+  )
+    throw new Error("Win64 relaunch limits are invalid");
+  const current = planVerifiedWin64Relaunch(workspaceRoot, request.snapshot, run);
+  for (const key of Object.keys(current) as (keyof typeof current)[])
+    if (request[key] !== current[key]) throw new Error(`Win64 relaunch plan changed: ${key}`);
+  const windowsScript = windowsScriptPath(scriptIdentity(workspaceRoot).script, run);
+  const result = run(
+    "/mnt/c/WINDOWS/System32/WindowsPowerShell/v1.0/powershell.exe",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-ExecutionPolicy",
+      "Bypass",
+      "-File",
+      windowsScript,
+      "-Snapshot",
+      request.snapshot,
+      "-ExpectedDestination",
+      request.destination,
+    ],
+    { timeoutMs: request.timeoutMs, maxOutputBytes: request.maxOutputBytes },
+  );
+  if (result.error || result.status !== 0)
+    throw new Error(`verified Win64 snapshot relaunch failed (exit ${String(result.status)})`);
+  if (
+    !result.stdout.includes(`Started ${request.snapshot} (PID `) &&
+    !result.stdout.includes(`Already running ${request.snapshot} (PID `)
+  )
+    throw new Error("Windows relaunch did not report the selected snapshot PID");
+  return {
+    status: "launched" as const,
+    managedGate: false as const,
+    snapshot: request.snapshot,
+    destination: request.destination,
+    manifestSha256: request.manifestSha256,
+    caseLogSha256: request.caseLogSha256,
+    nativeExitCode: 0 as const,
+    output: result.stdout.trim().slice(0, 1024),
+  };
+}
+
 export function parseWin64RelaunchPolicy(value: string | undefined): Win64RelaunchPolicy | null {
   if (value === undefined) return null;
   let parsed: unknown;
