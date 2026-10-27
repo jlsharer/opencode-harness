@@ -1,6 +1,6 @@
 {
   "name": "opencode-harness-runtime",
-  "version": "0.1.16",
+  "version": "0.1.17",
   "description": "No-copy external runtime launcher for the OpenCode delegation harness",
   "type": "module",
   "private": false,

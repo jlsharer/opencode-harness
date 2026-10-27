@@ -96,6 +96,94 @@ function sourceTreeSha256(workspaceRoot: string): string {
   return createHash("sha256").update(records.sort().join("\n")).digest("hex");
 }
 
+function parseManifest(bytes: Buffer): Record<string, unknown> {
+  if (bytes.length < 2 || bytes.length > 1024 * 1024)
+    throw new Error("Win64 snapshot manifest size is invalid");
+  const text = bytes.toString("utf8").replace(/^\uFEFF/, "");
+  const value: unknown = JSON.parse(text);
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new Error("Win64 snapshot manifest is invalid");
+  return value as Record<string, unknown>;
+}
+
+function manifestFile(base: string, relative: string): string {
+  const parts = relative.replaceAll("\\", "/").split("/");
+  if (parts.some((part) => !part || part === "." || part === ".." || /[:\0]/.test(part)))
+    throw new Error("unsafe Win64 snapshot manifest path");
+  let current = base;
+  for (const part of parts) {
+    current = path.join(current, part);
+    if (lstatSync(current).isSymbolicLink())
+      throw new Error("symlink in Win64 snapshot manifest path");
+  }
+  if (!lstatSync(current).isFile()) throw new Error("non-file Win64 snapshot manifest entry");
+  return current;
+}
+
+function verifyManifestFiles(workspaceRoot: string, destination: string, snapshot: string) {
+  const manifestPath = manifestFile(destination, "local-play-build.json");
+  const bytes = readFileSync(manifestPath);
+  const manifest = parseManifest(bytes);
+  if (
+    manifest.snapshot !== snapshot ||
+    manifest.engineVersion !== "5.8.3" ||
+    !Array.isArray(manifest.source) ||
+    !Array.isArray(manifest.modules) ||
+    manifest.source.length < 5 ||
+    manifest.source.length > 1024 ||
+    manifest.modules.length !== 3
+  )
+    throw new Error("Win64 snapshot manifest is incomplete");
+  const expectedModules = new Set([
+    "Binaries/Win64/UnrealEditor-OpenCourt.dll",
+    "Binaries/Win64/UnrealEditor-OpenCourtSimCore.dll",
+    "Binaries/Win64/UnrealEditor-OpenCourtSimTests.dll",
+  ]);
+  const seen = new Set<string>();
+  let verifiedBytes = 0;
+  const verifyEntry = (raw: unknown, group: "source" | "modules") => {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw))
+      throw new Error("Win64 snapshot manifest entry is invalid");
+    const entry = raw as Record<string, unknown>;
+    if (
+      typeof entry.path !== "string" ||
+      typeof entry.sha256 !== "string" ||
+      !/^[a-f0-9]{64}$/i.test(entry.sha256)
+    )
+      throw new Error("Win64 snapshot manifest hash is invalid");
+    const relative = entry.path.replaceAll("\\", "/");
+    const key = relative.toLowerCase();
+    if (seen.has(key)) throw new Error("duplicate Win64 snapshot manifest path");
+    seen.add(key);
+    if (
+      group === "source" &&
+      relative !== "OpenCourt.uproject" &&
+      !/^(Config|Content|Source)\//.test(relative)
+    )
+      throw new Error("Win64 snapshot source path is out of scope");
+    if (group === "modules" && !expectedModules.has(relative))
+      throw new Error("Win64 snapshot module path is out of scope");
+    for (const base of group === "source" ? [workspaceRoot, destination] : [destination]) {
+      const file = manifestFile(base, relative);
+      const content = readFileSync(file);
+      verifiedBytes += content.length;
+      if (verifiedBytes > 1024 * 1024 * 1024)
+        throw new Error("Win64 snapshot verification byte limit exceeded");
+      if (createHash("sha256").update(content).digest("hex") !== entry.sha256.toLowerCase())
+        throw new Error(`Win64 snapshot hash mismatch: ${relative}`);
+    }
+  };
+  for (const entry of manifest.source) verifyEntry(entry, "source");
+  for (const entry of manifest.modules) verifyEntry(entry, "modules");
+  if ([...expectedModules].some((item) => !seen.has(item.toLowerCase())))
+    throw new Error("Win64 snapshot module inventory is incomplete");
+  return {
+    manifestSha256: createHash("sha256").update(bytes).digest("hex"),
+    inputCount: manifest.source.length,
+    moduleCount: manifest.modules.length,
+  };
+}
+
 export interface Win64BuildPlan {
   snapshot: string;
   destination: string;
@@ -224,29 +312,17 @@ export function buildWin64Snapshot(
   if (converted.error || converted.status !== 0 || !converted.stdout.trim())
     throw new Error("built snapshot path conversion failed");
   const destination = converted.stdout.trim();
-  const manifest = path.join(destination, "local-play-build.json");
-  if (!existsSync(manifest))
-    throw new Error("Win64 build returned success without snapshot manifest");
-  const bytes = readFileSync(manifest);
-  const data = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
-  if (
-    data.snapshot !== request.snapshot ||
-    data.engineVersion !== "5.8.3" ||
-    !Array.isArray(data.source) ||
-    !Array.isArray(data.modules) ||
-    data.modules.length !== 3
-  )
-    throw new Error("Win64 build manifest is incomplete");
+  const proof = verifyManifestFiles(workspaceRoot, destination, request.snapshot);
   return {
     status: "built" as const,
     managedGate: false as const,
     snapshot: request.snapshot,
     destination: request.destination,
     exitCode: 0 as const,
-    manifestSha256: createHash("sha256").update(bytes).digest("hex"),
+    manifestSha256: proof.manifestSha256,
     sourceSha256: request.sourceSha256,
-    inputCount: data.source.length,
-    moduleCount: data.modules.length,
+    inputCount: proof.inputCount,
+    moduleCount: proof.moduleCount,
   };
 }
 
@@ -273,13 +349,9 @@ export interface Win64CasesPlan {
   permittedWrites: "new-case-log-and-snapshot-generated-only";
 }
 
-export function planWin64Cases(
-  workspaceRoot: string,
-  snapshot: string,
-  run: Run = nativeRun,
-): Win64CasesPlan {
+export function verifyWin64Snapshot(workspaceRoot: string, snapshot: string, run: Run = nativeRun) {
   if (!SNAPSHOT.test(snapshot)) throw new Error("invalid Win64 snapshot name");
-  if (process.platform !== "linux") throw new Error("Win64 cases require WSL Linux");
+  if (process.platform !== "linux") throw new Error("Win64 verification requires WSL Linux");
   const { script, sha256 } = scriptIdentity(workspaceRoot);
   const windowsScript = windowsScriptPath(script, run);
   const result = run(
@@ -297,15 +369,15 @@ export function planWin64Cases(
     ],
     { timeoutMs: 30000, maxOutputBytes: 16384 },
   );
-  if (result.error || result.status !== 0) throw new Error("Win64 cases plan failed");
+  if (result.error || result.status !== 0) throw new Error("Win64 snapshot plan failed");
   let value: unknown;
   try {
     value = JSON.parse(result.stdout.trim());
   } catch {
-    throw new Error("Win64 cases plan is not JSON");
+    throw new Error("Win64 snapshot plan is not JSON");
   }
   if (!value || typeof value !== "object" || Array.isArray(value))
-    throw new Error("Win64 cases plan is invalid");
+    throw new Error("Win64 snapshot plan is invalid");
   const planned = value as Record<string, unknown>;
   if (
     planned.snapshot !== snapshot ||
@@ -315,31 +387,43 @@ export function planWin64Cases(
     !WINDOWS_PATH.test(planned.destination) ||
     planned.destination.split("\\").some((part) => part === "." || part === "..")
   )
-    throw new Error("Win64 cases destination is absent or invalid");
+    throw new Error("Win64 snapshot destination is absent or invalid");
   const converted = run("/usr/bin/wslpath", ["-u", planned.destination]);
   if (converted.error || converted.status !== 0 || !converted.stdout.trim())
-    throw new Error("Win64 cases path conversion failed");
+    throw new Error("Win64 snapshot path conversion failed");
   const destination = converted.stdout.trim();
-  const manifestPath = path.join(destination, "local-play-build.json");
-  const bytes = readFileSync(manifestPath);
-  const manifest = JSON.parse(bytes.toString("utf8")) as Record<string, unknown>;
-  if (
-    manifest.snapshot !== snapshot ||
-    manifest.engineVersion !== "5.8.3" ||
-    !Array.isArray(manifest.source) ||
-    !Array.isArray(manifest.modules) ||
-    manifest.modules.length !== 3
-  )
-    throw new Error("Win64 cases snapshot manifest is incomplete");
-  const caseLog = `${planned.destination}\\OpenCourtAutomation-${snapshot}.log`;
-  if (existsSync(path.join(destination, `OpenCourtAutomation-${snapshot}.log`)))
-    throw new Error("Win64 cases log already exists");
+  const proof = verifyManifestFiles(workspaceRoot, destination, snapshot);
   return {
+    status: "verified" as const,
+    managedGate: false as const,
+    buildExitCode: "not-observed" as const,
     snapshot,
     destination: planned.destination,
     scriptSha256: sha256,
     sourceSha256: sourceTreeSha256(workspaceRoot),
-    manifestSha256: createHash("sha256").update(bytes).digest("hex"),
+    ...proof,
+  };
+}
+
+export function planWin64Cases(
+  workspaceRoot: string,
+  snapshot: string,
+  run: Run = nativeRun,
+): Win64CasesPlan {
+  const verified = verifyWin64Snapshot(workspaceRoot, snapshot, run);
+  const converted = run("/usr/bin/wslpath", ["-u", verified.destination]);
+  if (converted.error || converted.status !== 0 || !converted.stdout.trim())
+    throw new Error("Win64 cases path conversion failed");
+  const destination = converted.stdout.trim();
+  const caseLog = `${verified.destination}\\OpenCourtAutomation-${snapshot}.log`;
+  if (existsSync(path.join(destination, `OpenCourtAutomation-${snapshot}.log`)))
+    throw new Error("Win64 cases log already exists");
+  return {
+    snapshot,
+    destination: verified.destination,
+    scriptSha256: verified.scriptSha256,
+    sourceSha256: verified.sourceSha256,
+    manifestSha256: verified.manifestSha256,
     caseLog,
     scriptPolicy: "allow-exact-script",
     permittedWrites: "new-case-log-and-snapshot-generated-only",
@@ -400,8 +484,8 @@ export function runWin64Cases(
   if (converted.error || converted.status !== 0 || !converted.stdout.trim())
     throw new Error("Win64 cases path conversion failed after execution");
   const destination = converted.stdout.trim();
-  const manifestBytes = readFileSync(path.join(destination, "local-play-build.json"));
-  if (createHash("sha256").update(manifestBytes).digest("hex") !== request.manifestSha256)
+  const proof = verifyManifestFiles(workspaceRoot, destination, request.snapshot);
+  if (proof.manifestSha256 !== request.manifestSha256)
     throw new Error("Win64 snapshot manifest changed during cases");
   const logPath = path.join(destination, `OpenCourtAutomation-${request.snapshot}.log`);
   const logBytes = existsSync(logPath) ? readFileSync(logPath) : null;

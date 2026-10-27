@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
-import { forceExactActionAsk, v2DispatchStatus, v2HarnessToolCodeMode, v2PermissionSource, } from "./v2-native-plugin.js";
-test("V2 exact actions force a fresh ask and bind the native tool call source", () => {
+import { boundedApproval, primaryExternalApprovalRules, v2DispatchStatus, v2HarnessToolCodeMode, v2PermissionSource, } from "./v2-native-plugin.js";
+test("V2 bounded actions offer project-scoped saved patterns and bind the native tool call source", () => {
     assert.deepEqual(v2PermissionSource({
         sessionID: "primary",
         agent: "build",
@@ -10,22 +10,31 @@ test("V2 exact actions force a fresh ask and bind the native tool call source", 
         id: "call",
     }), { type: "tool", messageID: "message", id: "call" });
     assert.throws(() => v2PermissionSource({ sessionID: "primary", agent: "build" }));
-    for (const action of [
-        "harness.external-artifact-download",
-        "harness.external-archive-install",
-        "harness.external-recovery-build",
-        "harness.external-recovery-shell",
-    ]) {
-        const event = { action, effect: "allow" };
-        forceExactActionAsk(event);
-        assert.equal(event.effect, "ask");
-        const denied = { action, effect: "deny" };
-        forceExactActionAsk(denied);
-        assert.equal(denied.effect, "deny");
-    }
-    const unrelated = { action: "read", effect: "allow" };
-    forceExactActionAsk(unrelated);
-    assert.equal(unrelated.effect, "allow");
+    const action = "harness.external-win64-build";
+    const policy = {
+        scriptSha256: "a".repeat(64),
+        sourceSha256: "b".repeat(64),
+        destinationParent: "C:\\Private",
+        timeoutMs: 3600000,
+    };
+    const one = boundedApproval(action, "{exact first snapshot}", policy);
+    const two = boundedApproval(action, "{exact second snapshot}", policy);
+    assert.deepEqual(one.save, two.save);
+    assert.notDeepEqual(one.resources, two.resources);
+    for (const changed of [
+        { ...policy, scriptSha256: "c".repeat(64) },
+        { ...policy, sourceSha256: "c".repeat(64) },
+        { ...policy, destinationParent: "D:\\Other" },
+        { ...policy, timeoutMs: 7200000 },
+    ])
+        assert.notDeepEqual(boundedApproval(action, "{exact first snapshot}", changed).save, one.save);
+    assert.notDeepEqual(boundedApproval("harness.external-win64-cases", "same", policy).save, one.save);
+    const rules = primaryExternalApprovalRules([
+        { action: "*", resource: "*", effect: "allow" },
+        { action, resource: "C:\\Protected\\*", effect: "deny" },
+    ]);
+    assert.deepEqual(rules.at(-1), { action, resource: "C:\\Protected\\*", effect: "deny" });
+    assert.ok(rules.some((item) => item.action === action && item.effect === "ask"));
 });
 test("only the read-only status alias enters Code Mode; direct status remains available", () => {
     assert.equal(v2HarnessToolCodeMode("harness_dispatch_status_code"), true);

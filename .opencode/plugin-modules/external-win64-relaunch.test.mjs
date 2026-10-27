@@ -1,13 +1,45 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, unlinkSync, readFileSync, copyFileSync, } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, } from "./external-win64-relaunch.js";
+import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, } from "./external-win64-relaunch.js";
 const snapshot = "OpenCourtPlayProbe-DirectionalMannyR1-20261026";
 const bytes = "# pinned local play script\n";
 const hash = createHash("sha256").update(bytes).digest("hex");
+const sourceFiles = [
+    "OpenCourt.uproject",
+    "Config/DefaultEngine.ini",
+    "Config/DefaultInput.ini",
+    "Content/README.md",
+    "Source/Pawn.cpp",
+];
+const modules = ["OpenCourt", "OpenCourtSimCore", "OpenCourtSimTests"];
+function fixtureSnapshot(workspace, destination, named) {
+    mkdirSync(destination);
+    for (const directory of ["Config", "Content", "Source", "Binaries", "Binaries/Win64"])
+        mkdirSync(path.join(destination, directory), { recursive: true });
+    const source = sourceFiles.map((relative) => {
+        const from = path.join(workspace, relative);
+        const to = path.join(destination, relative);
+        copyFileSync(from, to);
+        return {
+            path: relative.replaceAll("/", "\\"),
+            sha256: createHash("sha256").update(readFileSync(from)).digest("hex").toUpperCase(),
+        };
+    });
+    const moduleEntries = modules.map((name) => {
+        const relative = `Binaries/Win64/UnrealEditor-${name}.dll`;
+        const file = path.join(destination, relative);
+        writeFileSync(file, name);
+        return {
+            path: relative.replaceAll("/", "\\"),
+            sha256: createHash("sha256").update(readFileSync(file)).digest("hex").toUpperCase(),
+        };
+    });
+    writeFileSync(path.join(destination, "local-play-build.json"), `\uFEFF${JSON.stringify({ snapshot: named, engineVersion: "5.8.3", source, modules: moduleEntries })}`);
+}
 test("opt-in policy is exact, not arbitrary shell input", () => {
     assert.equal(parseWin64RelaunchPolicy(undefined), null);
     assert.deepEqual(parseWin64RelaunchPolicy(JSON.stringify({ snapshot, scriptSha256: hash })), {
@@ -30,13 +62,7 @@ test("new Win64 build is pinned to exact source, script and nonoverwriting desti
     try {
         for (const relative of ["scripts", "Config", "Content", "Source"])
             mkdirSync(path.join(workspace, relative));
-        for (const relative of [
-            "scripts/launch_local_play.ps1",
-            "OpenCourt.uproject",
-            "Config/DefaultEngine.ini",
-            "Content/README.md",
-            "Source/Pawn.cpp",
-        ])
+        for (const relative of ["scripts/launch_local_play.ps1", ...sourceFiles])
             writeFileSync(path.join(workspace, relative), `${relative}\n`);
         const calls = [];
         let occupied = false;
@@ -63,13 +89,7 @@ test("new Win64 build is pinned to exact source, script and nonoverwriting desti
                 };
             assert.ok(args.includes("-Prepare") && args.includes("-NoLaunch"));
             assert.deepEqual(args.slice(-2), ["-ExpectedDestination", windowsDestination]);
-            mkdirSync(destination);
-            writeFileSync(path.join(destination, "local-play-build.json"), JSON.stringify({
-                snapshot: named,
-                engineVersion: "5.8.3",
-                source: [{ path: "Source/Pawn.cpp", sha256: "a" }],
-                modules: [{ path: "a" }, { path: "b" }, { path: "c" }],
-            }));
+            fixtureSnapshot(workspace, destination, named);
             occupied = true;
             return { status: 0, stdout: "Build complete", stderr: "" };
         };
@@ -95,22 +115,11 @@ test("native case action requires a fresh log and all nine individual successes"
     const named = "OpenCourtPlayProbe-CaseR1";
     const windowsDestination = "C:\\Private\\OpenCourtPlayProbe-CaseR1";
     try {
-        for (const relative of ["scripts", "Config", "Content", "Source", "snapshot"])
+        for (const relative of ["scripts", "Config", "Content", "Source"])
             mkdirSync(path.join(workspace, relative));
-        for (const relative of [
-            "scripts/launch_local_play.ps1",
-            "OpenCourt.uproject",
-            "Config/DefaultEngine.ini",
-            "Content/README.md",
-            "Source/Pawn.cpp",
-        ])
+        for (const relative of ["scripts/launch_local_play.ps1", ...sourceFiles])
             writeFileSync(path.join(workspace, relative), `${relative}\n`);
-        writeFileSync(path.join(destination, "local-play-build.json"), JSON.stringify({
-            snapshot: named,
-            engineVersion: "5.8.3",
-            source: [{ path: "Source/Pawn.cpp" }],
-            modules: [{ path: "a" }, { path: "b" }, { path: "c" }],
-        }));
+        fixtureSnapshot(workspace, destination, named);
         let runCount = 0;
         let omit = "";
         const names = [
@@ -154,6 +163,14 @@ test("native case action requires a fresh log and all nine individual successes"
             return { status: 0, stdout: "queue empty", stderr: "" };
         };
         const plan = planWin64Cases(workspace, named, run);
+        const verified = verifyWin64Snapshot(workspace, named, run);
+        assert.equal(verified.status, "verified");
+        assert.equal(verified.buildExitCode, "not-observed");
+        assert.equal(verified.inputCount, 5);
+        assert.equal(verified.moduleCount, 3);
+        writeFileSync(path.join(destination, "Source/Pawn.cpp"), "changed");
+        assert.throws(() => verifyWin64Snapshot(workspace, named, run), /hash mismatch/);
+        copyFileSync(path.join(workspace, "Source/Pawn.cpp"), path.join(destination, "Source/Pawn.cpp"));
         assert.throws(() => runWin64Cases(workspace, { ...plan, manifestSha256: "0".repeat(64), timeoutMs: 1000, maxOutputBytes: 1000 }, run), /plan changed/);
         assert.equal(runCount, 0);
         omit = "CameraFollowProxy";

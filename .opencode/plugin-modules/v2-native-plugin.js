@@ -9,7 +9,7 @@ import { enforceRecoveryShell } from "./managed-execution.js";
 import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
 import { validateTaskResult } from "./task-contracts.js";
 import { appendV2CompactionContext } from "./compaction-handoff.js";
-import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, } from "./external-win64-relaunch.js";
+import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, } from "./external-win64-relaunch.js";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.mjs";
 import { normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, } from "../routing/routing-policy.mjs";
 import { planTraceRootPermissions, TRACE_ONLY_ROLES, TRACE_PERMISSION_ROLES, } from "./trace-root-permissions.js";
@@ -31,17 +31,28 @@ export function v2PermissionSource(caller) {
         throw new Error("native V2 tool invocation identity unavailable");
     return { type: "tool", messageID, id };
 }
-export function forceExactActionAsk(event) {
-    if (event.effect === "allow" &&
-        [
-            "harness.external-artifact-download",
-            "harness.external-archive-install",
-            "harness.external-recovery-build",
-            "harness.external-recovery-shell",
-            "harness.external-win64-build",
-            "harness.external-win64-cases",
-        ].includes(event.action))
-        event.effect = "ask";
+export const BOUNDED_APPROVAL_ACTIONS = [
+    "harness.external-artifact-download",
+    "harness.external-archive-install",
+    "harness.external-recovery-build",
+    "harness.external-recovery-shell",
+    "harness.external-win64-build",
+    "harness.external-win64-cases",
+];
+export function boundedApproval(action, challenge, policy) {
+    if (!challenge || challenge.length > 16384)
+        throw new Error("bounded approval challenge invalid");
+    const digest = createHash("sha256")
+        .update(JSON.stringify({ schemaVersion: 1, action, policy }))
+        .digest("hex");
+    const prefix = `harness-policy-v1:${digest}:`;
+    return { resources: [`${prefix}${challenge}`], save: [`${prefix}*`] };
+}
+export function primaryExternalApprovalRules(existing) {
+    const asks = BOUNDED_APPROVAL_ACTIONS.map((action) => ({ action, resource: "*", effect: "ask" }));
+    // Keep configured denies last so neither an ask nor a saved approval can override them.
+    const denies = existing.filter((rule) => rule.effect === "deny");
+    return [...existing, ...asks, ...denies];
 }
 function record(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
@@ -263,7 +274,7 @@ async function registerRoles(context, plan) {
                 if (!Array.isArray(agent.permissions))
                     throw new Error("V2 primary permissions unavailable");
                 agent.permissions = [
-                    ...agent.permissions,
+                    ...primaryExternalApprovalRules(agent.permissions),
                     { action: "execute", resource: "*", effect: "deny" },
                 ];
             });
@@ -549,9 +560,6 @@ export const V2NativePlugin = {
                 dispatch.sessionCreated({ id: data.sessionID, parentID: data.parentID });
             }
         })().catch(() => dispatch.interrupt("V2 native session event stream unavailable"));
-        await context.permission.hook("evaluate", async (event) => {
-            forceExactActionAsk(event);
-        });
         await context.tool.hook("execute.before", async (event) => {
             if (event.tool === "subagent") {
                 if (!ready)
@@ -580,20 +588,25 @@ export const V2NativePlugin = {
                 const timeoutMs = typeof args.timeout === "number" && Number.isSafeInteger(args.timeout) && args.timeout > 0
                     ? Math.min(args.timeout, 300000)
                     : 300000;
+                const challenge = JSON.stringify({
+                    command: args.command,
+                    writeRoot: root,
+                    network: false,
+                    scriptPolicy: "allow-exact-command",
+                    timeoutMs,
+                });
                 await context.permission.assert({
                     sessionID: event.sessionID,
                     agent: event.agent,
                     source: { type: "tool", messageID: event.messageID, id: event.id },
                     action: "harness.external-recovery-shell",
-                    resources: [
-                        JSON.stringify({
-                            command: args.command,
-                            writeRoot: root,
-                            network: false,
-                            scriptPolicy: "allow-exact-command",
-                            timeoutMs,
-                        }),
-                    ],
+                    ...boundedApproval("harness.external-recovery-shell", challenge, {
+                        command: args.command,
+                        writeRoot: root,
+                        network: false,
+                        scriptPolicy: "allow-exact-command",
+                        timeoutMs,
+                    }),
                 });
                 if (!(dispatch.snapshot().stopped || dispatch.isActiveParent(event.sessionID)) ||
                     dispatch.isolatedPrimaryShellRoot(event.sessionID) !== root)
@@ -811,7 +824,13 @@ export const V2NativePlugin = {
                         agent: caller.agent,
                         source: v2PermissionSource(caller),
                         action: "harness.external-artifact-download",
-                        resources: [challenge],
+                        ...boundedApproval("harness.external-artifact-download", challenge, {
+                            sourceUrl: request.url,
+                            sha256: request.sha256,
+                            destinationParent: path.dirname(request.destination),
+                            maxBytes: request.maxBytes,
+                            timeoutMs: request.timeoutMs,
+                        }),
                     });
                     actionPath(request.destination, await actionRoot(caller));
                     return challenge;
@@ -839,7 +858,17 @@ export const V2NativePlugin = {
                         agent: caller.agent,
                         source: v2PermissionSource(caller),
                         action: "harness.external-archive-install",
-                        resources: [challenge],
+                        ...boundedApproval("harness.external-archive-install", challenge, {
+                            sourceUrl: request.sourceUrl,
+                            version: request.version,
+                            archive: request.archive,
+                            sha256: request.sha256,
+                            destinationParent: path.dirname(request.destination),
+                            maxArchiveBytes: request.maxArchiveBytes,
+                            maxExpandedBytes: request.maxExpandedBytes,
+                            maxFiles: request.maxFiles,
+                            scriptPolicy: request.scriptPolicy,
+                        }),
                     });
                     const currentRoot = await actionRoot(caller);
                     actionPath(request.archive, currentRoot);
@@ -876,7 +905,11 @@ export const V2NativePlugin = {
                     agent: caller.agent,
                     source: v2PermissionSource(caller),
                     action: "harness.external-recovery-build",
-                    resources: [challenge],
+                    ...boundedApproval("harness.external-recovery-build", challenge, {
+                        ...request,
+                        writeRoot: root,
+                        network: false,
+                    }),
                 });
                 if ((await actionRoot(caller)) !== root)
                     throw new Error("recovery build scope changed after approval");
@@ -952,13 +985,20 @@ export const V2NativePlugin = {
                     agent: caller.agent,
                     source: v2PermissionSource(caller),
                     action: "harness.external-win64-build",
-                    resources: [
-                        JSON.stringify({
-                            ...request,
-                            networkPolicy: "no-network-requested",
-                            managedGate: false,
-                        }),
-                    ],
+                    ...boundedApproval("harness.external-win64-build", JSON.stringify({
+                        ...request,
+                        networkPolicy: "no-network-requested",
+                        managedGate: false,
+                    }), {
+                        workspaceRoot,
+                        scriptSha256: request.scriptSha256,
+                        sourceSha256: request.sourceSha256,
+                        destinationParent: path.win32.dirname(request.destination),
+                        scriptPolicy: request.scriptPolicy,
+                        permittedWrites: request.permittedWrites,
+                        timeoutMs: request.timeoutMs,
+                        maxOutputBytes: request.maxOutputBytes,
+                    }),
                 });
                 dispatch.assertExternalActionCaller(caller.sessionID);
                 return output(buildWin64Snapshot(workspaceRoot, request));
@@ -968,6 +1008,12 @@ export const V2NativePlugin = {
                     throw new Error("V2 harness guard is not active");
                 dispatch.assertExternalActionCaller(caller.sessionID);
                 return output(planWin64Cases(workspaceRoot, String(args.snapshot)));
+            });
+            add("harness_win64_snapshot_verify", "Read-only independent hashes for an existing Win64 snapshot and current source; no build or managed gate", ["snapshot"], async (args, caller) => {
+                if (!ready || activationFailed)
+                    throw new Error("V2 harness guard is not active");
+                dispatch.assertExternalActionCaller(caller.sessionID);
+                return output(verifyWin64Snapshot(workspaceRoot, String(args.snapshot)));
             });
             add("harness_external_win64_cases", "Primary-only owner-approved nine native cases on an existing pinned snapshot; individual results required, never a managed gate", ["request"], async (args, caller) => {
                 if (!ready || activationFailed || !caller.agent)
@@ -1002,13 +1048,20 @@ export const V2NativePlugin = {
                     agent: caller.agent,
                     source: v2PermissionSource(caller),
                     action: "harness.external-win64-cases",
-                    resources: [
-                        JSON.stringify({
-                            ...request,
-                            networkPolicy: "no-network-requested",
-                            managedGate: false,
-                        }),
-                    ],
+                    ...boundedApproval("harness.external-win64-cases", JSON.stringify({
+                        ...request,
+                        networkPolicy: "no-network-requested",
+                        managedGate: false,
+                    }), {
+                        workspaceRoot,
+                        scriptSha256: request.scriptSha256,
+                        sourceSha256: request.sourceSha256,
+                        destinationParent: path.win32.dirname(request.destination),
+                        scriptPolicy: request.scriptPolicy,
+                        permittedWrites: request.permittedWrites,
+                        timeoutMs: request.timeoutMs,
+                        maxOutputBytes: request.maxOutputBytes,
+                    }),
                 });
                 dispatch.assertExternalActionCaller(caller.sessionID);
                 return output(runWin64Cases(workspaceRoot, request));

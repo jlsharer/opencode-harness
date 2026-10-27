@@ -1,7 +1,7 @@
 {
   "schemaVersion": "1.0.0",
   "profile": "external-runtime",
-  "packageVersion": "0.1.16",
+  "packageVersion": "0.1.17",
   "compatibility": {
     "platform": "linux",
     "node": ">=24 <25"
