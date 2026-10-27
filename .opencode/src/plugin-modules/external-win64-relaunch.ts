@@ -487,38 +487,66 @@ export function runWin64Cases(
   const proof = verifyManifestFiles(workspaceRoot, destination, request.snapshot);
   if (proof.manifestSha256 !== request.manifestSha256)
     throw new Error("Win64 snapshot manifest changed during cases");
-  const logPath = path.join(destination, `OpenCourtAutomation-${request.snapshot}.log`);
-  const logBytes = existsSync(logPath) ? readFileSync(logPath) : null;
-  const log = logBytes?.toString("utf8") ?? "";
-  const results = [
-    ...log.matchAll(
-      /Result=\{([^}]+)\} Name=\{OpenCourt\.Player\.ExperimentalMovement\.([^}]+)\}/g,
-    ),
-  ].map((match) => ({ outcome: match[1], name: match[2] }));
-  const cases = NATIVE_CASES.map((name) => ({
-    name,
-    passed:
-      results.filter((item) => item.name === name && item.outcome === "Success").length === 1 &&
-      results.filter((item) => item.name === name).length === 1,
-  }));
-  const passed =
-    result.status === 0 &&
-    !result.error &&
-    logBytes !== null &&
-    results.length === NATIVE_CASES.length &&
-    cases.every((item) => item.passed) &&
-    /9 tests performed/i.test(log);
+  const observed = verifyWin64CaseLog(workspaceRoot, request.snapshot, run);
   return {
-    status: passed ? ("passed" as const) : ("failed" as const),
+    status:
+      observed.status === "pending"
+        ? ("pending" as const)
+        : observed.status === "failed"
+          ? ("failed" as const)
+          : result.status === 0 && !result.error
+            ? ("passed" as const)
+            : ("unconfirmed" as const),
     managedGate: false as const,
     snapshot: request.snapshot,
     destination: request.destination,
     exitCode: result.status,
     error: result.error?.message ?? null,
-    cases,
+    cases: observed.cases,
     caseLog: request.caseLog,
-    logSha256: logBytes ? createHash("sha256").update(logBytes).digest("hex") : null,
+    logSha256: observed.logSha256,
     output: `${result.stdout}\n${result.stderr}`.slice(-4096),
+  };
+}
+
+/** Read-only recovery for a native process that outlived its PowerShell caller. */
+export function verifyWin64CaseLog(workspaceRoot: string, snapshot: string, run: Run = nativeRun) {
+  const verified = verifyWin64Snapshot(workspaceRoot, snapshot, run);
+  const converted = run("/usr/bin/wslpath", ["-u", verified.destination]);
+  if (converted.error || converted.status !== 0 || !converted.stdout.trim())
+    throw new Error("Win64 cases path conversion failed");
+  const logPath = path.join(converted.stdout.trim(), `OpenCourtAutomation-${snapshot}.log`);
+  const logBytes = existsSync(logPath) ? readFileSync(logPath) : null;
+  const log = logBytes?.toString("utf8") ?? "";
+  const results = [
+    ...log.matchAll(
+      /Result=\{([^}]+)\} Name=\{([^}]+)\} Path=\{OpenCourt\.Player\.ExperimentalMovement\.([^}]+)\}/g,
+    ),
+  ].map((match) => ({ outcome: match[1], name: match[2], pathName: match[3] }));
+  const cases = NATIVE_CASES.map((name) => ({
+    name,
+    passed:
+      results.filter(
+        (item) => item.name === name && item.pathName === name && item.outcome === "Success",
+      ).length === 1 &&
+      results.filter((item) => item.name === name || item.pathName === name).length === 1,
+  }));
+  const complete =
+    /9 tests performed/i.test(log) && /TestExit: Automation Test Queue Empty/i.test(log);
+  return {
+    status: !complete
+      ? ("pending" as const)
+      : results.length === NATIVE_CASES.length && cases.every((item) => item.passed)
+        ? ("observed-pass" as const)
+        : ("failed" as const),
+    managedGate: false as const,
+    snapshot,
+    buildExitCode: "not-observed" as const,
+    caseProcessExitCode: "not-observed" as const,
+    manifestSha256: verified.manifestSha256,
+    cases,
+    caseLog: `${verified.destination}\\OpenCourtAutomation-${snapshot}.log`,
+    logSha256: logBytes ? createHash("sha256").update(logBytes).digest("hex") : null,
   };
 }
 

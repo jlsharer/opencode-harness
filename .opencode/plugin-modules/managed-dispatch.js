@@ -985,6 +985,7 @@ export function createManagedDispatch(options) {
             input.tool === "harness_external_win64_build" ||
             input.tool === "harness_win64_cases_plan" ||
             input.tool === "harness_win64_snapshot_verify" ||
+            input.tool === "harness_win64_cases_verify" ||
             input.tool === "harness_external_win64_cases") {
             if (typeof input.sessionID !== "string" || knownChildren.has(input.sessionID))
                 throw new Error("external artifact action requires a primary session");

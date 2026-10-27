@@ -36,6 +36,7 @@ import {
   runWin64Cases,
   type Win64CasesRequest,
   verifyWin64Snapshot,
+  verifyWin64CaseLog,
 } from "./external-win64-relaunch.ts";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.ts";
 import {
@@ -1370,6 +1371,16 @@ export const V2NativePlugin = {
           if (!ready || activationFailed) throw new Error("V2 harness guard is not active");
           dispatch.assertExternalActionCaller(caller.sessionID);
           return output(verifyWin64Snapshot(workspaceRoot, String(args.snapshot)));
+        },
+      );
+      add(
+        "harness_win64_cases_verify",
+        "Read-only results from a completed or pending nine-case log on the verified existing snapshot; no test execution or managed gate",
+        ["snapshot"],
+        async (args, caller) => {
+          if (!ready || activationFailed) throw new Error("V2 harness guard is not active");
+          dispatch.assertExternalActionCaller(caller.sessionID);
+          return output(verifyWin64CaseLog(workspaceRoot, String(args.snapshot)));
         },
       );
       add(

@@ -435,7 +435,7 @@ function manifest(): RuntimeManifest {
     Object.keys(value).sort().join(",") !== expected.sort().join(",") ||
     value.schemaVersion !== "1.0.0" ||
     value.profile !== "external-runtime" ||
-    value.packageVersion !== "0.1.17" ||
+    value.packageVersion !== "0.1.18" ||
     !Array.isArray(value.files) ||
     !Array.isArray(value.generatedEntries)
   )

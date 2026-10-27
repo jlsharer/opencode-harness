@@ -20,6 +20,7 @@ import {
   planWin64Cases,
   runWin64Cases,
   verifyWin64Snapshot,
+  verifyWin64CaseLog,
 } from "./external-win64-relaunch.ts";
 
 const snapshot = "OpenCourtPlayProbe-DirectionalMannyR1-20261026";
@@ -150,6 +151,7 @@ test("native case action requires a fresh log and all nine individual successes"
     fixtureSnapshot(workspace, destination, named);
     let runCount = 0;
     let omit = "";
+    let early = false;
     const names = [
       "AxisAndPawn",
       "BallContact",
@@ -185,12 +187,16 @@ test("native case action requires a fresh log and all nine individual successes"
       assert.ok(args.includes("-Cases") && !args.includes("-Prepare"));
       assert.deepEqual(args.slice(-2), ["-ExpectedDestination", windowsDestination]);
       runCount++;
+      if (early) return { status: 1, stdout: "", stderr: "native process still running" };
       writeFileSync(
         path.join(destination, `OpenCourtAutomation-${named}.log`),
         names
           .filter((name) => name !== omit)
-          .map((name) => `Result={Success} Name={OpenCourt.Player.ExperimentalMovement.${name}}`)
-          .join("\n") + "\n9 tests performed\n",
+          .map(
+            (name) =>
+              `Result={Success} Name={${name}} Path={OpenCourt.Player.ExperimentalMovement.${name}}`,
+          )
+          .join("\n") + "\n9 tests performed\nTestExit: Automation Test Queue Empty\n",
       );
       return { status: 0, stdout: "queue empty", stderr: "" };
     };
@@ -216,6 +222,15 @@ test("native case action requires a fresh log and all nine individual successes"
       /plan changed/,
     );
     assert.equal(runCount, 0);
+    early = true;
+    const pending = runWin64Cases(
+      workspace,
+      { ...plan, timeoutMs: 1000, maxOutputBytes: 1000 },
+      run,
+    );
+    assert.equal(pending.status, "pending");
+    assert.equal(verifyWin64CaseLog(workspace, named, run).status, "pending");
+    early = false;
     omit = "CameraFollowProxy";
     const result = runWin64Cases(
       workspace,
@@ -224,7 +239,7 @@ test("native case action requires a fresh log and all nine individual successes"
     );
     assert.equal(result.status, "failed");
     assert.equal(result.cases.find((item) => item.name === omit)?.passed, false);
-    assert.equal(runCount, 1);
+    assert.equal(runCount, 2);
     assert.throws(() => planWin64Cases(workspace, named, run), /log already exists/);
     unlinkSync(path.join(destination, `OpenCourtAutomation-${named}.log`));
     omit = "";
@@ -237,6 +252,7 @@ test("native case action requires a fresh log and all nine individual successes"
     assert.equal(success.status, "passed");
     assert.equal(success.cases.filter((item) => item.passed).length, 9);
     assert.match(success.logSha256 ?? "", /^[a-f0-9]{64}$/);
+    assert.equal(verifyWin64CaseLog(workspace, named, run).status, "observed-pass");
   } finally {
     rmSync(workspace, { recursive: true, force: true });
   }

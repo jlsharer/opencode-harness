@@ -676,10 +676,10 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     );
   const packageManifest = json("package.json");
   if (
-    packageManifest.version !== "0.1.17" ||
+    packageManifest.version !== "0.1.18" ||
     runtimeManifest.packageVersion !== packageManifest.version
   )
-    fail("Package and runtime manifest versions must both equal 0.1.17");
+    fail("Package and runtime manifest versions must both equal 0.1.18");
   if (runtimeManifest.compatibility?.opencode !== undefined)
     fail("Runtime manifest must not impose an OpenCode version gate");
   if (
@@ -700,8 +700,8 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
       fail(`Package files must exclude source-only payload: ${pathname}`);
   }
   const launcher = read("bin/opencode-harness.mjs");
-  if (!/value\.packageVersion\s*!==\s*["']0\.1\.17["']/.test(launcher))
-    fail("Runtime launcher must reject package versions other than 0.1.17");
+  if (!/value\.packageVersion\s*!==\s*["']0\.1\.18["']/.test(launcher))
+    fail("Runtime launcher must reject package versions other than 0.1.18");
   for (const snippet of [
     "diagnosticVersion",
     "opencode-${encodeURIComponent(opencodeVersion)}",
@@ -740,8 +740,8 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   }
   const design = read("opencode-harness.design.md");
   for (const snippet of [
-    "opencode-harness-runtime` 0.1.17",
-    "/0.1.17/opencode-<reported-version>/runtime",
+    "opencode-harness-runtime` 0.1.18",
+    "/0.1.18/opencode-<reported-version>/runtime",
     "0.1.16",
     "validate-inputs",
   ]) {
@@ -749,9 +749,9 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   }
   const readme = read("README.md");
   for (const snippet of [
-    "OpenCode Harness Runtime 0.1.17",
-    "opencode-harness-runtime-0.1.17.tgz",
-    "Package version `0.1.17`",
+    "OpenCode Harness Runtime 0.1.18",
+    "opencode-harness-runtime-0.1.18.tgz",
+    "Package version `0.1.18`",
     "retained version `0.1.16`",
     "no OpenCode version allowlist",
     "opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
@@ -850,7 +850,7 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
   if (!report) fail("npm pack dry-run must return one package report");
   if (
     report.name !== "opencode-harness-runtime" ||
-    report.version !== "0.1.17" ||
+    report.version !== "0.1.18" ||
     !Array.isArray(report.files)
   )
     fail("npm pack report identity is invalid");

@@ -9,7 +9,7 @@ import { enforceRecoveryShell } from "./managed-execution.js";
 import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
 import { validateTaskResult } from "./task-contracts.js";
 import { appendV2CompactionContext } from "./compaction-handoff.js";
-import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, } from "./external-win64-relaunch.js";
+import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, verifyWin64CaseLog, } from "./external-win64-relaunch.js";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.mjs";
 import { normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, } from "../routing/routing-policy.mjs";
 import { planTraceRootPermissions, TRACE_ONLY_ROLES, TRACE_PERMISSION_ROLES, } from "./trace-root-permissions.js";
@@ -1014,6 +1014,12 @@ export const V2NativePlugin = {
                     throw new Error("V2 harness guard is not active");
                 dispatch.assertExternalActionCaller(caller.sessionID);
                 return output(verifyWin64Snapshot(workspaceRoot, String(args.snapshot)));
+            });
+            add("harness_win64_cases_verify", "Read-only results from a completed or pending nine-case log on the verified existing snapshot; no test execution or managed gate", ["snapshot"], async (args, caller) => {
+                if (!ready || activationFailed)
+                    throw new Error("V2 harness guard is not active");
+                dispatch.assertExternalActionCaller(caller.sessionID);
+                return output(verifyWin64CaseLog(workspaceRoot, String(args.snapshot)));
             });
             add("harness_external_win64_cases", "Primary-only owner-approved nine native cases on an existing pinned snapshot; individual results required, never a managed gate", ["request"], async (args, caller) => {
                 if (!ready || activationFailed || !caller.agent)
