@@ -55,6 +55,82 @@ export function primaryExternalApprovalRules(existing) {
     const denies = existing.filter((rule) => rule.effect === "deny");
     return [...existing, ...asks, ...denies];
 }
+/** A registry rebuild may see only part of the project agent source. */
+export function transformHarnessAgents(editor, permissions, assignments, variants) {
+    // Primary restrictions apply even while a project role source is rebuilding.
+    for (const item of editor.list()) {
+        if (TRACE_PERMISSION_ROLES.includes(String(item.id)) ||
+            (item.mode !== "primary" && item.mode !== "all") ||
+            item.hidden === true)
+            continue;
+        editor.update(String(item.id), (agent) => {
+            if (!Array.isArray(agent.permissions))
+                throw new Error("V2 primary permissions unavailable");
+            agent.permissions = [
+                ...primaryExternalApprovalRules(agent.permissions),
+                { action: "execute", resource: "*", effect: "deny" },
+            ];
+        });
+    }
+    if (!TRACE_PERMISSION_ROLES.every((role) => editor.get(role)))
+        return;
+    for (const role of TRACE_PERMISSION_ROLES) {
+        editor.update(role, (agent) => {
+            const current = agent.permissions;
+            if (!Array.isArray(current))
+                throw new Error(`V2 role permissions unavailable: ${role}`);
+            const entry = permissions.find((item) => item.role === role);
+            agent.permissions = [
+                ...current,
+                { action: "execute", resource: "*", effect: "deny" },
+                { action: "subagent", resource: "*", effect: "deny" },
+                { action: "external_directory", resource: entry.externalDirectory, effect: "allow" },
+                ...(entry.edit ? [{ action: "edit", resource: entry.edit, effect: "allow" }] : []),
+            ];
+            const model = assignments[role]?.model;
+            if (model) {
+                const slash = model.indexOf("/");
+                agent.model = {
+                    providerID: model.slice(0, slash),
+                    id: model.slice(slash + 1),
+                    ...(variants[role] ? { variant: variants[role] } : {}),
+                };
+            }
+        });
+    }
+}
+export function effectiveHarnessRolesReady(agents, permissions, assignments, variants) {
+    const has = (agent, action, effect, resource) => Array.isArray(agent.permissions) &&
+        agent.permissions.some((item) => {
+            if (!item || typeof item !== "object")
+                return false;
+            const rule = item;
+            return (rule.action === action &&
+                rule.effect === effect &&
+                (resource === undefined || rule.resource === resource));
+        });
+    const roles = TRACE_PERMISSION_ROLES.every((role) => {
+        const agent = agents.find((item) => item.id === role);
+        const entry = permissions.find((item) => item.role === role);
+        const model = assignments[role]?.model;
+        if (!agent ||
+            agent.mode !== "subagent" ||
+            !has(agent, "execute", "deny", "*") ||
+            !has(agent, "subagent", "deny", "*") ||
+            !has(agent, "external_directory", "allow", entry.externalDirectory) ||
+            (entry.edit && !has(agent, "edit", "allow", entry.edit)))
+            return false;
+        if (!model)
+            return true;
+        const slash = model.indexOf("/");
+        const active = agent.model;
+        return (active?.providerID === model.slice(0, slash) &&
+            active.id === model.slice(slash + 1) &&
+            (!variants[role] || active.variant === variants[role]));
+    });
+    const primaries = agents.filter((agent) => (agent.mode === "primary" || agent.mode === "all") && agent.hidden !== true);
+    return (roles && primaries.length > 0 && primaries.every((agent) => has(agent, "execute", "deny", "*")));
+}
 function record(value) {
     if (!value || typeof value !== "object" || Array.isArray(value))
         throw new Error("V2 native event contract unavailable");
@@ -261,86 +337,13 @@ async function registerRoles(context, plan) {
                 throw new Error("V2 required local routing endpoint is unavailable");
         }
     }
-    const transformed = new Set();
-    await context.agent.transform((editor) => {
-        // Register only after the native project agent source: later rules win.
-        // Code Mode offers session_move outside normal tool hooks; keep direct
-        // subagent tools while removing that unguarded path from primary agents.
-        for (const item of editor.list()) {
-            if (TRACE_PERMISSION_ROLES.includes(String(item.id)) ||
-                (item.mode !== "primary" && item.mode !== "all") ||
-                item.hidden === true)
-                continue;
-            editor.update(String(item.id), (agent) => {
-                if (!Array.isArray(agent.permissions))
-                    throw new Error("V2 primary permissions unavailable");
-                agent.permissions = [
-                    ...primaryExternalApprovalRules(agent.permissions),
-                    { action: "execute", resource: "*", effect: "deny" },
-                ];
-            });
-        }
-        for (const role of TRACE_PERMISSION_ROLES) {
-            if (!editor.get(role))
-                throw new Error(`V2 harness role unavailable: ${role}`);
-            editor.update(role, (agent) => {
-                const permissions = agent.permissions;
-                if (!Array.isArray(permissions))
-                    throw new Error(`V2 role permissions unavailable: ${role}`);
-                const entry = plan.permissions.find((item) => item.role === role);
-                const rules = [
-                    { action: "execute", resource: "*", effect: "deny" },
-                    { action: "subagent", resource: "*", effect: "deny" },
-                    { action: "external_directory", resource: entry.externalDirectory, effect: "allow" },
-                    ...(entry.edit ? [{ action: "edit", resource: entry.edit, effect: "allow" }] : []),
-                ];
-                agent.permissions = [...permissions, ...rules];
-                const model = assignments[role]?.model;
-                if (model) {
-                    const slash = model.indexOf("/");
-                    agent.model = {
-                        providerID: model.slice(0, slash),
-                        id: model.slice(slash + 1),
-                        ...(variants[role] ? { variant: variants[role] } : {}),
-                    };
-                }
-            });
-            transformed.add(role);
-        }
-    });
+    await context.agent.transform((editor) => transformHarnessAgents(editor, plan.permissions, assignments, variants));
     return async () => {
-        for (let attempt = 0; attempt < 50; attempt++) {
-            await context.agent.reload();
-            const value = await context.agent.list();
-            const agents = Array.isArray(value) ? value : record(value).data;
-            if (transformed.size === TRACE_PERMISSION_ROLES.length && Array.isArray(agents)) {
-                const ready = TRACE_PERMISSION_ROLES.every((role) => {
-                    const agent = agents.find((item) => item && typeof item === "object" && item.id === role);
-                    return (agent &&
-                        Array.isArray(agent.permissions) &&
-                        agent.permissions.some((item) => record(item).action === "execute" && record(item).effect === "deny") &&
-                        (!assignments[role]?.model ||
-                            (agent.model?.providerID ===
-                                assignments[role].model.split("/")[0] &&
-                                agent.model?.id ===
-                                    assignments[role].model.split("/")
-                                        .slice(1)
-                                        .join("/") &&
-                                (!variants[role] || agent.model?.variant === variants[role]))));
-                });
-                const primaries = agents.filter((item) => item &&
-                    typeof item === "object" &&
-                    (item.mode === "primary" || item.mode === "all") &&
-                    item.hidden !== true);
-                if (ready &&
-                    primaries.length > 0 &&
-                    primaries.every((agent) => Array.isArray(agent.permissions) &&
-                        agent.permissions.some((item) => record(item).action === "execute" && record(item).effect === "deny")))
-                    return;
-            }
-            await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        throw new Error("V2 effective role permissions unavailable");
+        const value = await context.agent.list();
+        const agents = Array.isArray(value) ? value : record(value).data;
+        if (!Array.isArray(agents) ||
+            !effectiveHarnessRolesReady(agents, plan.permissions, assignments, variants))
+            throw new Error("V2 effective role permissions unavailable");
     };
 }
 async function waitForNativeAgentSource(context, signal) {
@@ -348,15 +351,26 @@ async function waitForNativeAgentSource(context, signal) {
     for (let attempt = 0; Date.now() < deadline && !signal.aborted; attempt++) {
         const value = await context.plugin.list();
         const plugins = Array.isArray(value) ? value : record(value).data;
-        if (Array.isArray(plugins) &&
+        const sourceActive = Array.isArray(plugins) &&
             plugins.some((item) => item &&
                 typeof item === "object" &&
                 item.id === "opencode.config.agent" &&
-                item.state?.status === "active"))
-            return;
+                item.state?.status === "active");
+        if (sourceActive) {
+            try {
+                const response = await context.agent.list();
+                const agents = Array.isArray(response) ? response : record(response).data;
+                if (Array.isArray(agents) &&
+                    TRACE_PERMISSION_ROLES.every((role) => agents.some((agent) => agent && typeof agent === "object" && agent.id === role)))
+                    return;
+            }
+            catch {
+                // A registry rebuild may be in progress; keep waiting for its complete source.
+            }
+        }
         await new Promise((resolve) => setTimeout(resolve, 100));
     }
-    throw new Error("V2 native agent source is not active");
+    throw new Error("V2 native agent source lacks the four harness roles");
 }
 function activationMarker(plan) {
     const filename = process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
@@ -563,8 +577,9 @@ export const V2NativePlugin = {
         })().catch(() => dispatch.interrupt("V2 native session event stream unavailable"));
         await context.tool.hook("execute.before", async (event) => {
             if (event.tool === "subagent") {
-                if (!ready)
+                if (!ready || !verifyRoles)
                     throw new Error("V2 harness guard activation is incomplete");
+                await verifyRoles();
                 await admitV2Subagent(event, (input, args) => dispatch.beforeTask(input, args));
                 return;
             }
@@ -1135,7 +1150,20 @@ export const V2NativePlugin = {
             .then(() => waitForNativeAgentSource(context, abort.signal))
             .then(() => registerRoles(context, plan))
             .then(async (check) => {
-            await check();
+            let confirmed = false;
+            for (let attempt = 0; attempt < 50 && !abort.signal.aborted; attempt++) {
+                try {
+                    await context.agent.reload();
+                    await check();
+                    confirmed = true;
+                    break;
+                }
+                catch {
+                    await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+            }
+            if (!confirmed)
+                throw new Error("V2 effective role permissions unavailable");
             verifyRoles = check;
         })
             .then(() => {

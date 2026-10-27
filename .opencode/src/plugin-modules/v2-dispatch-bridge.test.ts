@@ -12,7 +12,66 @@ import {
   v2DispatchStatus,
   v2HarnessToolCodeMode,
   v2PermissionSource,
+  transformHarnessAgents,
+  effectiveHarnessRolesReady,
 } from "./v2-native-plugin.ts";
+
+test("partial native agent rebuild defers four-role transform without disabling primary restrictions", () => {
+  const roles = ["researcher", "planner", "implementer", "validator"] as const;
+  const permissions = roles.map((role) => ({
+    role,
+    externalDirectory: `/private/trace/${role}`,
+    edit: role === "implementer" ? "/private/work/**" : null,
+  }));
+  const assignments = { researcher: null, planner: null, implementer: null, validator: null };
+  const build = (missing?: string) => {
+    const agents = new Map<string, Record<string, unknown>>([
+      ["build", { id: "build", mode: "primary", permissions: [] }],
+      ...roles
+        .filter((role) => role !== missing)
+        .map(
+          (role) =>
+            [role, { id: role, mode: "subagent", permissions: [] }] as [
+              string,
+              Record<string, unknown>,
+            ],
+        ),
+    ]);
+    const editor = {
+      list: () => Array.from(agents.values()),
+      get: (id: string) => agents.get(id),
+      update: (id: string, update: (agent: Record<string, unknown>) => void) =>
+        update(agents.get(id)!),
+    };
+    transformHarnessAgents(editor, permissions, assignments, {});
+    return agents;
+  };
+  const partial = build("implementer");
+  assert.equal(
+    effectiveHarnessRolesReady([...partial.values()], permissions, assignments, {}),
+    false,
+  );
+  assert.ok(
+    (partial.get("build")!.permissions as Record<string, unknown>[]).some(
+      (item) => item.action === "execute" && item.effect === "deny",
+    ),
+  );
+  assert.deepEqual(partial.get("researcher")!.permissions, []);
+  const complete = build();
+  assert.equal(
+    effectiveHarnessRolesReady([...complete.values()], permissions, assignments, {}),
+    true,
+  );
+  const missingAgain = build("implementer");
+  assert.equal(
+    effectiveHarnessRolesReady([...missingAgain.values()], permissions, assignments, {}),
+    false,
+  );
+  assert.equal(
+    effectiveHarnessRolesReady([...build().values()], permissions, assignments, {}),
+    true,
+  );
+});
 
 test("V2 bounded actions offer project-scoped saved patterns and bind the native tool call source", () => {
   assert.deepEqual(

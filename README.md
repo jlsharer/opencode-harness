@@ -1,4 +1,4 @@
-# OpenCode Harness Runtime 0.1.19
+# OpenCode Harness Runtime 0.1.20
 
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
@@ -6,7 +6,7 @@ are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration
 review, synthesis, artifact proof, and integration checks are task modes of
 those roles, not additional agents.
 
-Package version `0.1.19` requires Linux, Node.js 24, Git, and OpenCode. There is
+Package version `0.1.20` requires Linux, Node.js 24, Git, and OpenCode. There is
 no OpenCode version allowlist. npm is needed only to build a local
 tarball. Global installation and publication are not required. Roll back by
 invoking retained version `0.1.16`.
@@ -93,6 +93,12 @@ the native background inspection/abort transport is unavailable. V2
 `source-tui` starts only after its source profile and native guard activate,
 using an owner-only external trace root. Offline source tests and `doctor` do
 not substitute for native guard activation; V1 launch behavior remains separate.
+
+On a native agent registry rebuild, the V2 plugin waits for all four project roles before
+applying role transforms. A temporary partial registry does not disable the plugin;
+managed subagent admission checks the current effective role permissions and refuses
+dispatch until they are complete. A missing role that persists through activation
+remains an activation failure and must be diagnosed from the active project agent source.
 
 Operator-authorized V2 validation can use the source-only explicit
 `--v2-auth-data-home /ABSOLUTE/OWNER-ONLY/V2-DATA-HOME` option on `run` after
@@ -191,7 +197,7 @@ To inspect a local package without publishing it:
 npm pack --dry-run --json
 install -d -m 700 /OWNER/ONLY/PACKS /OWNER/ONLY/EXTRACT
 npm pack --pack-destination /OWNER/ONLY/PACKS
-tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.19.tgz \
+tar -xzf /OWNER/ONLY/PACKS/opencode-harness-runtime-0.1.20.tgz \
   -C /OWNER/ONLY/EXTRACT
 node /OWNER/ONLY/EXTRACT/package/bin/opencode-harness.mjs --help
 ```
