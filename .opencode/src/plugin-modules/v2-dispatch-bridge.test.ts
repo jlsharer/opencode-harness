@@ -14,6 +14,7 @@ import {
   v2PermissionSource,
   transformHarnessAgents,
   effectiveHarnessRolesReady,
+  watchV2SessionEvents,
 } from "./v2-native-plugin.ts";
 
 test("partial native agent rebuild defers four-role transform without disabling primary restrictions", () => {
@@ -165,6 +166,36 @@ test("V2 dispatch diagnostic reports readiness only with live four-role verifica
     nativeTool: "subagent",
     roles: ["implementer", "planner", "researcher", "validator"],
   });
+});
+
+test("V2 session watcher reconnects after an idle stream ends", async () => {
+  const abort = new AbortController();
+  const observed: string[] = [];
+  let connections = 0;
+  let losses = 0;
+  await watchV2SessionEvents(
+    () => {
+      connections++;
+      if (connections === 1)
+        return (async function* () {
+          yield "first";
+        })();
+      return (async function* () {
+        yield "second";
+        abort.abort();
+      })();
+    },
+    abort.signal,
+    (event) => observed.push(String(event)),
+    () => {},
+    () => {
+      losses++;
+    },
+    async () => {},
+  );
+  assert.deepEqual(observed, ["first", "second"]);
+  assert.equal(connections, 2);
+  assert.equal(losses, 1);
 });
 
 test("V2 admission binds the controller-selected foreground or background mode and denies foreign roles", async () => {

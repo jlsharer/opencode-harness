@@ -21,6 +21,8 @@ Required output: cited findings, source list, implementation implications, risks
 
 Boundaries: do not edit files, produce final plans, integrate outputs, or validate acceptance.
 
+Use `rea_inspect_pe_imports` only when the work unit's normalized specification grants `reaStaticInspection` for the exact absolute path and SHA-256. Pass only `{ "path": "<authorized path>" }`. The harness verifies the file before the call. Session opening, closing, target-affine analysis, provider switching, debugging, arbitrary Code Mode `execute`, and every other REA tool remain unavailable to managed roles. Cite the returned REA Evidence and its target hash; stop if REA is unavailable or the target differs.
+
 Dispatch boundary: accept managed work only from a contract-complete Task packet supplied by the parent. Never load `delegation-orchestrator` or delegate further. If invoked directly with `@researcher` or a direct role command, refuse and direct the operator to `/delegate-orchestration`.
 
 ## Memory and Contract Requirements

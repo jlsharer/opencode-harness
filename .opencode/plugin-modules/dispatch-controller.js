@@ -1,4 +1,5 @@
 import { TASK_MODES } from "./task-contracts.js";
+import path from "node:path";
 const ROLES = ["researcher", "planner", "implementer", "validator"];
 function fail(message) {
     throw new Error(`Harness dispatch controller: ${message}`);
@@ -45,6 +46,15 @@ function integer(value, label, minimum = 1, maximum = 1024) {
         value < minimum ||
         value > maximum)
         fail(`invalid ${label}`);
+    return value;
+}
+function requireCanonicalPath(value) {
+    if (!path.isAbsolute(value) ||
+        value === "/" ||
+        value.includes("\0") ||
+        value.includes("\\") ||
+        path.resolve(value) !== value)
+        fail("invalid REA target path");
     return value;
 }
 export function safeScopePath(value) {
@@ -94,17 +104,33 @@ export function validateWorkflow(input) {
     const allowedPaths = strings(value.allowedPaths, "allowedPaths").map(safeScopePath);
     const workUnits = list(value.workUnits, "workUnits").map((entry) => {
         const unit = record(entry, "workUnit");
-        exact(unit, ["id", "goal", "deliverable", "nonGoals", "allowedPaths", "acceptanceGateIds"]);
+        exact(unit, ["id", "goal", "deliverable", "nonGoals", "allowedPaths", "acceptanceGateIds"], ["reaStaticInspection"]);
         text(unit.goal, "work unit goal");
         text(unit.deliverable, "work unit deliverable");
         strings(unit.nonGoals, "unit nonGoals");
         const paths = strings(unit.allowedPaths, "unit allowedPaths").map(safeScopePath);
         if (paths.some((p) => !withinScope(p, allowedPaths)))
             fail("unit scope exceeds workflow scope");
+        let reaStaticInspection;
+        if (unit.reaStaticInspection !== undefined) {
+            const policy = record(unit.reaStaticInspection, "REA static inspection");
+            exact(policy, ["path", "sha256", "tools"]);
+            if (typeof policy.path !== "string" ||
+                !policy.path.startsWith("/") ||
+                policy.path !== requireCanonicalPath(policy.path) ||
+                typeof policy.sha256 !== "string" ||
+                !/^[a-f0-9]{64}$/.test(policy.sha256))
+                fail("invalid REA target identity");
+            const tools = strings(policy.tools, "REA tools");
+            if (tools.some((tool) => tool !== "rea_inspect_pe_imports"))
+                fail("unsupported REA static tool");
+            reaStaticInspection = { path: policy.path, sha256: policy.sha256, tools };
+        }
         return {
             id: id(unit.id),
             allowedPaths: paths,
             acceptanceGateIds: strings(unit.acceptanceGateIds, "acceptanceGateIds").map(id),
+            ...(reaStaticInspection ? { reaStaticInspection } : {}),
         };
     });
     const units = new Set(workUnits.map((u) => u.id));
@@ -149,6 +175,10 @@ export function validateWorkflow(input) {
     if (new Set(mappingKeys).size !== mappingKeys.length ||
         workUnits.some((u) => !roleModeTaskMapping.some((m) => m.workUnitId === u.id)))
         fail("duplicate or missing mapping");
+    for (const unit of workUnits)
+        if (unit.reaStaticInspection &&
+            !roleModeTaskMapping.some((mapping) => mapping.workUnitId === unit.id && ["researcher", "validator"].includes(mapping.role)))
+            fail("REA static inspection requires a researcher or validator work unit");
     const dag = record(value.dag, "dag");
     exact(dag, ["dependencies", "parallelism"]);
     const dependencies = list(dag.dependencies, "dependencies", true).map((entry) => {

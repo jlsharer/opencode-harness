@@ -415,6 +415,24 @@ export async function v2DispatchStatus(ready, activationFailed, stopped, verifyR
         return { status: "unavailable", managedSubagent: false };
     }
 }
+export async function watchV2SessionEvents(subscribe, signal, onEvent, onConnected, onLost, pause = () => new Promise((resolve) => setTimeout(resolve, 100))) {
+    while (!signal.aborted) {
+        try {
+            const events = subscribe(signal);
+            onConnected();
+            for await (const event of events)
+                onEvent(event);
+        }
+        catch {
+            // A lost stream may have missed a child creation. The caller stops any
+            // active reservation and restores readiness only after reconnecting.
+        }
+        if (signal.aborted)
+            break;
+        onLost();
+        await pause();
+    }
+}
 /** Only the read-only Code Mode alias enters the Code Mode catalog. */
 export function v2HarnessToolCodeMode(name) {
     return name === "harness_dispatch_status_code";
@@ -527,54 +545,64 @@ export const V2NativePlugin = {
         let activationFailed = false;
         let verifyRoles = null;
         const abort = new AbortController();
-        const watch = (async () => {
-            for await (const event of context.event.subscribe({ signal: abort.signal })) {
-                const value = record(event);
-                if (value.type === "session.synthetic") {
-                    const event = record(value.data);
-                    const metadata = event.metadata ? record(event.metadata) : {};
-                    if (metadata.source === "subagent" &&
-                        typeof metadata.childID === "string" &&
-                        ["completed", "error", "cancelled"].includes(String(metadata.state)) &&
-                        dispatch.currentTaskView(event.sessionID)?.role === metadata.agent) {
-                        const view = dispatch.currentTaskView(event.sessionID);
-                        void dispatch
-                            .reconcileBackground(metadata.childID)
-                            .then(() => {
-                            const run = dispatch
-                                .snapshot()
-                                .runs.find((candidate) => candidate.attempts.some((attempt) => attempt.id === view.delegationTaskId));
-                            const attempt = run?.attempts.find((item) => item.id === view.delegationTaskId);
-                            if (!attempt || attempt.state === "running")
-                                return;
-                            const filename = path.join(traceRoot, "orchestrations", view.orchestrationId, "validation", `${view.delegationTaskId}-v2-terminal-observation.json`);
-                            try {
-                                fs.writeFileSync(filename, JSON.stringify({
-                                    kind: "v2-background-terminal-observation",
-                                    acceptanceProof: false,
-                                    orchestrationId: view.orchestrationId,
-                                    delegationTaskId: view.delegationTaskId,
-                                    nativeState: metadata.state,
-                                    controllerState: attempt.state,
-                                }) + "\n", { flag: "wx", mode: 0o600 });
-                            }
-                            catch {
-                                // Coordination only; acceptance remains controller- and validator-bound.
-                            }
-                        })
-                            .catch(() => dispatch.interrupt("V2 native background terminal result rejected"));
-                    }
-                    continue;
+        let eventStreamConnected = false;
+        let eventStreamLost = false;
+        const watch = watchV2SessionEvents((signal) => context.event.subscribe({ signal }), abort.signal, (event) => {
+            const value = record(event);
+            if (value.type === "session.synthetic") {
+                const event = record(value.data);
+                const metadata = event.metadata ? record(event.metadata) : {};
+                if (metadata.source === "subagent" &&
+                    typeof metadata.childID === "string" &&
+                    ["completed", "error", "cancelled"].includes(String(metadata.state)) &&
+                    dispatch.currentTaskView(event.sessionID)?.role === metadata.agent) {
+                    const view = dispatch.currentTaskView(event.sessionID);
+                    void dispatch
+                        .reconcileBackground(metadata.childID)
+                        .then(() => {
+                        const run = dispatch
+                            .snapshot()
+                            .runs.find((candidate) => candidate.attempts.some((attempt) => attempt.id === view.delegationTaskId));
+                        const attempt = run?.attempts.find((item) => item.id === view.delegationTaskId);
+                        if (!attempt || attempt.state === "running")
+                            return;
+                        const filename = path.join(traceRoot, "orchestrations", view.orchestrationId, "validation", `${view.delegationTaskId}-v2-terminal-observation.json`);
+                        try {
+                            fs.writeFileSync(filename, JSON.stringify({
+                                kind: "v2-background-terminal-observation",
+                                acceptanceProof: false,
+                                orchestrationId: view.orchestrationId,
+                                delegationTaskId: view.delegationTaskId,
+                                nativeState: metadata.state,
+                                controllerState: attempt.state,
+                            }) + "\n", { flag: "wx", mode: 0o600 });
+                        }
+                        catch {
+                            // Coordination only; acceptance remains controller- and validator-bound.
+                        }
+                    })
+                        .catch(() => dispatch.interruptIfCurrent(event.sessionID, "V2 native background terminal result rejected"));
                 }
-                if (value.type !== "session.created")
-                    continue;
-                const data = record(value.data);
-                if (typeof data.sessionID !== "string" ||
-                    (data.parentID !== undefined && typeof data.parentID !== "string"))
-                    throw new Error("V2 native session.created identity unavailable");
-                dispatch.sessionCreated({ id: data.sessionID, parentID: data.parentID });
+                return;
             }
-        })().catch(() => dispatch.interrupt("V2 native session event stream unavailable"));
+            if (value.type !== "session.created")
+                return;
+            const data = record(value.data);
+            if (typeof data.sessionID !== "string" ||
+                (data.parentID !== undefined && typeof data.parentID !== "string"))
+                throw new Error("V2 native session.created identity unavailable");
+            dispatch.sessionCreated({ id: data.sessionID, parentID: data.parentID });
+        }, () => {
+            eventStreamConnected = true;
+            eventStreamLost = false;
+            if (verifyRoles && !activationFailed && !dispatch.snapshot().stopped)
+                ready = true;
+        }, () => {
+            eventStreamConnected = false;
+            eventStreamLost = true;
+            ready = false;
+            dispatch.interruptIfCurrent(undefined, "V2 native session event stream unavailable");
+        });
         await context.tool.hook("execute.before", async (event) => {
             if (event.tool === "subagent") {
                 if (!ready || !verifyRoles)
@@ -743,7 +771,7 @@ export const V2NativePlugin = {
                             .catch(() => {
                             clearInterval(timer);
                             backgroundObservers.delete(timer);
-                            dispatch.interrupt("V2 background Job inspection rejected");
+                            dispatch.interruptIfCurrent(childID, "V2 background Job inspection rejected");
                         })
                             .finally(() => {
                             pending = false;
@@ -754,7 +782,7 @@ export const V2NativePlugin = {
                 }
             }
             catch {
-                dispatch.interrupt("V2 native subagent completion could not be proven");
+                dispatch.interruptIfCurrent(event.sessionID, "V2 native subagent completion could not be proven");
                 observe("result-proof-failed");
                 if (event.status === "completed" && event.result && typeof event.result === "object")
                     record(event.result).content = [
@@ -947,8 +975,8 @@ export const V2NativePlugin = {
                     accepted: false,
                 });
             });
-            add("harness_dispatch_status", "Check whether this V2 session has an activated guarded subagent route and all four harness roles; not an authorization to dispatch", [], async () => output(await v2DispatchStatus(ready, activationFailed, dispatch.snapshot().stopped, verifyRoles)));
-            add("harness_dispatch_status_code", "Read-only Code Mode alias for the exact V2 guarded dispatch status; not an authorization to dispatch", [], async () => output(await v2DispatchStatus(ready, activationFailed, dispatch.snapshot().stopped, verifyRoles)));
+            add("harness_dispatch_status", "Check whether this V2 session has an activated guarded subagent route and all four harness roles; not an authorization to dispatch", [], async () => output(await v2DispatchStatus(ready, activationFailed || eventStreamLost, dispatch.snapshot().stopped, verifyRoles)));
+            add("harness_dispatch_status_code", "Read-only Code Mode alias for the exact V2 guarded dispatch status; not an authorization to dispatch", [], async () => output(await v2DispatchStatus(ready, activationFailed || eventStreamLost, dispatch.snapshot().stopped, verifyRoles)));
             if (externalRelaunch)
                 add("harness_external_win64_relaunch", "Operator-pinned external action: verify and relaunch one EXISTING Win64 snapshot without preparing/building; not a managed validation gate", ["snapshot"], async (args, caller) => {
                     if (!ready || activationFailed)
@@ -1166,30 +1194,38 @@ export const V2NativePlugin = {
                 throw new Error("V2 effective role permissions unavailable");
             verifyRoles = check;
         })
+            .then(async () => {
+            for (let attempt = 0; attempt < 50 && !eventStreamConnected && !abort.signal.aborted; attempt++)
+                await new Promise((resolve) => setTimeout(resolve, 100));
+        })
             .then(() => {
-            if (abort.signal.aborted)
-                throw new Error("V2 plugin unloaded before activation");
+            if (abort.signal.aborted || activationFailed || !eventStreamConnected)
+                throw new Error("V2 plugin unloaded or native event stream unavailable before activation");
             activationMarker(plan);
             ready = true;
         })
             .catch((error) => {
             activationFailed = true;
+            ready = false;
             const message = error instanceof Error ? error.message : "";
             const safe = /^V2 (?:effective role|native agent|harness role|primary permissions|role permissions|routing|activation)/.test(message)
                 ? message.slice(0, 160)
                 : "native role activation unavailable";
             if (process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH)
                 process.stderr.write(`opencode-harness: V2 role activation failed: ${safe}\n`);
-            dispatch.interrupt("V2 effective permissions or activation marker unavailable");
+            dispatch.interruptIfCurrent(undefined, "V2 effective permissions or activation marker unavailable");
         });
         return () => {
             for (const timer of backgroundObservers)
                 clearInterval(timer);
             backgroundObservers.clear();
             abort.abort();
+            eventStreamConnected = false;
+            ready = false;
+            activationFailed = true;
             void watch;
             void activation;
-            dispatch.interrupt("V2 native plugin unloaded");
+            dispatch.interruptIfCurrent(undefined, "V2 native plugin unloaded");
         };
     },
 };

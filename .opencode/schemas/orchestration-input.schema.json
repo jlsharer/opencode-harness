@@ -55,7 +55,16 @@
         "properties": {
           "id": { "$ref": "#/$defs/id" }, "goal": { "type": "string", "minLength": 1 },
           "deliverable": { "type": "string", "minLength": 1 }, "nonGoals": { "$ref": "#/$defs/nonemptyStrings" },
-          "allowedPaths": { "$ref": "#/$defs/nonemptyStrings" }, "acceptanceGateIds": { "$ref": "#/$defs/nonemptyIds" }
+          "allowedPaths": { "$ref": "#/$defs/nonemptyStrings" }, "acceptanceGateIds": { "$ref": "#/$defs/nonemptyIds" },
+          "reaStaticInspection": {
+            "type": "object", "additionalProperties": false,
+            "required": ["path", "sha256", "tools"],
+            "properties": {
+              "path": { "type": "string", "pattern": "^/" },
+              "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+              "tools": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "const": "rea_inspect_pe_imports" } }
+            }
+          }
         }
       }
     },

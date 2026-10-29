@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -51,6 +52,48 @@ test("unknown mutation and delegation tools fail closed while read surfaces rema
         assert.throws(() => enforceManagedTool({ ...base, tool }), /unsupported/);
     for (const tool of ["read", "grep", "glob", "list"])
         assert.deepEqual(enforceManagedTool({ ...base, tool, role: "researcher" }), base.args);
+}));
+test("managed REA admits only the exact hashed standalone PE import target", () => fixture((base) => {
+    const target = path.join(base.workspaceRoot, "source.txt");
+    const policy = {
+        path: target,
+        sha256: createHash("sha256").update("original").digest("hex"),
+        tools: ["rea_inspect_pe_imports"],
+    };
+    const input = {
+        ...base,
+        tool: "rea_inspect_pe_imports",
+        role: "researcher",
+        args: { path: target },
+        reaStaticInspection: policy,
+    };
+    assert.deepEqual(enforceManagedTool(input), { path: target });
+    assert.deepEqual(enforceManagedTool({ ...input, role: "validator" }), { path: target });
+    assert.throws(() => enforceManagedTool({ ...input, reaStaticInspection: undefined }), /unsupported/);
+    assert.throws(() => enforceManagedTool({ ...input, role: "planner" }), /unsupported/);
+    assert.throws(() => enforceManagedTool({ ...input, role: "implementer" }), /unsupported/);
+    assert.throws(() => enforceManagedTool({ ...input, args: { path: "/etc/passwd" } }), /exact authorized/);
+    assert.throws(() => enforceManagedTool({ ...input, args: { path: target, max_file_bytes: 512 * 1024 * 1024 } }), /bounded integer max_file_bytes/);
+    for (const tool of [
+        "rea_open_binary",
+        "rea_close_binary",
+        "rea_binary_session",
+        "rea_binary_overview",
+        "rea_procedure_pseudo_code",
+        "rea_decompile_all",
+        "rea_gdb_console",
+        "rea_set_comment",
+        "rea_inspect_plist",
+    ])
+        assert.throws(() => enforceManagedTool({ ...input, tool }), /unsupported/);
+    assert.throws(() => enforceManagedTool({ ...input, tool: "other_mcp_tool" }), /unsupported/);
+    writeFileSync(target, "changed");
+    assert.throws(() => enforceManagedTool(input), /hash mismatched/);
+    writeFileSync(target, "original");
+    assert.throws(() => enforceManagedTool({
+        ...input,
+        reaStaticInspection: { ...policy, sha256: "0".repeat(64) },
+    }), /hash mismatched/);
 }));
 test("shell requires an exact command and authorized role", () => fixture((base) => {
     assert.throws(() => enforceManagedTool({ ...base, tool: "bash", args: { command: "true" } }), /exact/);

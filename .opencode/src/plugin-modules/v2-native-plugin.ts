@@ -623,6 +623,29 @@ export async function v2DispatchStatus(
   }
 }
 
+export async function watchV2SessionEvents(
+  subscribe: (signal: AbortSignal) => AsyncIterable<unknown>,
+  signal: AbortSignal,
+  onEvent: (event: unknown) => void,
+  onConnected: () => void,
+  onLost: () => void,
+  pause: () => Promise<void> = () => new Promise((resolve) => setTimeout(resolve, 100)),
+) {
+  while (!signal.aborted) {
+    try {
+      const events = subscribe(signal);
+      onConnected();
+      for await (const event of events) onEvent(event);
+    } catch {
+      // A lost stream may have missed a child creation. The caller stops any
+      // active reservation and restores readiness only after reconnecting.
+    }
+    if (signal.aborted) break;
+    onLost();
+    await pause();
+  }
+}
+
 /** Only the read-only Code Mode alias enters the Code Mode catalog. */
 export function v2HarnessToolCodeMode(name: string): boolean {
   return name === "harness_dispatch_status_code";
@@ -749,8 +772,12 @@ export const V2NativePlugin = {
     let activationFailed = false;
     let verifyRoles: (() => Promise<void>) | null = null;
     const abort = new AbortController();
-    const watch = (async () => {
-      for await (const event of context.event.subscribe({ signal: abort.signal })) {
+    let eventStreamConnected = false;
+    let eventStreamLost = false;
+    const watch = watchV2SessionEvents(
+      (signal) => context.event.subscribe({ signal }),
+      abort.signal,
+      (event) => {
         const value = record(event);
         if (value.type === "session.synthetic") {
           const event = record(value.data);
@@ -796,11 +823,16 @@ export const V2NativePlugin = {
                   // Coordination only; acceptance remains controller- and validator-bound.
                 }
               })
-              .catch(() => dispatch.interrupt("V2 native background terminal result rejected"));
+              .catch(() =>
+                dispatch.interruptIfCurrent(
+                  event.sessionID,
+                  "V2 native background terminal result rejected",
+                ),
+              );
           }
-          continue;
+          return;
         }
-        if (value.type !== "session.created") continue;
+        if (value.type !== "session.created") return;
         const data = record(value.data);
         if (
           typeof data.sessionID !== "string" ||
@@ -808,8 +840,19 @@ export const V2NativePlugin = {
         )
           throw new Error("V2 native session.created identity unavailable");
         dispatch.sessionCreated({ id: data.sessionID, parentID: data.parentID });
-      }
-    })().catch(() => dispatch.interrupt("V2 native session event stream unavailable"));
+      },
+      () => {
+        eventStreamConnected = true;
+        eventStreamLost = false;
+        if (verifyRoles && !activationFailed && !dispatch.snapshot().stopped) ready = true;
+      },
+      () => {
+        eventStreamConnected = false;
+        eventStreamLost = true;
+        ready = false;
+        dispatch.interruptIfCurrent(undefined, "V2 native session event stream unavailable");
+      },
+    );
     await context.tool.hook("execute.before", async (event) => {
       if (event.tool === "subagent") {
         if (!ready || !verifyRoles) throw new Error("V2 harness guard activation is incomplete");
@@ -1020,7 +1063,7 @@ export const V2NativePlugin = {
               .catch(() => {
                 clearInterval(timer);
                 backgroundObservers.delete(timer);
-                dispatch.interrupt("V2 background Job inspection rejected");
+                dispatch.interruptIfCurrent(childID, "V2 background Job inspection rejected");
               })
               .finally(() => {
                 pending = false;
@@ -1030,7 +1073,10 @@ export const V2NativePlugin = {
           backgroundObservers.add(timer);
         }
       } catch {
-        dispatch.interrupt("V2 native subagent completion could not be proven");
+        dispatch.interruptIfCurrent(
+          event.sessionID,
+          "V2 native subagent completion could not be proven",
+        );
         observe("result-proof-failed");
         if (event.status === "completed" && event.result && typeof event.result === "object")
           record(event.result).content = [
@@ -1271,7 +1317,7 @@ export const V2NativePlugin = {
           output(
             await v2DispatchStatus(
               ready,
-              activationFailed,
+              activationFailed || eventStreamLost,
               dispatch.snapshot().stopped,
               verifyRoles,
             ),
@@ -1285,7 +1331,7 @@ export const V2NativePlugin = {
           output(
             await v2DispatchStatus(
               ready,
-              activationFailed,
+              activationFailed || eventStreamLost,
               dispatch.snapshot().stopped,
               verifyRoles,
             ),
@@ -1615,13 +1661,25 @@ export const V2NativePlugin = {
         if (!confirmed) throw new Error("V2 effective role permissions unavailable");
         verifyRoles = check;
       })
+      .then(async () => {
+        for (
+          let attempt = 0;
+          attempt < 50 && !eventStreamConnected && !abort.signal.aborted;
+          attempt++
+        )
+          await new Promise((resolve) => setTimeout(resolve, 100));
+      })
       .then(() => {
-        if (abort.signal.aborted) throw new Error("V2 plugin unloaded before activation");
+        if (abort.signal.aborted || activationFailed || !eventStreamConnected)
+          throw new Error(
+            "V2 plugin unloaded or native event stream unavailable before activation",
+          );
         activationMarker(plan);
         ready = true;
       })
       .catch((error: unknown) => {
         activationFailed = true;
+        ready = false;
         const message = error instanceof Error ? error.message : "";
         const safe =
           /^V2 (?:effective role|native agent|harness role|primary permissions|role permissions|routing|activation)/.test(
@@ -1631,15 +1689,21 @@ export const V2NativePlugin = {
             : "native role activation unavailable";
         if (process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH)
           process.stderr.write(`opencode-harness: V2 role activation failed: ${safe}\n`);
-        dispatch.interrupt("V2 effective permissions or activation marker unavailable");
+        dispatch.interruptIfCurrent(
+          undefined,
+          "V2 effective permissions or activation marker unavailable",
+        );
       });
     return () => {
       for (const timer of backgroundObservers) clearInterval(timer);
       backgroundObservers.clear();
       abort.abort();
+      eventStreamConnected = false;
+      ready = false;
+      activationFailed = true;
       void watch;
       void activation;
-      dispatch.interrupt("V2 native plugin unloaded");
+      dispatch.interruptIfCurrent(undefined, "V2 native plugin unloaded");
     };
   },
 };

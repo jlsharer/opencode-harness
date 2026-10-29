@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -262,6 +263,16 @@ test("compaction pointer stays parent-bound after terminal work without reviving
   f.finish(f.success());
   assert.deepEqual(f.managed.compactionPointer("parent"), { orchestrationId: "fixture" });
   assert.equal(f.managed.compactionPointer("child"), null);
+});
+
+test("V2 lifecycle failure cannot create a stopped run without an active task", async () => {
+  const f = fixture("researcher");
+  assert.equal(f.managed.interruptIfCurrent(undefined, "event stream unavailable"), false);
+  assert.equal(f.managed.snapshot().stopped, false);
+  await f.start();
+  f.finish(f.success());
+  assert.equal(f.managed.interruptIfCurrent(undefined, "plugin unloaded"), false);
+  assert.equal(f.managed.snapshot().stopped, false);
 });
 
 test("external action admits the bound primary but denies children and a stopped guard", async () => {
@@ -865,6 +876,78 @@ test("managed tools deny shell for research, unauthorized commands, and edits ou
   );
   assert.throws(
     () => writer.managed.beforeTool({ sessionID: "child", tool: "apply_patch" }, {}),
+    /unsupported/,
+  );
+});
+test("managed REA static inspection requires active child, scoped spec and matching target", async () => {
+  for (const role of ["researcher", "validator"] as const) {
+    const f = fixture(role);
+    const target = path.join(f.root, "fixture.exe");
+    fs.writeFileSync(target, "inert fixture bytes");
+    Object.assign(f.spec.workUnits[0]!, {
+      reaStaticInspection: {
+        path: target,
+        sha256: createHash("sha256").update("inert fixture bytes").digest("hex"),
+        tools: ["rea_inspect_pe_imports"],
+      },
+    });
+    fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+    await f.start();
+    assert.deepEqual(
+      f.managed.beforeTool(
+        { sessionID: "child", tool: "rea_inspect_pe_imports" },
+        { path: target },
+      ),
+      { path: target },
+    );
+    assert.throws(
+      () =>
+        f.managed.beforeTool(
+          { sessionID: "parent", tool: "rea_inspect_pe_imports" },
+          { path: target },
+        ),
+      /unbound session/,
+    );
+    assert.throws(
+      () =>
+        f.managed.beforeTool(
+          { sessionID: "child", tool: "rea_inspect_pe_imports" },
+          { path: "/etc/passwd" },
+        ),
+      /exact authorized/,
+    );
+    assert.throws(
+      () => f.managed.beforeTool({ sessionID: "child", tool: "rea_open_binary" }, { path: target }),
+      /unsupported/,
+    );
+    fs.writeFileSync(target, "changed fixture bytes");
+    assert.throws(
+      () =>
+        f.managed.beforeTool(
+          { sessionID: "child", tool: "rea_inspect_pe_imports" },
+          { path: target },
+        ),
+      /hash mismatched/,
+    );
+    if (role === "validator") f.managed.verifyCommand("child", "true");
+    f.finish(f.success());
+    assert.throws(
+      () =>
+        f.managed.beforeTool(
+          { sessionID: "child", tool: "rea_inspect_pe_imports" },
+          { path: target },
+        ),
+      /terminal managed child/,
+    );
+  }
+  const unapproved = fixture("researcher");
+  await unapproved.start();
+  assert.throws(
+    () =>
+      unapproved.managed.beforeTool(
+        { sessionID: "child", tool: "rea_inspect_pe_imports" },
+        { path: "/etc/passwd" },
+      ),
     /unsupported/,
   );
 });
@@ -1816,6 +1899,20 @@ test("uncertain pre-launch or pending continuation cannot be resolved by an idle
   f.managed.sessionCreated({ id: "child", parentID: "parent" });
   f.managed.interrupt("launch not acknowledged");
   assert.equal((await f.managed.resolveRecovery("parent")).state, "blocked");
+  assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
+});
+
+test("lost foreground Task callback retains its non-resumable marker and blocks recovery", async () => {
+  const f = fixture("researcher");
+  await f.start();
+  const marker = path.join(f.trace, "orchestrations/fixture/dispatch-started.json");
+  const original = fs.readFileSync(marker, "utf8");
+  f.managed.interrupt("native Task callback unavailable");
+  const resolution = await f.managed.resolveRecovery("parent");
+  assert.equal(resolution.state, "blocked");
+  assert.match(resolution.reason ?? "", /native launch or child identity/);
+  assert.equal(fs.readFileSync(marker, "utf8"), original);
+  assert.equal(JSON.parse(original).resumable, false);
   assert.equal((await f.managed.recoveryStatus("parent")).state, "blocked");
 });
 

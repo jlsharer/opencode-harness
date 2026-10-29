@@ -1103,6 +1103,7 @@ export function createManagedDispatch(options) {
                 commands,
                 hiddenPaths: tool === "bash" ? ignoredWorkspacePaths(options.workspaceRoot) : [],
                 validationInputs: active.run.controller.spec.validationInputs,
+                reaStaticInspection: unit.reaStaticInspection,
             });
         if (tool === "bash")
             result.timeout = Math.min(typeof result.timeout === "number" && result.timeout > 0 ? result.timeout : 300000, Math.max(1, active.run.controller

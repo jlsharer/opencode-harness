@@ -1,0 +1,154 @@
+REA + OpenCode Harness
+Installation and repeatable Steam-game reverse-engineering playbook | Windows 11 + WSL2 / Linux shell | 26 October 2026
+Objective: integrate REA as a project-scoped MCP capability in ~/projects/opencode-harness, add a native-analysis provider, and run a bounded, evidence-driven investigation of a game you own or are authorized to inspect.
+1  Architecture and operating assumptions
+Commands below run in your WSL2 Linux shell unless labeled PowerShell. Your Steam game is assumed installed on Windows. REA connects OpenCode to analysis backends; Ghidra is the decompiler for native executables. No file edits inside the existing harness are performed by this document itself.
+Recommended separation: harness configuration and skills live in the repo; investigation data and working copies live in a separate ignored workspace. Inspect the harness configuration before editing: the existing project could already define MCP settings or other OpenCode integrations.
+2  Prerequisites and download
+Step 1 — Confirm essential tools and versions. REA requires Node 22.23.4+, Node 24.22.1+, or Node 26.12.1+, and npm. Node 24 LTS is recommended; verify the full version, not just major.
+cd ~/projects/opencode-harness
+pwd
+node --version; npm --version; opencode --version
+command -v ps; command -v java; java -version
+sudo apt update && sudo apt install -y procps unzip curl file
+
+Step 2 — If the Node version is unsupported, install Node 24 with your existing version manager. For fnm users:
+fnm install 24
+fnm use 24
+fnm default 24
+node --version
+
+Step 3 — Install REA from its official npm package; avoid similarly named forks and random installers. Pin the version after validation for reproducibility.
+npm view rea-agents dist-tags.latest
+npm install --global rea-agents
+rea --help
+rea doctor --client opencode --json
+
+If global installation is undesirable, use npx -y rea-agents@<verified-version> mcp in the project configuration; replace the placeholder with npm’s confirmed released version. Do not use the @latest package runner permanently in automation if reproducibility matters.
+3  Install and verify Ghidra
+For native PC games, REA needs a native-analysis provider (Ghidra, Hopper or IDA). The official REA documentation currently documents compatibility with Ghidra 12.1.x and a matching full 64-bit JDK (JDK 21+ for current 12.1 versions). Verify the specific version against REA’s installation documentation before upgrading either.
+Download a matching Ghidra 12.1.x ZIP from https://github.com/NationalSecurityAgency/ghidra/releases (official project).
+Install a supported full JDK in WSL2 (for example JDK 21). Use the vendor’s instructions for your Ubuntu version. Confirm java -version and javac -version.
+Extract Ghidra into ~/tools/ghidra/ (or another user-writable directory). Set GHIDRA_INSTALL_DIR to the extracted folder, not its parent.
+Verify REA sees the provider before investigating a large Windows PE executable.
+mkdir -p ~/tools/ghidra
+# Download the official Ghidra release ZIP with your browser, then:
+unzip /path/to/ghidra_12.1.x_PUBLIC_*.zip -d ~/tools/ghidra
+export GHIDRA_INSTALL_DIR="$(find "$HOME/tools/ghidra" -maxdepth 1 -type d -name "ghidra_12.1*" | head -n1)"
+export JAVA_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+rea providers --json
+rea doctor --json
+
+IMPORTANT: persist GHIDRA_INSTALL_DIR and JAVA_HOME in the environment used to launch OpenCode, or explicitly place them in REA’s MCP environment. Shell exports in a different terminal are not inherited. WSL2 Ghidra is Linux-hosted; Windows PE coverage and provider readiness must be tested rather than assumed.
+4  Integrate REA inside ~/projects/opencode-harness
+Method A (preferred when project scope matters): update the existing project opencode.json or opencode.jsonc, preserving every current setting. Before edits, create a backup and check whether an mcp.rea entry already exists. Never replace the whole configuration with the sample below.
+cd ~/projects/opencode-harness
+ls -la opencode.json opencode.jsonc 2>/dev/null || true
+cp opencode.json opencode.json.backup-rea 2>/dev/null || true
+cp opencode.jsonc opencode.jsonc.backup-rea 2>/dev/null || true
+
+Add or merge this MCP object into the existing top-level "mcp" object. Replace the Ghidra/JDK paths with the exact values reported by your shell. This is an illustrative JSONC fragment, not a standalone replacement config:
+"mcp": {
+  "rea": {
+    "type": "local",
+    "command": ["npx", "-y", "rea-agents@<PINNED_VERSION>", "mcp"],
+    "enabled": true,
+    "environment": {
+      "GHIDRA_INSTALL_DIR": "/home/<linux-user>/tools/ghidra/ghidra_12.1.x_PUBLIC",
+      "JAVA_HOME": "/usr/lib/jvm/<installed-jdk>"
+    },
+    "timeout": 120000
+  }
+}
+
+Method B (guided setup): run rea setup --client opencode --dry-run --json, inspect the intended configuration path and changes, and then run rea setup --client opencode interactively. REA setup may configure a global or environment-selected OpenCode directory rather than this repository. Use Method A when you specifically require project-only activation; do not run both methods without inspecting existing registrations.
+rea setup --client opencode --dry-run --json
+# Only after approving its actual target paths:
+rea setup --client opencode
+# Restart OpenCode after registering an MCP server.
+
+Validation: from the project root run opencode mcp list (if supported by your installed OpenCode version), open a new OpenCode session, and ask it to list available REA capabilities. Use a REA session/readiness tool before selecting deep binary operations. REA doctor is a configuration check, not proof that the active OpenCode process loaded the MCP server.
+5  Locate and stage a Steam title
+Use a game you own and are permitted to inspect. Prefer offline, non-competitive, unprotected targets for initial experiments. Windows Steam installs commonly appear under C:\Program Files (x86)\Steam\steamapps\common or another Steam library. Under WSL, the C: drive is normally /mnt/c/.
+ls "/mnt/c/Program Files (x86)/Steam/steamapps/common"
+# For a nondefault Steam library, browse /mnt/d, /mnt/e, etc.
+GAME_DIR="/mnt/c/Program Files (x86)/Steam/steamapps/common/<GAME_FOLDER>"
+find "$GAME_DIR" -maxdepth 2 -type f \(-iname "*.exe" -o -iname "*.dll" -o -iname "*.so" \) | head -60
+
+Select the actual game binary rather than assuming the launcher or anti-cheat bootstrapper contains gameplay logic. Avoid starting protected games in debuggers. For a reasonable first target, choose a small executable, game demo, or open-source game for which analysis is authorized.
+Stage a read-only input and separate output directory; never mutate the Steam installation. Copy only the specific legally inspectable binaries needed for your question, not the entire game by default.
+mkdir -p "$HOME/game-research/sample-game"/{inputs,evidence,notes,reports}
+cp -n "$GAME_DIR/<SELECTED_EXECUTABLE>.exe" \n  "$HOME/game-research/sample-game/inputs/"
+sha256sum "$HOME/game-research/sample-game/inputs/"* \n  | tee "$HOME/game-research/sample-game/evidence/hashes.sha256"
+file "$HOME/game-research/sample-game/inputs/"*
+
+6  First investigation: bounded discovery, not full-game decompilation
+Recommended prompt for OpenCode (copy and customize):
+Use REA in read-only, static-analysis mode for the executable at:
+/home/<linux-user>/game-research/sample-game/inputs/<EXECUTABLE>.exe
+Goal: determine the entry points and local implementation related to
+<ONE SPECIFIC FEATURE>. First verify REA/Ghidra readiness and PE support.
+Inventory metadata, imports and promising strings; use cross-references
+to narrow candidate functions. Decompile only those candidates.
+For every claim, include function/address, tool evidence, assumptions
+and confidence. Do not patch binaries, run/instrument a protected game,
+extract secrets, bypass DRM/anti-cheat or interact with game services.
+Save findings as Markdown under game-research/sample-game/reports/.
+Stop and report blockers rather than inventing evidence.
+
+For large games, ask REA for targeted symbol/string/import/call-graph exploration. Native game executables can produce vast tool output; keep scopes small, preserve addresses and file hashes, and validate hypotheses against clean offline observations or publicly available documentation.
+7  Effective agent workflow
+Phase
+Investigation action
+Exit criterion
+Researcher
+Collect provenance, file hashes, imports, strings, candidate call sites
+Addressable evidence and explicit unknowns
+Planner
+State 1–3 testable hypotheses about one subsystem
+Probe plan and expected observations
+Analyst
+Inspect only linked functions and data structures
+Pseudocode snippets + cross-references
+Validator
+Compare claims to offline observations and alternative explanations
+Confirmed / rejected / unresolved outcome
+Integrator
+Document findings; optionally implement an original clean-room analogue
+Self-contained reproducible report
+Standard report structure: objective; target/game build; SHA-256; local provider versions; entry points; evidence table (address, artifact, claim); hypothesis and confidence; counterevidence; limitations; next probes. Differentiate client observations from server-side behavior. A decompiler’s pseudocode is an approximation, not original source.
+8  Troubleshooting
+Symptom
+Check / corrective action
+rea missing
+Confirm npm global bin PATH; npm prefix -g; consider npx
+Unsupported Node
+Install a supported precise Node release; restart shell
+Ghidra unavailable
+Check exact 12.1.x version, full JDK, GHIDRA_INSTALL_DIR and native decompiler
+ps not found
+Install procps in WSL; check command -v ps
+MCP invisible
+Verify merged project config and whether OpenCode needs restart; inspect opencode mcp list
+MCP times out
+Increase MCP timeout; separately configure provider startup deadline as documented
+Wrong OS/path
+Use /mnt/c/... in WSL; escape Windows spaces with shell quotes
+Decompilation poor
+Try smaller scope, imported-library correlations, multiple evidence types
+EAC/DRM blocker
+Stop protected runtime work; restrict to allowed static/offline investigation
+9  Guardrails and source links
+Check the game EULA, applicable law and authorization before analyzing binaries. Owning a Steam license does not automatically grant every reverse-engineering permission.
+Never modify or redistribute copyrighted game assets, decrypted binaries, keys or proprietary decompiled source.
+Do not use REA for cheating, circumventing anti-cheat, DRM bypass, extracting credentials, or manipulating online competitive gameplay.
+REA analysis happens locally, but tool results sent to a cloud LLM can leave the machine. Review your agent provider’s retention and privacy policies.
+Store output outside the installed Steam directory and use gitignore for large/proprietary artifacts; commit only your own notes if allowed.
+Official sources (verified 26 October 2026):
+https://github.com/morluto/rea
+https://github.com/morluto/rea/blob/main/docs/installation.md
+https://rea.tools/get-started/
+https://docs.opencode.ai/docs/mcp-servers/
+https://docs.opencode.ai/docs/config/
+https://github.com/NationalSecurityAgency/ghidra/releases
+Note: Exact local user paths, installed versions, the harness’s existing config, and the chosen game have not been inspected. Replace placeholders and preserve existing settings. Official release docs are the authority if behavior differs.

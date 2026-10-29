@@ -1,0 +1,11 @@
+{
+  "mcp": {
+    "servers": {
+      "rea": {
+        "type": "local",
+        "command": ["rea", "mcp"],
+        "disabled": true
+      }
+    }
+  }
+}

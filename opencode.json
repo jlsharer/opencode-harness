@@ -3,5 +3,23 @@
   "instructions": ["AGENTS.md", ".memory/protocols/memory-management.md"],
   "permission": {
     "webfetch": "ask"
+  },
+  "mcp": {
+    "servers": {
+      "rea": {
+        "type": "local",
+        "command": [
+          "/home/joshl/.nvm/versions/node/v24.22.1/bin/node",
+          "/home/joshl/.nvm/versions/node/v24.22.1/lib/node_modules/rea-agents/scripts/rea.mjs",
+          "mcp"
+        ],
+        "environment": {
+          "GHIDRA_INSTALL_DIR": "/home/joshl/tools/ghidra/ghidra_12.1.4_PUBLIC",
+          "JAVA_HOME": "/usr/lib/jvm/java-21-openjdk-amd64"
+        },
+        "codemode": false,
+        "disabled": false
+      }
+    }
   }
 }

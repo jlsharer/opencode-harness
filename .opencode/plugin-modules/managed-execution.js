@@ -1,6 +1,7 @@
 /** Managed worker boundaries. Ordinary edits are scoped; shell is OS-isolated, never regex-filtered. */
 import { execFileSync } from "node:child_process";
-import { lstatSync, realpathSync } from "node:fs";
+import { constants, closeSync, fstatSync, lstatSync, openSync, readSync, realpathSync, } from "node:fs";
+import { createHash } from "node:crypto";
 import path from "node:path";
 const BWRAP = "/usr/bin/bwrap";
 let sandboxChecked = false;
@@ -152,9 +153,82 @@ export function enforceRecoveryShell(args, recoveryRoot) {
             : 300000, 300000),
     };
 }
+const REA_DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024;
+const REA_MAX_FILE_BYTES = 256 * 1024 * 1024;
+function assertReaTarget(target, maxFileBytes) {
+    const filename = target.path;
+    if (!path.isAbsolute(filename) ||
+        path.resolve(filename) !== filename ||
+        filename === "/" ||
+        filename.includes("\\") ||
+        filename.includes("\0") ||
+        !/^[a-f0-9]{64}$/.test(target.sha256))
+        throw new Error("managed REA target identity invalid");
+    let current = "/";
+    for (const component of filename.slice(1).split("/")) {
+        current = path.join(current, component);
+        if (lstatSync(current).isSymbolicLink())
+            throw new Error("managed REA target symlink ancestry unsupported");
+    }
+    const fd = openSync(filename, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+        const before = fstatSync(fd);
+        if (!before.isFile() || before.size > maxFileBytes)
+            throw new Error("managed REA target must be a regular file within the authorized byte limit");
+        const digest = createHash("sha256");
+        const chunk = Buffer.allocUnsafe(64 * 1024);
+        let bytes = 0;
+        for (;;) {
+            const count = readSync(fd, chunk, 0, chunk.length, null);
+            if (count === 0)
+                break;
+            bytes += count;
+            if (bytes > maxFileBytes)
+                throw new Error("managed REA target exceeds byte limit");
+            digest.update(chunk.subarray(0, count));
+        }
+        const after = fstatSync(fd);
+        if (before.dev !== after.dev ||
+            before.ino !== after.ino ||
+            before.size !== after.size ||
+            before.mtimeMs !== after.mtimeMs ||
+            bytes !== after.size ||
+            digest.digest("hex") !== target.sha256)
+            throw new Error("managed REA target identity changed or hash mismatched");
+    }
+    finally {
+        closeSync(fd);
+    }
+}
 export function enforceManagedTool(input) {
     canonicalWorkspace(input.workspaceRoot);
     const args = { ...input.args };
+    // A work-unit capability binds one standalone static tool to one verified file.
+    // Session-open and target-affine tools are excluded because their provider
+    // process, selected target and side effects are not proved by this boundary.
+    if (input.tool.startsWith("rea_")) {
+        const policy = input.reaStaticInspection;
+        if (!["researcher", "validator"].includes(input.role) ||
+            !policy ||
+            !policy.tools.includes(input.tool) ||
+            input.tool !== "rea_inspect_pe_imports")
+            throw new Error("unsupported managed REA operation or scope");
+        const keys = Object.keys(args);
+        if (!keys.includes("path") ||
+            keys.some((key) => key !== "path" && key !== "max_file_bytes") ||
+            args.path !== policy.path)
+            throw new Error("managed REA inspection requires the exact authorized target path");
+        const maxFileBytes = keys.includes("max_file_bytes")
+            ? args.max_file_bytes
+            : REA_DEFAULT_MAX_FILE_BYTES;
+        if (typeof maxFileBytes !== "number" ||
+            !Number.isSafeInteger(maxFileBytes) ||
+            maxFileBytes < 1 ||
+            maxFileBytes > REA_MAX_FILE_BYTES)
+            throw new Error("managed REA inspection requires a bounded integer max_file_bytes");
+        assertReaTarget(policy, maxFileBytes);
+        return args;
+    }
     if (["read", "grep", "glob", "list"].includes(input.tool))
         return args;
     if (input.tool === "webfetch") {

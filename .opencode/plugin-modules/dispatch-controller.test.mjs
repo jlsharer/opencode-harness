@@ -92,6 +92,29 @@ test("workflow validates references and rejects cycles, duplicate declarations a
         assert.throws(() => validateWorkflow(spec));
     }
 });
+test("REA static capability is exact, scoped and rejects other operations", () => {
+    const spec = validWorkflow();
+    const policy = {
+        path: "/tmp/fixture.exe",
+        sha256: "a".repeat(64),
+        tools: ["rea_inspect_pe_imports"],
+    };
+    Object.assign(spec.workUnits[0], { reaStaticInspection: policy });
+    assert.deepEqual(validateWorkflow(spec).workUnits[0].reaStaticInspection, policy);
+    for (const changed of [
+        { ...policy, path: "/tmp/../etc/passwd" },
+        { ...policy, sha256: "not-a-digest" },
+        { ...policy, tools: ["rea_open_binary"] },
+    ]) {
+        const invalid = validWorkflow();
+        Object.assign(invalid.workUnits[0], { reaStaticInspection: changed });
+        assert.throws(() => validateWorkflow(invalid), /REA/);
+    }
+    const unrelated = validWorkflow();
+    Object.assign(unrelated.workUnits[0], { reaStaticInspection: policy });
+    mapping(unrelated, "a", "planner", "plan");
+    assert.throws(() => validateWorkflow(unrelated), /REA/);
+});
 test("write-producing source and package QA cannot become managed acceptance gates", () => {
     for (const command of [
         "node .opencode/scripts/validate-" + "harness.mts",
