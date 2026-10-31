@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { TASK_MODES, validateTaskPacket, validateTaskResult } from "./task-contracts.js";
+import { TASK_MODES, taskContractShape, validateTaskPacket, validateTaskResult, } from "./task-contracts.js";
 import { TASK_THREAD_ROLE_PACKET_FIELDS, createTaskThreadPolicy, formatTaskThreadEnvelope, formatTaskResultWrapper, } from "./task-thread-policy.js";
 const context = {
     orchestrationId: "run",
@@ -70,6 +70,36 @@ test("references and prose are bounded and concrete", () => {
     ])
         assert.throws(() => validateTaskPacket("implementer", { ...valid, targetPaths }));
     assert.throws(() => validateTaskPacket("implementer", { ...valid, approvedPlan: "x".repeat(4097) }));
+});
+test("rendered packet types match validation for every role and optional field", () => {
+    for (const role of Object.keys(TASK_MODES)) {
+        const shape = taskContractShape(role);
+        const values = Object.fromEntries(Object.entries({ ...shape.requiredPacket, ...shape.optionalPacket }).map(([field, type]) => [
+            field,
+            type === "string" ? "bounded prose" : ["bounded prose"],
+        ]));
+        Object.assign(values, {
+            dispatchKind: "fresh",
+            taskMode: TASK_MODES[role][0],
+            routingMetadataStatus: "absent",
+        });
+        assert.equal(validateTaskPacket(role, values), values);
+        assert.deepEqual(Object.keys(shape.requiredPacket), [
+            ...TASK_THREAD_ROLE_PACKET_FIELDS[role].required,
+        ]);
+    }
+    assert.equal(taskContractShape("researcher").requiredPacket.downstreamNeeds, "string");
+    assert.throws(() => validateTaskPacket("researcher", {
+        ...packet("researcher", "research"),
+        downstreamNeeds: ["planning"],
+    }), /downstreamNeeds.*expected nonempty string/);
+});
+test("path and summary reference items fail with indexed corrective diagnostics", () => {
+    for (const label of ["evidence", "artifacts"]) {
+        assert.throws(() => validateTaskResult({ ...success(), [label]: [{ path: "plan.md", summary: "read" }] }, context), new RegExp(label + "\\[0\\] fields path, summary; allowed: reference, sha256, command, exitCode"));
+    }
+    const valid = { ...success(), evidence: [{ reference: "research.md" }] };
+    assert.equal(validateTaskResult(valid, context).outcome, "success");
 });
 test("success requires exact identity, meaningful role output, evidence and artifact linkage", () => {
     assert.equal(validateTaskResult(success(), context).outcome, "success");

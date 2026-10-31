@@ -7,6 +7,27 @@ export type GeneratedArtifact = Readonly<{
 
 export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
   {
+    source: ".opencode/src/scripts/validate-global-harness.js",
+    output: ".opencode/scripts/validate-global-harness.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/global-protocol.js",
+    output: ".opencode/plugin-modules/global-protocol.js",
+    mode: 420,
+  },
+  {
+    source: ".opencode/src/plugin-modules/global-native-plugin.js",
+    output: ".opencode/plugin-modules/global-native-plugin.js",
+    mode: 420,
+  },
+  {
+    source: ".opencode/src/plugin-modules/global-utilities.js",
+    output: ".opencode/plugin-modules/global-utilities.js",
+    mode: 420,
+  },
+  { source: "bin/global-harness.js", output: "bin/global-harness.mjs", mode: 420 },
+  {
     source: ".opencode/scripts/operator-approved-artifact-install.mjs",
     output: ".opencode/plugin-modules/operator-approved-artifact-install.js",
     mode: 0o644,

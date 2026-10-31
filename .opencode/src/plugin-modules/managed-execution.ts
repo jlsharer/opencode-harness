@@ -199,7 +199,7 @@ export function enforceRecoveryShell(
 }
 
 const REA_DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024;
-const REA_MAX_FILE_BYTES = 256 * 1024 * 1024;
+const REA_MAX_FILE_BYTES = 768 * 1024 * 1024;
 
 function assertReaTarget(target: { path: string; sha256: string }, maxFileBytes: number): void {
   const filename = target.path;

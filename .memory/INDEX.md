@@ -174,3 +174,5 @@ Current orchestration trace artifacts:
 - `orchestrations/2026-08-04-fresh-subagent-threads/roles/researcher/root-researcher-001-thread-reuse.md`
 - `orchestrations/2026-08-04-fresh-subagent-threads/roles/planner/root-planner-002-thread-enforcement.md`
 - `orchestrations/2026-08-04-fresh-subagent-threads/roles/implementer/root-implementer-003-thread-enforcement.md`
+
+- `orchestrations/global-implementation-20261028/INDEX.md`

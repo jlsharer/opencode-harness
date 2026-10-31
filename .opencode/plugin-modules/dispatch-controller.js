@@ -74,7 +74,9 @@ function exact(value, required, optional = []) {
         Object.keys(value).some((key) => !required.includes(key) && !optional.includes(key)))
         fail("missing or unexpected normalized field");
 }
-export function validateWorkflow(input) {
+export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only") {
+    if (!["legacy-read-only", "native-host"].includes(acceptanceGatePolicy))
+        fail("invalid acceptance gate policy");
     const value = record(input, "workflow");
     exact(value, [
         "schemaVersion",
@@ -142,7 +144,9 @@ export function validateWorkflow(input) {
         text(gate.criterion, "criterion");
         return {
             id: id(gate.id),
-            evidenceCommand: managedGate(gate.evidenceCommand),
+            evidenceCommand: acceptanceGatePolicy === "native-host"
+                ? text(gate.evidenceCommand, "evidenceCommand")
+                : managedGate(gate.evidenceCommand),
             workUnitIds: strings(gate.workUnitIds, "gate workUnitIds").map(id),
         };
     });
@@ -271,7 +275,7 @@ function deepFreeze(value) {
     return value;
 }
 export function createDispatchController(input, options = {}) {
-    const spec = deepFreeze(validateWorkflow(input));
+    const spec = deepFreeze(validateWorkflow(input, options.acceptanceGatePolicy));
     const now = options.now ?? Date.now;
     const maxConcurrent = integer(options.maxConcurrent ?? 1, "capacity", 1, 16);
     const maxConcurrentByRole = Object.fromEntries(ROLES.map((role) => [

@@ -154,7 +154,7 @@ export function enforceRecoveryShell(args, recoveryRoot) {
     };
 }
 const REA_DEFAULT_MAX_FILE_BYTES = 64 * 1024 * 1024;
-const REA_MAX_FILE_BYTES = 256 * 1024 * 1024;
+const REA_MAX_FILE_BYTES = 768 * 1024 * 1024;
 function assertReaTarget(target, maxFileBytes) {
     const filename = target.path;
     if (!path.isAbsolute(filename) ||

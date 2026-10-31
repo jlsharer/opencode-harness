@@ -2890,29 +2890,35 @@ async function run(options, command = "run") {
     return resultStatus;
 }
 try {
-    const { command, options } = parse(process.argv.slice(2));
-    if (command === "help" || command === "--help" || command === "-h") {
-        process.stdout.write(usage());
-        process.exitCode = 0;
+    if (process.argv[2] === "global") {
+        const { globalMain } = await import("./global-harness.mjs");
+        process.stdout.write(JSON.stringify(globalMain(process.argv.slice(3))) + "\n");
     }
-    else if (command === "capabilities")
-        process.stdout.write(`${capabilities()}\n`);
-    else if (command === "doctor") {
-        const value = manifest();
-        assertNodeCompatibility(value);
-        const selected = resolveCompatibleExecutable(options.opencodeBin);
-        process.stdout.write(`${JSON.stringify({ executable: selected.executable, source: selected.source, version: selected.version, capabilityVerification: "runtime", ephemeral: true, resumable: false })}\n`);
+    else {
+        const { command, options } = parse(process.argv.slice(2));
+        if (command === "help" || command === "--help" || command === "-h") {
+            process.stdout.write(usage());
+            process.exitCode = 0;
+        }
+        else if (command === "capabilities")
+            process.stdout.write(`${capabilities()}\n`);
+        else if (command === "doctor") {
+            const value = manifest();
+            assertNodeCompatibility(value);
+            const selected = resolveCompatibleExecutable(options.opencodeBin);
+            process.stdout.write(`${JSON.stringify({ executable: selected.executable, source: selected.source, version: selected.version, capabilityVerification: "runtime", ephemeral: true, resumable: false })}\n`);
+        }
+        else if (command === "prepare")
+            process.stdout.write(`${prepareRuntime(options)}\n`);
+        else if (command === "validate-inputs")
+            process.stdout.write(`${validateInputs(options)}\n`);
+        else if (command === "source-web" || command === "source-tui")
+            process.exitCode = await runSourceProfile(options, command);
+        else if (command === "run" || command === "web")
+            process.exitCode = await run(options, command);
+        else
+            fail(`unknown command: ${command}`);
     }
-    else if (command === "prepare")
-        process.stdout.write(`${prepareRuntime(options)}\n`);
-    else if (command === "validate-inputs")
-        process.stdout.write(`${validateInputs(options)}\n`);
-    else if (command === "source-web" || command === "source-tui")
-        process.exitCode = await runSourceProfile(options, command);
-    else if (command === "run" || command === "web")
-        process.exitCode = await run(options, command);
-    else
-        fail(`unknown command: ${command}`);
 }
 catch (error) {
     process.stderr.write(`${singleLine(errorMessage(error))}\n`);

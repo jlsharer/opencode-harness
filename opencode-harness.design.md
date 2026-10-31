@@ -424,3 +424,7 @@ Reported versions identify caches and diagnostics only. Required native hooks,
 Task/session capabilities and provider configuration are checked when exercised;
 future versions are not presumed compatible. Existing trace seeds are preserved
 across upgrades and rollback; updated bootstrap templates require deliberate review.
+
+## Global native profile implementation
+
+The separate version-1 global projection is documented in [global-profile.md](docs/global-profile.md), with complete inventory disposition in [global-profile-disposition.md](docs/global-profile-disposition.md). Native OpenCode inside the selected T3Code WSL distro owns tools, sessions/auth and permissions. A guard-free Promise adapter applies task-local packet/result/protocol checks and independent declared-file acceptance, with no launch wrapper, Git-root requirement, broad stop marker, permission transform or Bubblewrap dependency. Legacy profile architecture above remains unchanged. Pinned source-backed offline fixtures and actual package extraction are implementation evidence; target-host T3Code/native activation is unverified.

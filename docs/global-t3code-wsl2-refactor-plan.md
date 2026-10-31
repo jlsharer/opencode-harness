@@ -2,7 +2,7 @@
 
 ## Status and scope
 
-Proposed design, researched on 2026-10-28. This is a planning deliverable for review; the global profile and new adapter described below are not implemented. The document preserves current capabilities through explicit component dispositions and proposes removing the recurring execution guards from the new global path. It does not authorize runtime activation, host permission changes, provider or credential changes, installation, or publication.
+Approved design, researched on 2026-10-28. The global profile and adapter now have implementation and offline fixtures; see [implemented behavior and capability limits](global-profile.md) and [component dispositions](global-profile-disposition.md). Real T3Code/native activation remains unverified. The document preserves current capabilities through explicit component dispositions and proposes removing the recurring execution guards from the new global path. It does not authorize runtime activation, host permission changes, provider or credential changes, installation, or publication.
 
 The goal is to make all harness skills, protocols, hooks, workflows, four subagent roles and runtime capabilities available through T3Code's native OpenCode provider inside WSL2 regardless of session working directory. Existing source, portable and external-runtime profiles remain distinct during migration.
 

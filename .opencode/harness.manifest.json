@@ -156,7 +156,24 @@
     { "path": ".opencode/scripts/operator-approved-archive-install.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned" },
     { "path": ".opencode/scripts/native-v2-plugin-fixture.mts", "kind": "source-only-evaluation", "owner": "harness-owned" },
     { "path": ".opencode/scripts/native-v2-plugin-fixture.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned" },
-    { "path": ".opencode/harness.manifest.json", "kind": "harness-manifest", "owner": "harness-owned" }
+    { "path": ".opencode/harness.manifest.json", "kind": "harness-manifest", "owner": "harness-owned" },
+    {"path": ".opencode/global.manifest.json", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/global/native-contract.json", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/global/skills/delegation-orchestrator/SKILL.md", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/plugin-modules/global-native-plugin.js", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/plugin-modules/global-protocol.js", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/plugin-modules/global-utilities.js", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/schemas/global.manifest.schema.json", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/global-harness.test.mts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/t3code-provider-contract.test.mts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/validate-global-harness.mjs", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/validate-global-harness.mts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/src/plugin-modules/global-native-plugin.ts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/src/plugin-modules/global-protocol.ts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/src/plugin-modules/global-utilities.ts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": ".opencode/src/scripts/validate-global-harness.ts", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": "bin/global-harness.mjs", "kind": "global-native-profile", "owner": "harness-owned"},
+    {"path": "bin/global-harness.ts", "kind": "global-native-profile", "owner": "harness-owned"}
   ],
   "validationFindings": []
 }

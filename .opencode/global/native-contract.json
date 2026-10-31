@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "sourceCommit": "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
+  "realNativeFixtureExecuted": false,
+  "foreground": true,
+  "background": false,
+  "sources": [
+    {
+      "path": "packages/core/src/tool/plugin/subagent.ts",
+      "sha256": "3462076997d32ae3903694f95f64d5b2e754eb91b725d98ffc8a472a1a83d5f8",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/core/src/tool/plugin/subagent.ts"
+    },
+    {
+      "path": "packages/plugin/src/promise/adapter.ts",
+      "sha256": "3e20a2fb996e88c1914cabc133903482d0f5e421a2bdc0b61c8ce68c71ea63a0",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/plugin/src/promise/adapter.ts"
+    },
+    {
+      "path": "packages/plugin/src/promise/tool.ts",
+      "sha256": "1b6146b59b90f097fe0f8135b15ac4c51908b2e984b6186548bb8f649cad74b6",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/plugin/src/promise/tool.ts"
+    },
+    {
+      "path": "packages/plugin/src/promise/command.ts",
+      "sha256": "0b73357ff2189bc19d29da2bbbbb7567afd0e13c10a94d6293e75740497ebdf5",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/plugin/src/promise/command.ts"
+    },
+    {
+      "path": "packages/schema/src/prompt-input.ts",
+      "sha256": "32eec051b22c6f3bd7d7f10e7e990a07cda2f93ec4cfc506294f6e5d43dca0e6",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/schema/src/prompt-input.ts"
+    },
+    {
+      "path": "packages/schema/src/permission.ts",
+      "sha256": "45b63a6d9f7619d9285663111f26a9a939d64683cac3272881e6dd196409bc1d",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/schema/src/permission.ts"
+    },
+    {
+      "path": "packages/schema/src/tool.ts",
+      "sha256": "b5e35a5a5208f48bf564705563f4f77e5d46d7d57fd8c0091847b38772990e06",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/schema/src/tool.ts"
+    },
+    {
+      "path": "packages/core/src/plugin.ts",
+      "sha256": "373762697d701fa37c45d1e975072015078aac51d1aca86b1d2ae0ff7ed6169a",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/core/src/plugin.ts"
+    },
+    {
+      "path": "packages/plugin/src/promise/plugin.ts",
+      "sha256": "3990c2a177ebe917dcd8c94c25c4368d0e293c09e15ef9f8fdc7ce66bd86d081",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/plugin/src/promise/plugin.ts"
+    },
+    {
+      "path": "packages/schema/src/session.ts",
+      "sha256": "3a7d100a8627b62d8530cd99af835cbb756881651382c1461a89eec2746ddcb5",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/schema/src/session.ts"
+    },
+    {
+      "path": "packages/schema/src/agent.ts",
+      "sha256": "2438abf1f8bbcc8ebad533b81035d739db4117b9df739a906d0113e851c0737e",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/schema/src/agent.ts"
+    },
+    {
+      "path": "packages/core/src/agent.ts",
+      "sha256": "4e88919964502b6817a8e608c48ddc64fcda18afe140a720a047ca008b3b09c9",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/core/src/agent.ts"
+    },
+    {
+      "path": "packages/core/src/tool.ts",
+      "sha256": "681fcd3128b05bb497bf3992e08a65ed8c1528438c37bee22eb724ecd3fcaa17",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/core/src/tool.ts"
+    },
+    {
+      "path": "packages/core/src/tool/runtime.ts",
+      "sha256": "d1edb0aac82fa73c2172eb86fedcb75ad27f91e8d72de127ce076518915170a2",
+      "url": "https://raw.githubusercontent.com/anomalyco/opencode/68bc26b7da1990ce10ffecfbc1e09eb13aa5d824/packages/core/src/tool/runtime.ts"
+    }
+  ]
+}

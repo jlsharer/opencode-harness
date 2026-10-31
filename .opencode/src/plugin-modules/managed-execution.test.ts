@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { enforceManagedTool, enforceRecoveryShell } from "./managed-execution.ts";
 import type { ManagedToolInput } from "./managed-execution.ts";
 
 function fixture(run: (base: ManagedToolInput) => void): void {
-  const root = mkdtempSync("/var/tmp/managed-execution-");
+  const root = mkdtempSync(path.join(tmpdir(), "managed-execution-"));
   try {
     writeFileSync(path.join(root, "source.txt"), "original");
     run({
@@ -94,10 +95,33 @@ test("managed REA admits only the exact hashed standalone PE import target", () 
       () => enforceManagedTool({ ...input, args: { path: "/etc/passwd" } }),
       /exact authorized/,
     );
+    for (const max_file_bytes of [512 * 1024 * 1024, 768 * 1024 * 1024]) {
+      const args = { path: target, max_file_bytes };
+      assert.deepEqual(enforceManagedTool({ ...input, args }), args);
+      assert.deepEqual(enforceManagedTool({ ...input, role: "validator", args }), args);
+    }
+    for (const max_file_bytes of [768 * 1024 * 1024 + 1, 0, -1, 1.5, "512", null, NaN, Infinity]) {
+      assert.throws(
+        () => enforceManagedTool({ ...input, args: { path: target, max_file_bytes } }),
+        /bounded integer max_file_bytes/,
+      );
+    }
     assert.throws(
       () =>
-        enforceManagedTool({ ...input, args: { path: target, max_file_bytes: 512 * 1024 * 1024 } }),
-      /bounded integer max_file_bytes/,
+        enforceManagedTool({
+          ...input,
+          args: { path: target, max_file_bytes: 512 * 1024 * 1024, extra: true },
+        }),
+      /exact authorized/,
+    );
+    assert.throws(
+      () =>
+        enforceManagedTool({
+          ...input,
+          reaStaticInspection: { ...policy, tools: [] },
+          args: { path: target, max_file_bytes: 512 * 1024 * 1024 },
+        }),
+      /unsupported/,
     );
     for (const tool of [
       "rea_open_binary",

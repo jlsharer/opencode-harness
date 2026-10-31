@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "profile": "global-native",
+  "protocolVersion": "1.0.0",
+  "assets": [
+    {
+      "source": ".opencode/agents/implementer.md",
+      "release": ".opencode/agents/implementer.md",
+      "kind": "native-projection",
+      "discovery": "agents/implementer.md"
+    },
+    {
+      "source": ".opencode/agents/planner.md",
+      "release": ".opencode/agents/planner.md",
+      "kind": "native-projection",
+      "discovery": "agents/planner.md"
+    },
+    {
+      "source": ".opencode/agents/researcher.md",
+      "release": ".opencode/agents/researcher.md",
+      "kind": "native-projection",
+      "discovery": "agents/researcher.md"
+    },
+    {
+      "source": ".opencode/agents/validator.md",
+      "release": ".opencode/agents/validator.md",
+      "kind": "native-projection",
+      "discovery": "agents/validator.md"
+    },
+    {
+      "source": ".opencode/commands/delegate-implement.md",
+      "release": ".opencode/commands/delegate-implement.md",
+      "kind": "native-projection",
+      "discovery": "commands/delegate-implement.md"
+    },
+    {
+      "source": ".opencode/commands/delegate-orchestration.md",
+      "release": ".opencode/commands/delegate-orchestration.md",
+      "kind": "native-projection",
+      "discovery": "commands/delegate-orchestration.md"
+    },
+    {
+      "source": ".opencode/commands/delegate-plan.md",
+      "release": ".opencode/commands/delegate-plan.md",
+      "kind": "native-projection",
+      "discovery": "commands/delegate-plan.md"
+    },
+    {
+      "source": ".opencode/commands/delegate-research.md",
+      "release": ".opencode/commands/delegate-research.md",
+      "kind": "native-projection",
+      "discovery": "commands/delegate-research.md"
+    },
+    {
+      "source": ".opencode/commands/delegate-validate.md",
+      "release": ".opencode/commands/delegate-validate.md",
+      "kind": "native-projection",
+      "discovery": "commands/delegate-validate.md"
+    },
+    {
+      "source": ".opencode/global/skills/delegation-orchestrator/SKILL.md",
+      "release": ".opencode/skills/delegation-orchestrator/SKILL.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/SKILL.md"
+    },
+    {
+      "source": ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md",
+      "release": ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/references/llama-cpp-integration-guide.md"
+    },
+    {
+      "source": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
+      "release": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/references/role-routing-matrix.md"
+    },
+    {
+      "source": ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
+      "release": ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/references/trust-and-restart-guide.md"
+    },
+    {
+      "source": ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
+      "release": ".opencode/skills/delegation-orchestrator/references/validation-checklist.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/references/validation-checklist.md"
+    },
+    {
+      "source": ".opencode/skills/interactive-refinement/SKILL.md",
+      "release": ".opencode/skills/interactive-refinement/SKILL.md",
+      "kind": "native-projection",
+      "discovery": "skills/interactive-refinement/SKILL.md"
+    },
+    {
+      "source": ".opencode/skills/opencode-skill-authoring/SKILL.md",
+      "release": ".opencode/skills/opencode-skill-authoring/SKILL.md",
+      "kind": "native-projection",
+      "discovery": "skills/opencode-skill-authoring/SKILL.md"
+    },
+    {
+      "source": ".opencode/skills/opencode-workflow-guidance/SKILL.md",
+      "release": ".opencode/skills/opencode-workflow-guidance/SKILL.md",
+      "kind": "native-projection",
+      "discovery": "skills/opencode-workflow-guidance/SKILL.md"
+    },
+    {
+      "source": ".opencode/schemas/harness-endpoint-catalog.schema.json",
+      "release": ".opencode/schemas/harness-endpoint-catalog.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/harness-model-routing.schema.json",
+      "release": ".opencode/schemas/harness-model-routing.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/harness-routing-profile.schema.json",
+      "release": ".opencode/schemas/harness-routing-profile.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/interactive-refinement-test-plan.schema.json",
+      "release": ".opencode/schemas/interactive-refinement-test-plan.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/memory-trace-artifact.schema.json",
+      "release": ".opencode/schemas/memory-trace-artifact.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/opencode-provider-projection.schema.json",
+      "release": ".opencode/schemas/opencode-provider-projection.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/orchestration-input.schema.json",
+      "release": ".opencode/schemas/orchestration-input.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/role-io-contracts.schema.json",
+      "release": ".opencode/schemas/role-io-contracts.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/contracts/role-io-contracts.json",
+      "release": ".opencode/contracts/role-io-contracts.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/INDEX.md",
+      "release": ".opencode/bootstrap/memory/INDEX.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/protocols/memory-management.md",
+      "release": ".opencode/bootstrap/memory/protocols/memory-management.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/compaction-handoff.md",
+      "release": ".opencode/bootstrap/memory/templates/compaction-handoff.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
+      "release": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/orchestration-index.md",
+      "release": ".opencode/bootstrap/memory/templates/orchestration-index.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+      "release": ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".memory/references/opencode-refs.md",
+      "release": ".memory/references/opencode-refs.md",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/global.manifest.json",
+      "release": ".opencode/global.manifest.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": "package.json",
+      "release": "package.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/plugin-modules/global-protocol.js",
+      "release": ".opencode/plugin-modules/global-protocol.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/global-native-plugin.js",
+      "release": ".opencode/plugin-modules/global-native-plugin.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/global-utilities.js",
+      "release": ".opencode/plugin-modules/global-utilities.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/task-contracts.js",
+      "release": ".opencode/plugin-modules/task-contracts.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/task-thread-policy.js",
+      "release": ".opencode/plugin-modules/task-thread-policy.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/dispatch-controller.js",
+      "release": ".opencode/plugin-modules/dispatch-controller.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/context-budget.js",
+      "release": ".opencode/plugin-modules/context-budget.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/compaction-handoff.js",
+      "release": ".opencode/plugin-modules/compaction-handoff.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/external-win64-relaunch.js",
+      "release": ".opencode/plugin-modules/external-win64-relaunch.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/operator-approved-artifact-install.js",
+      "release": ".opencode/plugin-modules/operator-approved-artifact-install.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/plugin-modules/operator-approved-archive-install.js",
+      "release": ".opencode/plugin-modules/operator-approved-archive-install.js",
+      "kind": "guard-free-module"
+    },
+    {
+      "source": ".opencode/routing/harness-model-routing.example.json",
+      "release": ".opencode/routing/harness-model-routing.example.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/routing/harness-model-routing.local.example.json",
+      "release": ".opencode/routing/harness-model-routing.local.example.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/routing/routing-policy.mjs",
+      "release": ".opencode/routing/routing-policy.mjs",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/routing/routing-config-loader.mjs",
+      "release": ".opencode/routing/routing-config-loader.mjs",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/routing/model-routing-helper.mjs",
+      "release": ".opencode/routing/model-routing-helper.mjs",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/routing/resolve-model-routing.mjs",
+      "release": ".opencode/routing/resolve-model-routing.mjs",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/schemas/global.manifest.schema.json",
+      "release": ".opencode/schemas/global.manifest.schema.json",
+      "kind": "immutable-resource"
+    },
+    {
+      "source": ".opencode/global/native-contract.json",
+      "release": ".opencode/global/native-contract.json",
+      "kind": "native-schema-provenance"
+    }
+  ]
+}

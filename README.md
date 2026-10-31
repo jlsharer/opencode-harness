@@ -1,5 +1,7 @@
 # OpenCode Harness Runtime 0.1.20
 
+The separate **global-native** profile for native OpenCode in T3Code/WSL2 is implemented with task-local protocol checks and native tool permissions. See [global installation, migration and offline verification](docs/global-profile.md) and the [component disposition ledger](docs/global-profile-disposition.md). Real T3Code/provider activation remains unverified and requires separate authorization. Existing launcher profiles below retain their legacy behavior.
+
 `opencode-harness-runtime` launches the repository's four-role delegation
 harness without copying `.opencode` into the target project. The active roles
 are exactly `researcher`, `planner`, `implementer`, and `validator`. Integration,

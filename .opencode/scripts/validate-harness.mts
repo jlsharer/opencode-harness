@@ -6,6 +6,8 @@ import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { globalManifest } from "../../bin/global-harness.ts";
+import { validateGlobalHarness } from "../src/scripts/validate-global-harness.ts";
 
 type Role = "researcher" | "planner" | "implementer" | "validator";
 type RoleCommand =
@@ -152,6 +154,24 @@ const COMMAND_ROLE_MAP: Record<RoleCommand, Role> = {
   "delegate-validate": "validator",
 };
 const STATIC_MANIFEST_PATHS = [
+  ".opencode/global.manifest.json",
+  ".opencode/global/native-contract.json",
+  ".opencode/global/skills/delegation-orchestrator/SKILL.md",
+  ".opencode/plugin-modules/global-native-plugin.js",
+  ".opencode/plugin-modules/global-protocol.js",
+  ".opencode/plugin-modules/global-utilities.js",
+  ".opencode/schemas/global.manifest.schema.json",
+  ".opencode/scripts/global-harness.test.mts",
+  ".opencode/scripts/t3code-provider-contract.test.mts",
+  ".opencode/scripts/validate-global-harness.mjs",
+  ".opencode/scripts/validate-global-harness.mts",
+  ".opencode/src/plugin-modules/global-native-plugin.ts",
+  ".opencode/src/plugin-modules/global-protocol.ts",
+  ".opencode/src/plugin-modules/global-utilities.ts",
+  ".opencode/src/scripts/validate-global-harness.ts",
+  "bin/global-harness.mjs",
+  "bin/global-harness.ts",
+
   "package-lock.json",
   "eslint.config.mjs",
   "tsconfig.json",
@@ -498,6 +518,8 @@ function assertManifest(manifest: SourceManifest): void {
     "tsconfig.json",
     "bin/opencode-harness.mjs",
     "bin/opencode-harness.ts",
+    "bin/global-harness.ts",
+    "bin/global-harness.mjs",
   ]);
   const staticMemoryOwned = new Set(STATIC_MEMORY_PATHS);
   const paths = manifest.artifacts.map((artifact) => artifact.path);
@@ -786,9 +808,18 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     devDependencies["typescript-eslint"] !== "8.68.0"
   )
     fail("Package must pin the approved ESLint TypeScript stylistic toolchain");
-  if (packageManifest.files.length !== 42 || new Set(packageManifest.files).size !== 42)
-    fail("Package files selector allowlist must contain exactly 42 unique entries");
+  if (new Set(packageManifest.files).size !== packageManifest.files.length)
+    fail("Package files selector allowlist must contain unique entries");
   const selectors = [
+    "bin/global-harness.mjs",
+    ".opencode/global.manifest.json",
+    ".opencode/plugin-modules/global-*.js",
+    ".opencode/skills/opencode-skill-authoring",
+    ".opencode/skills/opencode-workflow-guidance",
+    ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md",
+    ".memory/references/opencode-refs.md",
+    ".opencode/global",
+    ".opencode/scripts/validate-global-harness.mjs",
     ".opencode/plugin-modules/task-contracts.js",
     ".opencode/plugin-modules/dispatch-controller.js",
     ".opencode/plugin-modules/acceptance-proof.js",
@@ -863,10 +894,13 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     "bin/opencode-harness.mjs",
     ".opencode/runtime.manifest.json",
     ...runtimeManifest.files.map((entry) => entry.source),
+    ...globalManifest(ROOT).assets.map((entry) => entry.source),
+    "bin/global-harness.mjs",
+    ".opencode/scripts/validate-global-harness.mjs",
   ];
-  if (actual.length !== 56 || new Set(actual).size !== 56)
-    fail(`npm payload must contain exactly 56 unique paths; got ${actual.length}`);
-  sameSet(actual, expected, "exact npm payload allowlist");
+  if (actual.length !== new Set(expected).size || new Set(actual).size !== actual.length)
+    fail(`npm payload inventory count mismatch; got ${actual.length}`);
+  sameSet(actual, [...new Set(expected)], "exact npm payload allowlist");
   const launcher = report.files.find((entry) => entry.path === "bin/opencode-harness.mjs");
   if (!launcher || launcher.mode !== 0o755) fail("npm payload launcher must retain mode 0755");
   for (const forbidden of [
@@ -1802,6 +1836,7 @@ async function main() {
   assertDarwinNativeAssets();
   assertPortableValidator();
 
+  validateGlobalHarness(ROOT);
   process.stdout.write("OpenCode harness validation passed\n");
 }
 

@@ -89,6 +89,30 @@ const optionalOutputFields: Record<TaskThreadRole, readonly string[]> = {
   validator: ["skippedChecks", "residualRisk", "artifactProof"],
 };
 
+export const TASK_REFERENCE_FIELDS = ["reference", "sha256", "command", "exitCode"] as const;
+
+/** Rendered into global parent/leaf prompts from the same tables used below. */
+export function taskContractShape(role: TaskThreadRole) {
+  const shape = TASK_THREAD_ROLE_PACKET_FIELDS[role];
+  const packetTypes = (fields: readonly string[]) =>
+    Object.fromEntries(
+      fields.map((field) => [field, textFields.has(field) ? "string" : "string[]"]),
+    );
+  const outputTypes = (fields: readonly string[]) =>
+    Object.fromEntries(
+      fields.map((field) => [
+        field,
+        field === "traceArtifactPath" ? "string" : "string | string[]",
+      ]),
+    );
+  return {
+    requiredPacket: packetTypes(shape.required),
+    optionalPacket: packetTypes(shape.optional),
+    requiredSuccessOutput: outputTypes(outputFields[role]),
+    optionalSuccessOutput: outputTypes(optionalOutputFields[role]),
+  };
+}
+
 function fail(label: string): never {
   throw new Error("Harness task contract: invalid " + label);
 }
@@ -100,7 +124,7 @@ function record(value: unknown, label: string): Record<string, unknown> {
 
 function text(value: unknown, label: string, max = 4096): string {
   if (typeof value !== "string" || !value.trim() || value.length > max || value.includes("\0"))
-    fail(label);
+    fail(label + " (expected nonempty string within " + max + " characters)");
   return value;
 }
 
@@ -141,21 +165,26 @@ function references(value: unknown, label: string): TaskEvidence[] {
   if (!Array.isArray(value) || value.length > 32) fail(label);
   return value.map((v, i) => {
     const item = record(v, label + "[" + i + "]");
-    if (Object.keys(item).some((k) => !["reference", "sha256", "command", "exitCode"].includes(k)))
-      fail(label);
-    text(item.reference, label + ".reference", 2048);
+    const at = label + "[" + i + "]";
+    const unknown = Object.keys(item).filter(
+      (k) => !(TASK_REFERENCE_FIELDS as readonly string[]).includes(k),
+    );
+    if (unknown.length)
+      fail(at + " fields " + unknown.join(", ") + "; allowed: " + TASK_REFERENCE_FIELDS.join(", "));
+    text(item.reference, at + ".reference", 2048);
     if (
       item.sha256 !== undefined &&
       (typeof item.sha256 !== "string" || !/^[a-f0-9]{64}$/.test(item.sha256))
     )
-      fail(label + ".sha256");
-    if (item.command !== undefined) text(item.command, label + ".command", 2048);
+      fail(at + ".sha256");
+    if (item.command !== undefined) text(item.command, at + ".command", 2048);
     if (
       item.exitCode !== undefined &&
       (!Number.isSafeInteger(item.exitCode) || item.command === undefined)
     )
-      fail(label + ".exitCode");
-    if (item.command !== undefined && item.exitCode === undefined) fail(label + ".exitCode");
+      fail(at + ".exitCode (integer exitCode requires command)");
+    if (item.command !== undefined && item.exitCode === undefined)
+      fail(at + ".exitCode (command requires observed integer exitCode)");
     return item as unknown as TaskEvidence;
   });
 }
