@@ -154,6 +154,9 @@ const COMMAND_ROLE_MAP: Record<RoleCommand, Role> = {
   "delegate-validate": "validator",
 };
 const STATIC_MANIFEST_PATHS = [
+  ".opencode/scripts/render-task-contract-examples.mts",
+  ".opencode/scripts/render-task-contract-examples.test.mts",
+  ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
   ".opencode/global.manifest.json",
   ".opencode/global/native-contract.json",
   ".opencode/global/skills/delegation-orchestrator/SKILL.md",
@@ -1740,6 +1743,14 @@ function walk(dirname: string): string[] {
 }
 
 async function main() {
+  const examples = spawnSync(
+    process.execPath,
+    [path.join(ROOT, ".opencode/scripts/render-task-contract-examples.mts"), "--check"],
+    { cwd: ROOT, encoding: "utf8" },
+  );
+  if (examples.error || examples.status !== 0)
+    fail(`Task contract example drift check failed: ${examples.error?.message ?? examples.stderr}`);
+
   file(".gitignore");
   file("opencode.json");
   file("AGENTS.md");

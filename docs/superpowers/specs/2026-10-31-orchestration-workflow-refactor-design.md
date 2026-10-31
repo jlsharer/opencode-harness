@@ -6,7 +6,7 @@ Audience: Harness maintainers and engineers planning the refactor
 
 Combine Superpowers' development practices with OpenCode Harness's typed delegation and independent acceptance. Add a shared workflow layer that helps agents clarify intent, design, plan, implement, investigate failures, and review results. Reduce avoidable stalls through accurate preflight, minimal task graphs, proportionate review, and actionable recovery. Keep execution authority in the existing harness protocols and preserve the distinct source, portable, external runtime, and global-native boundaries.
 
-The owner selected a shared workflow across all harness profiles. The detailed architecture below is a proposal; selecting that direction does not authorize implementation, installation, or activation.
+The owner selected a shared workflow across all harness profiles and subsequently authorized the first implementation increment through a Codex direct bootstrap exception. Work proceeds on a new branch after checkpoint `6e264eb` was committed and pushed. The [implementation plan](../plans/2026-10-31-shared-development-workflow.md) covers shared guidance, validated contract examples, and profile packaging. Installation, activation, and the conditional runtime changes below remain outside this increment.
 
 ## Purpose and success criteria
 
@@ -27,7 +27,7 @@ The expected benefits are less repeated context, fewer speculative fixes, fewer 
 | Harness controller and profile adapters | DAG readiness, budgets, native identity, evidence binding, profile-specific cancellation | Keep these components authoritative |
 | Harness interactive refinement | Finite owner test rounds and separate automation and manual verdicts | Reuse its agreement and manual test records rather than introduce another refinement loop |
 
-The original comparison used installed Superpowers 7.0.1 skills and harness revision `fce2460b72f8ef1c44bd740534d638f100189a65`. The October 31 blocking analysis also includes current uncommitted source, generated artifacts, instructions, and tests. These working-tree changes are not evidence of an installed release or live provider behavior. Installed skill behavior matters: its fix loop resumes original implementers during early rounds and permits parking findings at a cap; those rules conflict with managed harness task freshness and acceptance.
+The original comparison used installed Superpowers 7.0.1 skills and harness revision `fce2460b72f8ef1c44bd740534d638f100189a65`. The October 31 blocking analysis also inspected the then-uncommitted source, generated artifacts, instructions, and tests, subsequently recorded in checkpoint `6e264eb`. This checkout evidence does not establish an installed release or live provider behavior. Installed skill behavior matters: its fix loop resumes original implementers during early rounds and permits parking findings at a cap; those rules conflict with managed harness task freshness and acceptance.
 
 ## Current causes of avoidable blocking
 
@@ -53,7 +53,7 @@ The conditions below are established by source inspection and focused offline fi
 | B8 | Automatic delegation selects a workflow that may have unavailable tools or a profile collision. Global collision detection conservatively uses project harness file presence, rather than proving both plugins are active. | Establish one active profile and actual callable capabilities at preflight, and give exact supported migration/bootstrap instructions. Never ask the owner to relay internal JSON or silently fall back to a direct parent. Use existing matching authority for a direct bootstrap exception only when it was actually granted. Keep file-collision checks until a reliable active-owner protocol can replace them. |
 | B9 | The global protocol retains admitted orchestration records and refuses admission at 128 records per protocol instance. This is a separate registry limit, not a workflow agent budget, so unbounded remediation does not remove it. | Expose remaining registry capacity before a new run and avoid gratuitous orchestration fragmentation. Consider explicit retirement of safely terminal records in a later runtime phase, preserving rejection of old identities and late results. Do not clear maps or restart to evade unresolved workers. |
 
-The observed `/tmp` failure during this document's first source validation is a concrete B4 example: two Bubblewrap fixtures created their working directories under the same `/tmp` later hidden by the sandbox. Running source QA with private project-local temporary fixtures succeeded. That is a test-environment correction, not permission to expose a legacy workspace writable inside managed validation.
+The observed `/tmp` failure during this document's first source validation is a concrete B4 example: two Bubblewrap fixtures created their working directories under the same `/tmp` later hidden by the sandbox. Project-local temporary fixtures corrected that source check but subsequently made a full-suite non-Git fixture inherit this repository. Complete QA instead uses a private `/var/tmp` parent, visible to Bubblewrap and outside the checkout. These are test-environment corrections, not permission to expose a legacy workspace writable inside managed validation.
 
 ### Reduce human waiting without bypassing controls
 
@@ -83,7 +83,7 @@ Use the second approach, matching the owner's selected direction. Start by extra
 
 The refactor covers development workflow guidance, bounded planning and review conventions, trace references, and tests that prevent policy drift. Keep exactly `researcher`, `planner`, `implementer`, and `validator`; retain their current modes. Keep the four role commands and central orchestration command. Workflow stages are internal concepts, not new agents or slash commands.
 
-Primary sessions select the active profile's managed workflow automatically for substantive coding; explicit invocation remains supported. Simple questions and trivial low-risk edits may remain direct. Selection and injected awareness are not runtime admission: the parent must load the protocol and establish actual profile capabilities before managed dispatch. The running design update is a research/documentation request and does not authorize implementing the remedies.
+Primary sessions select the active profile's managed workflow automatically for substantive coding; explicit invocation remains supported. Simple questions and trivial low-risk edits may remain direct. Selection and injected awareness are not runtime admission: the parent must load the protocol and establish actual profile capabilities before managed dispatch. The owner-approved Codex bootstrap implementation is explicitly outside native OpenCode managed admission and acceptance; it does not simulate missing native tools or activate providers.
 
 Preserve neutral routing, advisory local selection, force-local false by default, explicit capacity requirements, and operator-owned provider transport and credentials. Preserve launcher root, cache, snapshot, database, and cleanup controls. No real installation, provider access, global mutation, publication, or Git mutation follows from this design. Product code, skill installation, and runtime changes require a later implementation scope.
 
@@ -189,7 +189,8 @@ These are proposed ownership boundaries for a later implementation plan, not fil
 
 | Surface | Proposed change |
 | --- | --- |
-| New `.opencode/workflows/development.md` | Shared stage guidance, role mappings, artifact conventions, conflict decisions |
+| `.opencode/skills/delegation-orchestrator/references/development-workflow.md` | Canonical shared development practice within the existing authority skill; replaces the initially proposed parallel workflow directory |
+| Source-only contract renderer and `references/task-contract-examples.md` | Generate validated examples from executable field/type tables; installed profiles consume Markdown without the source renderer |
 | `.opencode/skills/delegation-orchestrator/SKILL.md` and global counterpart | Small profile-specific references or generated inclusions of shared guidance; preserve protocol authority |
 | `.opencode/agents/` and global role projections | Task-level planning, debugging, testing, and review instructions without new roles |
 | `.opencode/skills/interactive-refinement/SKILL.md` and memory templates | Reuse finite owner-test agreement and connect its records to shared stages |

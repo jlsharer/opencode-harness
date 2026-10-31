@@ -3,6 +3,8 @@
   "adapterVersion": "0.1.0",
   "schemaVersion": "0.1.0",
   "artifacts": [
+    {"path": ".opencode/scripts/render-task-contract-examples.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/render-task-contract-examples.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/evaluation/paired-tasks.json", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/scripts/prepare-paired-benchmark.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/scripts/paired-benchmark.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
@@ -77,6 +79,7 @@
     { "path": ".opencode/skills/delegation-orchestrator/SKILL.md", "kind": "opencode-skill", "owner": "harness-owned" },
     { "path": ".opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
     { "path": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
+    { "path": ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
     { "path": ".opencode/skills/delegation-orchestrator/references/validation-checklist.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
     { "path": ".opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md", "kind": "opencode-skill-reference", "owner": "harness-owned" },
     { "path": ".opencode/skills/opencode-skill-authoring/SKILL.md", "kind": "opencode-skill", "owner": "harness-owned" },
