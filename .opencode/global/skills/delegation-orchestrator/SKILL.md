@@ -1,11 +1,11 @@
 ---
 name: delegation-orchestrator
-description: Coordinates the four-role global OpenCode harness when the user explicitly requests managed delegation or delegate-orchestration; validates task packets and independent evidence while native host policy controls ordinary tools.
+description: Coordinates substantive coding work automatically through the four-role global OpenCode harness, with unbounded workflow budgets by default and independent validation under native host policy.
 ---
 
 # Global native delegation protocol, version 1
 
-This file is the global profile's protocol authority. Apply it only to explicitly requested managed orchestration. The parent extracts intent, assembles and validates a specification, dispatches bounded tasks, reviews role evidence and synthesizes. The parent does not replace leaf research, planning, implementation or independent validation. Leaves cannot delegate or load this skill. Native host permissions govern shell, read, edit, patch and web throughout; a rejected managed action never requires releasing a broad guard.
+This file is the global profile's protocol authority. Primary sessions automatically load it for substantive coding work, including multi-file changes, investigation-led fixes and changes requiring independent validation; no explicit skill or slash-command request is needed. Simple questions and trivial low-risk single edits may be handled directly. The parent extracts intent, assembles and validates a specification, dispatches scoped tasks, reviews role evidence and synthesizes. The parent does not replace leaf research, planning, implementation or independent validation. Leaves cannot delegate or load this skill. Native host permissions govern ordinary tools throughout; a rejected managed action never requires releasing a broad guard. Injected delegation awareness is not admission or acceptance. An explicitly owner-approved direct bootstrap exception stays outside managed acceptance.
 
 ## Intake and admission
 
@@ -20,6 +20,12 @@ Slash commands are user-facing entry points, not model tools. Do not ask the use
 Evidence files are an explicit declared-file acceptance strategy usable in Git and non-Git directories. List every reviewed file needed by the goal and gates, including relevant anticipated missing files. Directory scope entries require individual evidenceFiles; no workspace scanning or write sandbox is implied. File records include missing state and SHA-256. Validator evidence uses the SHA-256 of the canonical sorted record array (the same `declaredFileEvidence` utility exported by the immutable global protocol module). A directory declaration alone cannot prove unlisted files. Git inspection may supplement this evidence under native policy.
 
 Admission returns actual native workspaceRoot, immutable runtimeRoot and external traceRoot. Pass those roots through documented optional role packet fields. Do not use plugin startup location, T3Code UI title, process cwd, or an inferred Git root as the native session directory. After a native cwd move, admit a fresh orchestration.
+
+## Workflow budgets
+
+Default to `budgets: {"mode":"unbounded"}` (empty `{}` also defaults to unbounded). No workflow total-agent, per-role or remediation-cycle caps apply in this mode. Counts and fresh IDs remain recorded. For requested bounded operation, use `mode: "bounded"` and all existing numeric fields: `defaultRemediationCyclesPerWorkUnit: 1`, `maxRemediationCyclesPerWorkUnit`, `maxTotalLeafAgents` and `maxLeafAgentsByRole` with all four roles. Numeric specifications without mode remain bounded for compatibility; mixing unbounded mode and numeric caps rejects rather than silently ignoring limits.
+
+Both modes retain task deadlines, cancellation/termination uncertainty, permissions, declared scope, DAG/order/capacity controls, bounded clarification and resource/payload limits, and independent validator gates. Continue in-scope remediation only while it advances the goal; stop on success, owner cancellation or a genuine blocker. Unbounded does not authorize scope expansion, old-child reuse or acceptance without proof.
 
 ## Role tasks and results
 

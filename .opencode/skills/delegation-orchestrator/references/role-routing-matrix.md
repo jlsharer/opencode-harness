@@ -16,4 +16,4 @@ The authoritative protocol is `../SKILL.md`. This reference only maps bounded wo
 
 Each packet names one role, one listed task mode, one work unit, one bounded task, a fresh `delegationTaskId`, stable `scopeKey`, `dispatchKind: fresh`, and `routingMetadataStatus`. Retired role names in historical traces are not valid dispatch targets.
 
-Local-model work is serial by default. Parallelism requires explicit authorization or recorded distinct-capacity evidence. Default remediation is one cycle per work unit. A finding blocks only with command-backed evidence tied to the goal, an acceptance gate, or changed behavior.
+Local-model work is serial by default. Parallelism requires explicit authorization or recorded distinct-capacity evidence. Workflow agent/remediation budgets default to unbounded; requested bounded operation defaults to one remediation cycle per work unit. Task deadlines, scope, cancellation and independent validation remain required in both modes. A finding blocks only with command-backed evidence tied to the goal, an acceptance gate, or changed behavior.

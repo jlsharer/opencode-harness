@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import {
+  appendDelegationContext,
+  DELEGATION_CONTEXT_MARKER,
   expandIndexedReferences,
   managedCompactionSafe,
   reportedInputCompactionDecision,
@@ -14,6 +16,37 @@ import {
 const hash = (text: string) => createHash("sha256").update(text).digest("hex");
 
 const budget = { maxEntries: 2, maxBytes: 16, maxReferenceBytes: 12 };
+test("primary delegation context is always present, profile-specific and idempotent", () => {
+  for (const profile of ["global-native", "managed"] as const) {
+    const system: { type: "text"; text: string }[] = [
+      { type: "text", text: "existing instruction" },
+    ];
+    appendDelegationContext(system, { id: "parent" }, profile);
+    appendDelegationContext(system, { id: "parent" }, profile);
+    assert.equal(system.length, 2);
+    assert.match(system[1]!.text, /Use managed delegation automatically/);
+    assert.match(system[1]!.text, /Simple questions and trivial/);
+    assert.match(system[1]!.text, /unbounded/);
+    assert.match(system[1]!.text, /independent validator/);
+    assert.equal(system[1]!.text.includes("harness_orchestration"), profile === "global-native");
+    assert.ok(system[1]!.text.startsWith(DELEGATION_CONTEXT_MARKER));
+  }
+});
+test("delegation context never gives leaves or unidentified sessions parent instructions", () => {
+  for (const session of [
+    null,
+    {},
+    { id: "child", parentID: "parent" },
+    ...["researcher", "planner", "implementer", "validator"].map((agent) => ({
+      id: "role-primary",
+      agent,
+    })),
+  ]) {
+    const system: { type: "text"; text: string }[] = [];
+    appendDelegationContext(system, session, "global-native");
+    assert.deepEqual(system, []);
+  }
+});
 test("usage is unknown without measurements and preserves genuine zero", () => {
   assert.equal(validateUsageTelemetry(undefined).status, "unknown");
   assert.equal(validateUsageTelemetry({}).inputTokens, null);

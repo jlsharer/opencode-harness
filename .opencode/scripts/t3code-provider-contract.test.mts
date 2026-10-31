@@ -11,6 +11,7 @@ import {
   default as globalPlugin,
   createGlobalNativeAdapter,
   replaceGlobalResult,
+  projectHarnessCollision,
 } from "../src/plugin-modules/global-native-plugin.ts";
 import type {
   GlobalControlTool,
@@ -149,6 +150,10 @@ function fixture(
     ],
   ]);
   const hooks = new Map<string, (event: NativeEvent) => Promise<void>>();
+  const sessionHooks = new Map<
+    string,
+    (event: { sessionID: string; system: { type: "text"; text: string }[] }) => Promise<void>
+  >();
   const commands = new Map<
     string,
     { execute(input: { sessionID: string; prompt: { text: string } }): Promise<void> }
@@ -158,6 +163,9 @@ function fixture(
   const modelTools = new Map<string, GlobalControlTool>();
   const ctx: GlobalNativeContext = {
     session: {
+      hook: async (name, callback) => {
+        sessionHooks.set(name, callback);
+      },
       get: async ({ sessionID }) => {
         const s = sessions.get(sessionID);
         if (!s) throw new Error("missing session");
@@ -201,6 +209,7 @@ function fixture(
     cwd,
     sessions,
     hooks,
+    sessionHooks,
     commands,
     modelTools,
     adapter,
@@ -209,6 +218,83 @@ function fixture(
     executions: () => executions,
   };
 }
+
+test("global context/compaction inject automatic delegation before admission, never into leaves", async (t) => {
+  const f = fixture(t, { collision: async () => "project entry" });
+  await f.adapter.register();
+  for (const name of ["context", "compaction"]) {
+    const hook = f.sessionHooks.get(name);
+    assert.ok(hook);
+    const parent = { sessionID: "parent", system: [] as { type: "text"; text: string }[] };
+    await hook(parent);
+    await hook(parent);
+    assert.equal(parent.system.length, 1);
+    assert.match(parent.system[0]!.text, /managed delegation automatically/);
+    assert.match(parent.system[0]!.text, /harness_orchestration/);
+    const child = { sessionID: "child", system: [] as { type: "text"; text: string }[] };
+    await hook(child);
+    assert.deepEqual(child.system, []);
+  }
+  await assert.rejects(admit(f.adapter), /migrate-project.*File presence/s);
+  f.adapter.dispose();
+  const system: { type: "text"; text: string }[] = [];
+  await f.sessionHooks.get("context")!({ sessionID: "parent", system });
+  assert.deepEqual(system, []);
+});
+
+test("collision preflight walks actual cwd ancestors and recognizes explicit inert migration", async (t) => {
+  const f = fixture(t);
+  const entry = path.join(f.cwd, ".opencode/plugins/index.js");
+  fs.mkdirSync(path.dirname(entry), { recursive: true });
+  const nested = path.join(f.cwd, "nested/project");
+  fs.mkdirSync(nested, { recursive: true });
+  fs.writeFileSync(
+    entry,
+    "export { HarnessPlugin as default } from '../plugin-modules/harness-lifecycle.js';",
+  );
+  assert.equal(await projectHarnessCollision(nested), entry);
+  fs.writeFileSync(entry, 'export default { id: "opencode-harness.legacy-disabled", setup() {} };');
+  assert.equal(await projectHarnessCollision(nested), null);
+  fs.writeFileSync(entry, 'export default { id: "unrelated-plugin", setup() {} };');
+  assert.equal(await projectHarnessCollision(nested), null);
+});
+
+test("global unbounded workflow retries beyond legacy budgets without bypassing independent acceptance", async (t) => {
+  const f = fixture(t);
+  const spec = { ...workflow(), budgets: { mode: "unbounded" } };
+  await f.adapter.action("parent", { version: 1, action: "orchestration.admit", spec });
+  for (let index = 0; index < 24; index++) {
+    const attempt = event("researcher", `retry-${index}`);
+    await f.adapter.before(attempt);
+    attempt.status = "error";
+    await f.adapter.after(attempt);
+  }
+  await assert.rejects(
+    f.adapter.action("parent", {
+      version: 1,
+      action: "orchestration.accept",
+      orchestrationId: "run",
+    }),
+    /incomplete|gate|complete|failed/,
+  );
+  const final = event("researcher", "final-research");
+  await f.adapter.before(final);
+  final.status = "completed";
+  final.result = nativeResult(structured("researcher", "final-research"));
+  await f.adapter.after(final);
+  assert.notEqual(
+    (final.result as { metadata: { harness?: string } }).metadata.harness,
+    "rejected",
+  );
+  await assert.rejects(
+    f.adapter.action("parent", {
+      version: 1,
+      action: "orchestration.accept",
+      orchestrationId: "run",
+    }),
+    /incomplete|gate|complete|failed/,
+  );
+});
 
 function event(role: TaskThreadRole = "researcher", id = "task"): NativeEvent {
   return {

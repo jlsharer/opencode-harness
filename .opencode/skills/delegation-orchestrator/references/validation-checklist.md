@@ -9,7 +9,7 @@
 - [ ] Historical traces remain unchanged and cannot authorize new legacy-role dispatch.
 - [ ] Research precedes dependent planning and independent validator evidence precedes acceptance.
 - [ ] Local-model execution is serial unless explicit authorization or distinct-capacity evidence permits parallelism.
-- [ ] Default remediation is one cycle per work unit and declared loop/agent budgets are enforced.
+- [ ] New workflows default to unbounded agent/remediation budgets; requested bounded numeric budgets are enforced. Both modes preserve task deadlines, cancellation, scope and independent proof.
 - [ ] IDs and coordination structure are generated, conservative scope/gates are derived, and privileged actions default to denied unless explicitly authorized.
 - [ ] Validator modes cover `validation`, `review`, `artifact-proof`, and `integration-check`; validator never implements fixes.
 - [ ] Blocking findings have command-backed evidence tied to the goal, an acceptance gate, or changed behavior; progress artifacts never independently block.

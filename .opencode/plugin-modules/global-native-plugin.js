@@ -5,6 +5,7 @@ import { constants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
 import { createGlobalProtocol, declaredFileEvidence, identifier, object, NATIVE_SOURCE_COMMIT, } from "./global-protocol.js";
+import { appendDelegationContext } from "./context-budget.js";
 export async function projectHarnessCollision(cwd) {
     let current = cwd;
     while (true) {
@@ -142,7 +143,12 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             ? options.collision()
             : projectHarnessCollision(session.location.directory));
         if (collision)
-            throw new Error("managed profile collision: " + collision);
+            throw new Error("managed profile collision: " +
+                collision +
+                "; global-native and project source/portable guards cannot own the same managed session. " +
+                "Choose one profile: review `opencode-harness global migrate-project --workspace ABS` " +
+                "before explicitly applying migration, or use the source/portable launcher without the global plugin. " +
+                "File presence is conservative collision evidence, not proof of two active plugins. No files were migrated.");
         return session;
     }
     async function commandCaller(session) {
@@ -366,6 +372,20 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
     async function register() {
         if (disposed)
             throw new Error("cannot register a disposed global harness instance");
+        if (ctx.session.hook) {
+            const context = async (event) => {
+                if (disposed)
+                    return;
+                const session = await ctx.session.get({ sessionID: event.sessionID });
+                if (session.id !== event.sessionID)
+                    return;
+                // Do not demand admission (or a collision-free workspace) just to explain
+                // delegation. The next control action still enforces the full boundary.
+                appendDelegationContext(event.system, session, "global-native");
+            };
+            await ctx.session.hook("context", context);
+            await ctx.session.hook("compaction", context);
+        }
         // Commands are user-facing entry points, not tools the parent model can invoke.
         // Register the control plane as a direct native tool so natural-language intake
         // can actually admit/accept work without asking the user to relay JSON commands.

@@ -1676,6 +1676,37 @@ test("reconciled background cancellation permits a fresh ID after orchestrator r
   assert.equal(f.managed.snapshot().runs.length, 2);
   assert.equal(f.managed.snapshot().stopped, false);
 });
+test("legacy primary system and compaction hooks inject delegation without admitting work", async () => {
+  const f = fixture();
+  const hooks = await HarnessLifecyclePlugin(
+    {
+      directory: f.workspace,
+      client: {
+        app: { log() {} },
+        session: {
+          get: async ({ path: selected }: { path: { id: string } }) => ({
+            data:
+              selected.id === "child" ? { id: "child", parentID: "parent" } : { id: selected.id },
+          }),
+        },
+      },
+    },
+    () => f.managed,
+  );
+  const output = { system: ["existing"] };
+  await hooks["experimental.chat.system.transform"]({ sessionID: "parent" }, output);
+  await hooks["experimental.chat.system.transform"]({ sessionID: "parent" }, output);
+  assert.equal(output.system.length, 2);
+  assert.match(output.system[1]!, /managed delegation automatically/);
+  const child = { system: [] as string[] };
+  await hooks["experimental.chat.system.transform"]({ sessionID: "child" }, child);
+  assert.deepEqual(child.system, []);
+  const compact = { context: [] as string[] };
+  await hooks["experimental.session.compacting"]({ sessionID: "parent" }, compact);
+  assert.ok(compact.context.some((text) => text.includes("managed delegation automatically")));
+  assert.equal(f.managed.snapshot().runs.length, 0);
+});
+
 test("the bound orchestrator can use the recovery tools while ordinary stopped tools stay denied", async () => {
   const f = backgroundFixture();
   await f.start();

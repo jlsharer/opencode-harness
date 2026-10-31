@@ -36,7 +36,7 @@ Examples:
 - `ui-implementer-003-form-state`
 - `root-validator-004-final`
 
-Use one remediation cycle per scoped work unit by default and never exceed the normalized orchestration specification's loop budget. After exhaustion, stop and report the blocker or follow the explicit scope-expansion policy.
+Default new workflows to `budgets: {"mode":"unbounded"}`; empty budgets also select unbounded mode. Workflow total/per-role agent and remediation-cycle caps do not apply in that mode. Numeric specifications without mode remain bounded; explicit `mode: "bounded"` requires the numeric fields and defaults to one remediation cycle per work unit. Do not mix unbounded mode with numeric limits. Both modes retain task deadlines, cancellation, fresh identities, scope/DAG/capacity checks, bounded resource and payload limits, and independent validation. In bounded mode stop and report exhausted budgets. In either mode stop on success, owner cancellation, uncertain termination or genuine blockers; use new evidence to guide in-scope remediation rather than blindly repeating work.
 
 ## Delegated Task and Child Thread Policy
 

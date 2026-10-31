@@ -4,7 +4,11 @@ import {
   parseDelegationPolicy,
   parseWorkflowRegistryCapacity,
 } from "./managed-dispatch.ts";
-import { managedCompactionSafe, reportedInputCompactionDecision } from "./context-budget.ts";
+import {
+  appendDelegationContext,
+  managedCompactionSafe,
+  reportedInputCompactionDecision,
+} from "./context-budget.ts";
 import {
   COMPACTION_HANDOFF,
   formatCompactionHandoff,
@@ -408,6 +412,17 @@ export const HarnessLifecyclePlugin = async (
           "background mode requires native session APIs and OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS=true",
         );
     },
+    "experimental.chat.system.transform": async (
+      input: { sessionID?: unknown },
+      output: { system: string[] },
+    ) => {
+      if (typeof input.sessionID !== "string") return;
+      const session = await sessionCall("get", input.sessionID);
+      if (!isRecord(session) || session.id !== input.sessionID) return;
+      const parts = output.system.map((text) => ({ type: "text" as const, text }));
+      appendDelegationContext(parts, session, "managed");
+      output.system = parts.map((part) => part.text);
+    },
     "experimental.session.compacting": async (
       input: { sessionID?: unknown },
       output: { context?: unknown },
@@ -415,6 +430,24 @@ export const HarnessLifecyclePlugin = async (
       if (!Array.isArray(output.context)) throw new Error("native compaction context unavailable");
       output.context.push(COMPACTION_HANDOFF);
       if (typeof input.sessionID !== "string" || !input.sessionID) return;
+      try {
+        const session = await sessionCall("get", input.sessionID);
+        if (isRecord(session) && session.id === input.sessionID) {
+          const parts = output.context.map((text) => ({
+            type: "text" as const,
+            text: String(text),
+          }));
+          appendDelegationContext(parts, session, "managed");
+          output.context.push(...parts.slice(output.context.length).map((part) => part.text));
+        }
+      } catch {
+        // Missing identity is not permission to inject parent instructions into
+        // a possible leaf, nor a reason to discard the existing handoff context.
+        logDiagnostic(
+          "Primary delegation context unavailable: native session identity missing.",
+          {},
+        );
+      }
       try {
         const pointer = dispatch.compactionPointer?.(input.sessionID);
         if (pointer) {

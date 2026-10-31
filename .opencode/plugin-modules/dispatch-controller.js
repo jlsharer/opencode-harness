@@ -225,17 +225,34 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
             typeof parallel.distinctCapacityEvidence === "string"))
         fail("invalid parallel authorization");
     const budgets = record(value.budgets, "budgets");
-    if (budgets.defaultRemediationCyclesPerWorkUnit !== 1)
-        fail("invalid default remediation budget");
-    exact(budgets, [
-        "defaultRemediationCyclesPerWorkUnit",
-        "maxRemediationCyclesPerWorkUnit",
-        "maxTotalLeafAgents",
-        "maxLeafAgentsByRole",
-    ]);
-    const byRole = record(budgets.maxLeafAgentsByRole, "role budgets");
-    exact(byRole, ["researcher", "planner", "implementer", "validator"]);
-    const maxLeafAgentsByRole = Object.fromEntries(ROLES.map((role) => [role, integer(byRole[role], `${role} budget`, 0)]));
+    let normalizedBudgets;
+    // Existing numeric specifications stay bounded. New empty/default budgets and
+    // explicit unbounded budgets have no counters masquerading as infinite limits.
+    if (budgets.mode === "unbounded" || Object.keys(budgets).length === 0) {
+        exact(budgets, [], ["mode"]);
+        normalizedBudgets = { mode: "unbounded" };
+    }
+    else {
+        if (budgets.mode !== undefined && budgets.mode !== "bounded")
+            fail("invalid budget mode");
+        if (budgets.defaultRemediationCyclesPerWorkUnit !== 1)
+            fail("invalid default remediation budget");
+        exact(budgets, [
+            "defaultRemediationCyclesPerWorkUnit",
+            "maxRemediationCyclesPerWorkUnit",
+            "maxTotalLeafAgents",
+            "maxLeafAgentsByRole",
+        ], ["mode"]);
+        const byRole = record(budgets.maxLeafAgentsByRole, "role budgets");
+        exact(byRole, ["researcher", "planner", "implementer", "validator"]);
+        const maxLeafAgentsByRole = Object.fromEntries(ROLES.map((role) => [role, integer(byRole[role], `${role} budget`, 0)]));
+        normalizedBudgets = {
+            mode: "bounded",
+            maxTotalLeafAgents: integer(budgets.maxTotalLeafAgents, "total budget"),
+            maxLeafAgentsByRole,
+            maxRemediationCyclesPerWorkUnit: integer(budgets.maxRemediationCyclesPerWorkUnit, "remediation budget", 0, 16),
+        };
+    }
     const authorization = record(value.authorization, "authorization");
     exact(authorization, ["liveProviders", "userGlobalMutation", "git"]);
     if (authorization.liveProviders !== false || authorization.userGlobalMutation !== false)
@@ -260,11 +277,7 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         acceptanceGates,
         roleModeTaskMapping,
         dag: { dependencies, parallelism: { mode: parallel.mode } },
-        budgets: {
-            maxTotalLeafAgents: integer(budgets.maxTotalLeafAgents, "total budget"),
-            maxLeafAgentsByRole,
-            maxRemediationCyclesPerWorkUnit: integer(budgets.maxRemediationCyclesPerWorkUnit, "remediation budget", 0, 16),
-        },
+        budgets: normalizedBudgets,
     };
 }
 function deepFreeze(value) {
@@ -381,10 +394,12 @@ export function createDispatchController(input, options = {}) {
         const startsCycle = lastAttemptGeneration.has(key(request)) &&
             (lastAttemptGeneration.get(key(request)) === generation || reopensSuccess);
         if (startsCycle &&
+            spec.budgets.mode === "bounded" &&
             (retries.get(request.workUnitId) ?? 0) >= spec.budgets.maxRemediationCyclesPerWorkUnit)
             fail("remediation budget exhausted");
-        if (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
-            counts[request.role] >= spec.budgets.maxLeafAgentsByRole[request.role])
+        if (spec.budgets.mode === "bounded" &&
+            (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
+                counts[request.role] >= spec.budgets.maxLeafAgentsByRole[request.role]))
             fail("agent budget exhausted");
         // All validation occurs before this synchronous reservation; there is no await race.
         owner = request.parentSessionId;
@@ -466,8 +481,9 @@ export function createDispatchController(input, options = {}) {
         const attempt = current(attemptId);
         if (interrupted || attempt.state !== "running")
             fail("continuation requires a running task");
-        if (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
-            counts[attempt.role] >= spec.budgets.maxLeafAgentsByRole[attempt.role])
+        if (spec.budgets.mode === "bounded" &&
+            (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
+                counts[attempt.role] >= spec.budgets.maxLeafAgentsByRole[attempt.role]))
             fail("agent budget exhausted");
         continuations++;
         counts[attempt.role]++;

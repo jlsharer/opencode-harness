@@ -9,6 +9,7 @@ import { enforceRecoveryShell } from "./managed-execution.js";
 import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
 import { validateTaskResult } from "./task-contracts.js";
 import { appendV2CompactionContext } from "./compaction-handoff.js";
+import { appendDelegationContext } from "./context-budget.js";
 import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build, buildWin64Snapshot, planWin64Cases, runWin64Cases, verifyWin64Snapshot, verifyWin64CaseLog, planVerifiedWin64Relaunch, launchVerifiedWin64Snapshot, } from "./external-win64-relaunch.js";
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.mjs";
 import { normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, } from "../routing/routing-policy.mjs";
@@ -538,8 +539,19 @@ export const V2NativePlugin = {
                 // A malformed handoff is unknown state, never a model instruction.
             }
         };
-        await context.session.hook("compaction", async (event) => handoff(event, "compaction"));
-        await context.session.hook("context", async (event) => handoff(event, "context"));
+        const delegationContext = async (event) => {
+            const session = data(await context.session.get({ sessionID: event.sessionID }));
+            if (session.id === event.sessionID)
+                appendDelegationContext(event.system, session, "managed");
+        };
+        await context.session.hook("compaction", async (event) => {
+            await delegationContext(event);
+            handoff(event, "compaction");
+        });
+        await context.session.hook("context", async (event) => {
+            await delegationContext(event);
+            handoff(event, "context");
+        });
         const backgroundObservers = new Set();
         let ready = false;
         let activationFailed = false;

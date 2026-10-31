@@ -208,10 +208,26 @@ An inspected extraction is sufficient. Do not assume this version exists in a
 registry. `prepare` uses version-separated caches, so retained package versions
 remain independently runnable for rollback.
 
-`/delegate-orchestration` is the managed delegation entry point. The parent
-build agent creates bounded fresh tasks and delegates to the four roles. Direct
+Primary sessions receive delegation guidance on model context and compaction requests.
+Substantive coding work automatically loads the active profile's `delegation-orchestrator`
+protocol; no slash command is necessary. Simple questions and trivial low-risk single
+edits can remain direct. `/delegate-orchestration` remains an explicit entry point.
+The parent creates scoped fresh tasks and delegates to the four roles. Direct
 role commands and direct `@role` dispatch are rejected because they bypass the
 fresh-task policy.
+
+New workflows default to `budgets: {"mode":"unbounded"}` (or `{}`), removing
+workflow total/per-role agent and remediation-cycle caps. For bounded workflows,
+use `mode: "bounded"` with all numeric budget fields. Existing numeric specs
+without mode stay bounded; mixed unbounded/numeric budgets reject. Both modes
+retain task deadlines, cancellation, scope, fresh-child and independent-validator
+requirements, serial writer/capacity controls and resource/payload limits.
+Unbounded does not mean unlimited memory, scope expansion or resumable failed tasks.
+Owner-agreed finite manual-testing rounds remain a separate refinement constraint.
+
+Global/project plugin conflicts remain fail-closed; no automatic migration or guard
+fallback occurs. See [profile collision diagnosis and prevention](docs/global-profile.md#collision-diagnosis-and-prevention)
+before selecting or migrating a profile.
 
 ## Local nodes and an external project
 

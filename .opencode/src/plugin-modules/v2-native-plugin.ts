@@ -26,6 +26,7 @@ import {
 import type { V2ToolAfter, V2ToolBefore } from "./v2-dispatch-bridge.ts";
 import { validateTaskResult } from "./task-contracts.ts";
 import { appendV2CompactionContext } from "./compaction-handoff.ts";
+import { appendDelegationContext } from "./context-budget.ts";
 import {
   parseWin64RelaunchPolicy,
   relaunchExistingWin64Snapshot,
@@ -765,8 +766,21 @@ export const V2NativePlugin = {
         // A malformed handoff is unknown state, never a model instruction.
       }
     };
-    await context.session.hook("compaction", async (event) => handoff(event, "compaction"));
-    await context.session.hook("context", async (event) => handoff(event, "context"));
+    const delegationContext = async (event: {
+      sessionID: string;
+      system: { type: "text"; text: string }[];
+    }) => {
+      const session = data(await context.session.get({ sessionID: event.sessionID }));
+      if (session.id === event.sessionID) appendDelegationContext(event.system, session, "managed");
+    };
+    await context.session.hook("compaction", async (event) => {
+      await delegationContext(event);
+      handoff(event, "compaction");
+    });
+    await context.session.hook("context", async (event) => {
+      await delegationContext(event);
+      handoff(event, "context");
+    });
     const backgroundObservers = new Set<ReturnType<typeof setInterval>>();
     let ready = false;
     let activationFailed = false;

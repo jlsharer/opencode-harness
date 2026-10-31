@@ -12,6 +12,7 @@ import {
   NATIVE_SOURCE_COMMIT,
 } from "./global-protocol.ts";
 import type { TaskContext } from "./task-contracts.ts";
+import { appendDelegationContext } from "./context-budget.ts";
 
 /** Structural subset of the Promise API at NATIVE_SOURCE_COMMIT, not a provider SDK shim. */
 export interface NativeEvent {
@@ -52,6 +53,13 @@ export interface GlobalNativeContext {
   };
   session: {
     get(input: { sessionID: string }): Promise<NativeSession>;
+    hook?(
+      name: "context" | "compaction",
+      callback: (event: {
+        sessionID: string;
+        system: { type: "text"; text: string }[];
+      }) => Promise<void>,
+    ): Promise<unknown>;
     synthetic?(input: { sessionID: string; text: string }): Promise<unknown>;
   };
   tool: {
@@ -254,7 +262,15 @@ export function createGlobalNativeAdapter(
     const collision = await (options.collision
       ? options.collision()
       : projectHarnessCollision(session.location.directory));
-    if (collision) throw new Error("managed profile collision: " + collision);
+    if (collision)
+      throw new Error(
+        "managed profile collision: " +
+          collision +
+          "; global-native and project source/portable guards cannot own the same managed session. " +
+          "Choose one profile: review `opencode-harness global migrate-project --workspace ABS` " +
+          "before explicitly applying migration, or use the source/portable launcher without the global plugin. " +
+          "File presence is conservative collision evidence, not proof of two active plugins. No files were migrated.",
+      );
     return session;
   }
 
@@ -492,6 +508,21 @@ export function createGlobalNativeAdapter(
 
   async function register() {
     if (disposed) throw new Error("cannot register a disposed global harness instance");
+    if (ctx.session.hook) {
+      const context = async (event: {
+        sessionID: string;
+        system: { type: "text"; text: string }[];
+      }) => {
+        if (disposed) return;
+        const session = await ctx.session.get({ sessionID: event.sessionID });
+        if (session.id !== event.sessionID) return;
+        // Do not demand admission (or a collision-free workspace) just to explain
+        // delegation. The next control action still enforces the full boundary.
+        appendDelegationContext(event.system, session, "global-native");
+      };
+      await ctx.session.hook("context", context);
+      await ctx.session.hook("compaction", context);
+    }
     // Commands are user-facing entry points, not tools the parent model can invoke.
     // Register the control plane as a direct native tool so natural-language intake
     // can actually admit/accept work without asking the user to relay JSON commands.

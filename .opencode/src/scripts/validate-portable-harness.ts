@@ -494,10 +494,25 @@ async function validateTraceAlignment(root: string): Promise<void> {
   const inputSchemaObject = optionalObject(inputSchema);
   const inputProperties = optionalObject(inputSchemaObject?.properties);
   const budgets = optionalObject(inputProperties?.budgets);
-  const budgetProperties = optionalObject(budgets?.properties);
+  const budgetModes = Array.isArray(budgets?.oneOf) ? budgets.oneOf.map(optionalObject) : [];
+  const unbounded = budgetModes[0];
+  const bounded = budgetModes[1];
+  const budgetProperties = optionalObject(bounded?.properties);
   const remediationCycles = optionalObject(budgetProperties?.defaultRemediationCyclesPerWorkUnit);
-  if (inputSchemaObject?.additionalProperties !== false || remediationCycles?.const !== 1)
-    fail("orchestration input schema is not closed with one-cycle default");
+  if (
+    inputSchemaObject?.additionalProperties !== false ||
+    budgetModes.length !== 2 ||
+    unbounded?.additionalProperties !== false ||
+    bounded?.additionalProperties !== false ||
+    JSON.stringify(Object.keys(optionalObject(unbounded?.properties) ?? {})) !==
+      JSON.stringify(["mode"]) ||
+    optionalObject(optionalObject(unbounded?.properties)?.mode)?.const !== "unbounded" ||
+    optionalObject(budgetProperties?.mode)?.const !== "bounded" ||
+    remediationCycles?.const !== 1
+  )
+    fail(
+      "orchestration input schema must offer closed unbounded/default and bounded one-cycle budgets",
+    );
   const expectedIntakeFields = {
     schemaVersion: "generated",
     orchestrationId: "generated",

@@ -127,7 +127,7 @@ Each role must also follow `.opencode/contracts/role-io-contracts.json`. The cat
 
 ## Delegation Protocol
 
-The harness uses delegation-only orchestration. Parent orchestration coordinates, delegates, reviews returned evidence, asks for remediation, and consolidates final results. It does not perform role work directly.
+The harness injects primary-only delegation awareness on context and compaction requests. Primary sessions automatically load the active profile's orchestration skill for substantive coding work; simple questions and trivial low-risk single edits may remain direct. Managed orchestration uses delegation-only parent behavior: the parent coordinates, delegates, reviews returned evidence, asks for remediation, and consolidates results rather than performing role work. Injected guidance is not admission or proof of model compliance. Explicit owner-approved direct bootstrap work is outside managed acceptance.
 
 The workflow is:
 
@@ -155,9 +155,9 @@ If those labels are absent from the original request, the OpenCode harness does 
 
 `/delegate-orchestration` is a thin orchestrator-owned `$ARGUMENTS` wrapper around the sole authoritative protocol in `.opencode/skills/delegation-orchestrator/SKILL.md`. It accepts natural-language intent, gathers unresolved user decisions through focused follow-ups, and validates a parent-assembled internal specification before delegation. When invoked, the parent delegates and synthesizes only. Local-model DAG execution is serial by default; parallelism requires explicit authorization or recorded distinct-capacity evidence.
 
-Role names are fixed, but bounded role instances are repeatable within declared agent budgets. Every instance has an explicit task mode, scoped artifact ID, and trace artifact under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
+Role names are fixed, but scoped role instances are repeatable. Every instance has an explicit task mode, scoped artifact ID, and trace artifact under `.memory/orchestrations/<orchestration-id>/roles/<role>/<artifact-id>.md`.
 
-Remediation defaults to one cycle per scoped work unit and never exceeds the declared loop budget. Exhaustion stops the unit unless its explicit scope-expansion policy authorizes escalation.
+Workflow budgets default to `{"mode":"unbounded"}` (empty budgets also select this mode), without total/per-role agent or remediation caps. Requested bounded mode retains all numeric fields and a one-cycle default; existing numeric specifications without mode stay bounded. Mixed unbounded/numeric fields reject. Both modes keep scope, role order/DAG, task deadlines, cancellation, fresh identities, capacity/resource/payload limits and independent validator proof. Unbounded is not scope expansion, authorization restoration or a guarantee of infinite process memory. Bounded exhaustion stops the unit; genuine blockers and unsafe interruptions stop either mode.
 
 Managed orchestration enforces one separately scoped delegated task per fresh child session/thread. Every new role task has a nonempty `delegationTaskId`, stable `scopeKey`, and `dispatchKind: fresh`; Task calls omit the `task_id` property. The sole reuse is one `clarification-response` to a recorded child-originated request while the exact task remains unresolved. New deliverables, changed scope or role, retries, remediation, corrections, follow-ups, terminal work, replay, and post-restart responses start fresh. `/delegate-orchestration` is the managed surface; direct `@subagent` dispatch is prohibited and the lifecycle guard rejects direct subagent-targeted role commands.
 

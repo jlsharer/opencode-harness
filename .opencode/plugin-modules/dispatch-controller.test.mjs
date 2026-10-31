@@ -348,9 +348,13 @@ test("validated workflow and returned snapshots cannot mutate authoritative limi
     const raw = validWorkflow();
     const controller = createDispatchController(raw);
     raw.budgets.maxTotalLeafAgents = 100;
+    assert.equal(controller.spec.budgets.mode, "bounded");
+    if (controller.spec.budgets.mode !== "bounded")
+        throw new Error("expected bounded fixture");
     assert.equal(controller.spec.budgets.maxTotalLeafAgents, 12);
     assert.throws(() => {
-        controller.spec.budgets.maxTotalLeafAgents = 100;
+        if (controller.spec.budgets.mode === "bounded")
+            controller.spec.budgets.maxTotalLeafAgents = 100;
     }, TypeError);
     assert.throws(() => {
         controller.spec.dag.dependencies.push({ workUnitId: "a", dependsOn: ["b"] });
@@ -362,6 +366,40 @@ test("validated workflow and returned snapshots cannot mutate authoritative limi
     snapshot.counts.researcher = 99;
     assert.equal(controller.snapshot().attempts[0].state, "running");
     assert.equal(controller.snapshot().counts.researcher, 1);
+});
+test("unbounded/default budgets remove attempts, role and remediation caps without removing guards", () => {
+    for (const budgets of [{}, { mode: "unbounded" }]) {
+        let now = 0;
+        const controller = createDispatchController({ ...validWorkflow(), budgets }, { now: () => now, timeoutMs: 10 });
+        assert.deepEqual(controller.spec.budgets, { mode: "unbounded" });
+        for (let index = 0; index < 1050; index++) {
+            const id = `retry-${index}`;
+            controller.reserve(request(id));
+            controller.chargeContinuation(id);
+            controller.complete(id, "failed");
+        }
+        controller.reserve(request("final"));
+        assert.throws(() => controller.reserve(request("duplicate")), /capacity/);
+        assert.throws(() => controller.reserve({ ...request("other-parent", "b"), parentSessionId: "other" }), /another parent/);
+        now = 11;
+        assert.throws(() => controller.complete("final", "success"), /late/);
+        assert.throws(() => controller.reserve(request("after-timeout")), /uncertain/);
+        controller.reconcileCancelled("final");
+        assert.throws(() => controller.reserve(request("after-cancel")), /interrupted/);
+    }
+});
+test("budget modes reject ambiguous, malformed and accidentally downgraded limits", () => {
+    const legacy = validWorkflow();
+    assert.equal(validateWorkflow(legacy).budgets.mode, "bounded");
+    assert.equal(validateWorkflow({ ...legacy, budgets: { ...legacy.budgets, mode: "bounded" } }).budgets.mode, "bounded");
+    for (const budgets of [
+        { mode: "unbounded", maxTotalLeafAgents: 1 },
+        { ...legacy.budgets, mode: "unknown" },
+        { mode: "bounded" },
+        { maxTotalLeafAgents: 1 },
+        { mode: null },
+    ])
+        assert.throws(() => validateWorkflow({ ...legacy, budgets }));
 });
 test("one remediation generation covers implementation and revalidation; failed reservation is atomic", () => {
     const spec = validWorkflow();

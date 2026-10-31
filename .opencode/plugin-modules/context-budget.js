@@ -2,6 +2,39 @@ import { constants } from "node:fs";
 import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+export const DELEGATION_CONTEXT_MARKER = "Harness delegation policy (primary sessions)";
+/** Advisory context, never admission, restored authorization or acceptance proof. */
+export function appendDelegationContext(system, session, profile) {
+    if (!session || typeof session !== "object" || Array.isArray(session))
+        return;
+    const info = session;
+    if (typeof info.id !== "string" ||
+        !info.id ||
+        (info.parentID !== undefined && info.parentID !== null) ||
+        ["researcher", "planner", "implementer", "validator"].includes(String(info.agent)))
+        return;
+    if (system.some((part) => part.text.startsWith(DELEGATION_CONTEXT_MARKER)))
+        return;
+    system.push({
+        type: "text",
+        text: [
+            DELEGATION_CONTEXT_MARKER + ":",
+            "Use managed delegation automatically for substantive coding work, including multi-file changes,",
+            "investigation-led fixes and changes requiring independent validation. Do not wait for the user",
+            "to name a skill or slash command. Simple questions and trivial, low-risk single edits may be handled directly.",
+            "Before substantive work, load the active profile's delegation-orchestrator skill as the sole protocol authority;",
+            "the parent coordinates and synthesizes, while researcher, planner, implementer and validator perform role work.",
+            'Use budgets {"mode":"unbounded"} by default; use bounded numeric budgets when requested.',
+            "Unbounded removes workflow agent/remediation caps, not task deadlines, cancellation, scope checks,",
+            "fresh-child requirements, capacity/resource limits, permissions or independent validator gates.",
+            profile === "global-native"
+                ? "Admit through harness_orchestration, dispatch exact role envelopes through native subagent, and accept only independent proof."
+                : "Check the live managed dispatch capability before native Task/subagent dispatch and register the immutable specification as the skill requires.",
+            "If the active profile, skill or managed capability is missing or conflicts, report the blocker;",
+            "do not bypass admission or silently switch profiles. An explicit owner-approved direct bootstrap exception is separate from managed acceptance.",
+        ].join(" "),
+    });
+}
 /** Only native/reported measurements are accepted; byte counts are never token estimates. */
 export function validateUsageTelemetry(value) {
     if (value === undefined || value === null)

@@ -98,9 +98,14 @@
       }
     },
     "budgets": {
+      "description": "Defaults to unbounded workflow attempts/remediation with {} or {mode: unbounded}. Existing numeric specifications without a mode remain bounded. Task deadlines, scope, capacity and proof limits are unchanged.",
+      "oneOf": [
+      { "type": "object", "additionalProperties": false, "properties": { "mode": { "const": "unbounded" } } },
+      {
       "type": "object", "additionalProperties": false,
       "required": ["defaultRemediationCyclesPerWorkUnit", "maxRemediationCyclesPerWorkUnit", "maxTotalLeafAgents", "maxLeafAgentsByRole"],
       "properties": {
+        "mode": { "const": "bounded" },
         "defaultRemediationCyclesPerWorkUnit": { "const": 1 },
         "maxRemediationCyclesPerWorkUnit": { "type": "integer", "minimum": 0 },
         "maxTotalLeafAgents": { "type": "integer", "minimum": 1 },
@@ -109,6 +114,7 @@
           "properties": { "researcher": { "type": "integer", "minimum": 0 }, "planner": { "type": "integer", "minimum": 0 }, "implementer": { "type": "integer", "minimum": 0 }, "validator": { "type": "integer", "minimum": 0 } }
         }
       }
+      }]
     },
     "scopeExpansion": {
       "type": "object", "additionalProperties": false, "required": ["policy", "requiresUserApproval"],

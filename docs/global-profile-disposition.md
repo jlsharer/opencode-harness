@@ -10,7 +10,7 @@ This ledger reconciles the source manifest, external-runtime manifest, portable 
 | Background Job transport/context updates | Existing legacy adapter only | Global background is explicitly unavailable; running text never accepted |
 | Cancellation | Task-local invalidation with termination uncertainty | Native termination remains under host policy |
 | Non-Git and nested cwd | Native session.get location plus declared-file evidence | No implicit Git-root replacement or workspace scan |
-| Context budgets/telemetry/refinement/compaction | Global utility exports, four skills, schemas, handoff/refinement templates | Explicit context resources; no broad restored stop hooks or authorization resurrection |
+| Context budgets/telemetry/refinement/compaction | Global utility exports, four skills, schemas, handoff/refinement templates; primary-only delegation awareness on native context/compaction hooks | Advisory guidance with automatic substantive-task delegation; no broad restored stop hooks or authorization resurrection |
 | Routing and optional endpoint inputs | Neutral examples and strict advisory utility loader/policy | No native provider transport/credential mutation |
 | HTTPS download and inert archive install | Standalone exact-approved helper exports, full original bounded/hash/extraction checks | Explicit host-policy operation, no recovery-shell prerequisite |
 | Offline build/cases and intentional Win64 relaunch | Existing standalone Win64 plan/build/verify/relaunch exports | Explicit native-policy equivalent; no automatic Windows process |
