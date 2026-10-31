@@ -16,6 +16,12 @@ Success means that an approved change can move through one understandable workfl
 
 The expected benefits are less repeated context, fewer speculative fixes, fewer avoidable refusals, and clearer handoffs. These are hypotheses to evaluate, not measured improvements. An unnecessary block means authorized, in-scope work cannot advance because of avoidable planning, presentation, scheduling, or environment mismatch. Missing authorization, failed acceptance, uncertain worker termination, and invalid native identity remain legitimate blockers.
 
+### Implemented first increment
+
+The [shared development guide](../../../.opencode/skills/delegation-orchestrator/references/development-workflow.md) and [generated contract examples](../../../.opencode/skills/delegation-orchestrator/references/task-contract-examples.md) now ship through every profile. Source QA checks example drift against executable contracts; independent installation fixtures verify resource closure and reject omissions. Source-only rendering tools are excluded from the 71-file package. Independent whole-branch review and the full verification pipeline passed on implementation commit `66d93e2`; the implementation plan records the checks.
+
+This increment supplies preflight, minimum task graphs, scoped briefs, combined independent review/check guidance, and honest failure reporting. It changes no runtime admission, gate, deadline, cancellation, registry, provider, or permission implementation. The conditional runtime remedies below remain separate proposals.
+
 ## Current foundations
 
 | Foundation | Existing strength | Refactor implication |
