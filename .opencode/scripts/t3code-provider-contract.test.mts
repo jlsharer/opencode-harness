@@ -131,6 +131,138 @@ function structured(role: TaskThreadRole = "researcher", id = "task", sha256 = "
   };
 }
 
+function acceptedProtocolRun(protocol = createGlobalProtocol()) {
+  const parent = "parent";
+  const cwd = "/var/tmp";
+  const hash = "a".repeat(64);
+  protocol.admitOrchestration(parent, cwd, workflow());
+  for (const role of ["researcher", "validator"] as const) {
+    const { context } = protocol.admitTask(parent, role, role, packet(role, role));
+    protocol.started(parent, context, { id: role + "-child", parentID: parent, agent: role });
+    protocol.result(
+      parent,
+      context,
+      structured(role, role, hash),
+      role === "validator" ? { treeHash: hash, gateIds: ["gate"] } : {},
+    );
+  }
+  assert.deepEqual(protocol.accept(parent, "run", hash), { accepted: true, treeHash: hash });
+  return protocol;
+}
+
+test("current global gate associations can demand evidence for a gate that never closes", () => {
+  const protocol = createGlobalProtocol();
+  const spec = workflow();
+  spec.acceptanceGates.push({
+    id: "extra",
+    criterion: "extra",
+    evidenceCommand: "true",
+    workUnitIds: ["unit"],
+  });
+  protocol.admitOrchestration("parent", "/var/tmp", spec);
+  for (const role of ["researcher", "validator"] as const) {
+    const { context } = protocol.admitTask("parent", role, role, packet(role, role));
+    protocol.started("parent", context, { id: role, parentID: "parent", agent: role });
+    const result = structured(role, role);
+    if (role === "validator") {
+      const proof = { treeHash: "a".repeat(64), gateIds: ["gate"] };
+      assert.throws(() => protocol.result("parent", context, result, proof), /command-backed/);
+      result.evidence.push({
+        reference: "extra.log",
+        command: "true",
+        exitCode: 0,
+        sha256: proof.treeHash,
+      });
+      protocol.result("parent", context, result, proof);
+    } else protocol.result("parent", context, result);
+  }
+  assert.equal(protocol.snapshot("parent", "run").gates.extra, undefined);
+  assert.throws(() => protocol.accept("parent", "run", "a".repeat(64)), /incomplete/);
+});
+
+test("current accepted global runs retain their orchestration ledger slots", () => {
+  const protocol = acceptedProtocolRun();
+  for (let index = 1; index < 128; index++)
+    protocol.admitOrchestration("parent", "/var/tmp", {
+      ...workflow(),
+      orchestrationId: `run-${index}`,
+    });
+  assert.throws(
+    () =>
+      protocol.admitOrchestration("parent", "/var/tmp", {
+        ...workflow(),
+        orchestrationId: "run-128",
+      }),
+    /exhausted/,
+  );
+});
+
+test("current global ledger keys include parent but its 128 slots are shared", () => {
+  const protocol = createGlobalProtocol();
+  protocol.admitOrchestration("first", "/var/tmp", workflow());
+  assert.throws(() => protocol.admitOrchestration("first", "/var/tmp", workflow()), /duplicate/);
+  protocol.admitOrchestration("second", "/var/tmp", workflow());
+  for (const parent of ["first", "second"]) {
+    for (let index = 1; index < 64; index++)
+      protocol.admitOrchestration(parent, "/var/tmp", {
+        ...workflow(),
+        orchestrationId: `run-${index}`,
+      });
+  }
+  assert.throws(() => protocol.admitOrchestration("third", "/var/tmp", workflow()), /exhausted/);
+});
+
+test("current accepted global history still forbids child reuse in a fresh run", () => {
+  const protocol = acceptedProtocolRun();
+  protocol.admitOrchestration("parent", "/var/tmp", { ...workflow(), orchestrationId: "fresh" });
+  const { context } = protocol.admitTask("parent", "fresh-call", "researcher", {
+    ...packet("researcher", "fresh-task"),
+    orchestrationId: "fresh",
+  });
+  assert.throws(
+    () =>
+      protocol.started("parent", context, {
+        id: "researcher-child",
+        parentID: "parent",
+        agent: "researcher",
+      }),
+    /reused/,
+  );
+  protocol.started("parent", context, {
+    id: "never-used-child",
+    parentID: "parent",
+    agent: "researcher",
+  });
+  assert.equal(protocol.snapshot("parent", "fresh").active, 1);
+});
+
+test("current declared-file proof misses an undeclared input that changes actual command behavior", async (t) => {
+  const cwd = fs.mkdtempSync("/var/tmp/global-input-proof-");
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(cwd, "a.txt"), "declared");
+  const input = path.join(cwd, "b.txt");
+  fs.writeFileSync(input, "pass");
+  const run = () =>
+    spawnSync(
+      process.execPath,
+      [
+        "--input-type=module",
+        "-e",
+        "import fs from 'node:fs'; const value = fs.readFileSync('b.txt', 'utf8'); console.log(value); process.exitCode = value === 'pass' ? 0 : 1;",
+      ],
+      { cwd, encoding: "utf8" },
+    );
+  const before = await declaredFileEvidence(cwd, ["a.txt"]);
+  assert.equal(run().status, 0);
+  fs.writeFileSync(input, "fail");
+  const changed = run();
+  assert.equal(changed.status, 1, changed.stderr);
+  assert.equal(changed.stdout.trim(), "fail");
+  assert.deepEqual(await declaredFileEvidence(cwd, ["a.txt"]), before);
+  fs.writeFileSync(path.join(cwd, "a.txt"), "changed declared input");
+  assert.notEqual((await declaredFileEvidence(cwd, ["a.txt"])).sha256, before.sha256);
+});
+
 function fixture(
   t: { after(fn: () => void): void },
   options: Parameters<typeof createGlobalNativeAdapter>[1] = {},

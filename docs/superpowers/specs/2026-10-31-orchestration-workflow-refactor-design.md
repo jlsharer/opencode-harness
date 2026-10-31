@@ -22,6 +22,12 @@ The [shared development guide](../../../.opencode/skills/delegation-orchestrator
 
 This increment supplies preflight, minimum task graphs, scoped briefs, combined independent review/check guidance, and honest failure reporting. It changes no runtime admission, gate, deadline, cancellation, registry, provider, or permission implementation. The conditional runtime remedies below remain separate proposals.
 
+### Authorized follow-up: designs and current-behavior tests
+
+The owner subsequently authorized designs and tests for the conditional runtime remedies. The [runtime acceptance and lifecycle design](2026-10-31-runtime-acceptance-and-lifecycle-design.md) proposes explicit mapping gate duties, immutable admitted deadlines, proof-qualified local failure and accepted global retirement with finite exact replay metadata. Its [characterization plan](../plans/2026-10-31-runtime-design-characterization.md) adds passing tests of current behavior; future acceptance cases remain design requirements. Active-profile ownership and complete-input evidence reuse stay deferred because their required native/input proof is absent. Detailed defaults are proposed author choices. This phase does not implement or activate the proposed runtime changes, and verification claims require the corresponding recorded check results.
+
+The design-and-test phase is complete: twelve new characterizations pass within 151 affected-suite tests, the complete `npm test` pipeline and 71-file package dry run pass, and independent review found no important issues. The characterization plan records the checks and platform limits; production runtime files remain unchanged.
+
 ## Current foundations
 
 | Foundation | Existing strength | Refactor implication |

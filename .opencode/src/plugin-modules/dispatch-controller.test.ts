@@ -66,6 +66,64 @@ const request = (
 const hash = "a".repeat(64);
 const parallel = { maxConcurrent: 3, maxConcurrentByRole: { researcher: 3 } };
 
+test("current review mode requires every unit gate before completing", () => {
+  const spec = validWorkflow();
+  mapping(spec, "a", "validator", "review");
+  spec.workUnits[0]!.acceptanceGateIds.push("review-extra");
+  spec.acceptanceGates.push({
+    id: "review-extra",
+    criterion: "review",
+    evidenceCommand: "true",
+    workUnitIds: ["a"],
+  });
+  const controller = createDispatchController(spec);
+  controller.reserve(request("review", "a", "validator", "review"));
+  for (const gateIds of [[], ["gate-a"]]) {
+    assert.throws(() => controller.complete("review", "success", { treeHash: hash, gateIds }));
+    assert.equal(controller.snapshot().attempts[0]!.state, "running");
+    assert.deepEqual(controller.snapshot().gates, {});
+  }
+  controller.complete("review", "success", { treeHash: hash, gateIds: ["gate-a", "review-extra"] });
+  assert.equal(controller.snapshot().gates["review-extra"], hash);
+});
+
+test("current normalization rejects gate-free review units", () => {
+  const spec = validWorkflow();
+  mapping(spec, "a", "validator", "review");
+  spec.workUnits[0]!.acceptanceGateIds = [];
+  assert.throws(() => validateWorkflow(spec), /acceptanceGateIds/);
+});
+
+test("current default deadline expires at exactly five minutes even with unbounded budgets", () => {
+  let now = 100;
+  const controller = createDispatchController(
+    { ...validWorkflow(), budgets: { mode: "unbounded" } },
+    { now: () => now },
+  );
+  assert.equal(controller.reserve(request()).deadline, 300100);
+  now = 300099;
+  assert.equal(controller.snapshot().attempts[0]!.state, "running");
+  now = 300100;
+  assert.equal(controller.snapshot().attempts[0]!.state, "cancel-requested");
+  assert.equal(controller.snapshot().active, 1);
+  assert.throws(() => controller.complete("attempt-a", "success"), /late/);
+});
+
+test("current deadline authority captures construction options and detaches returned records", () => {
+  let now = 100;
+  const options = { now: () => now, timeoutMs: 50 };
+  const controller = createDispatchController(validWorkflow(), options);
+  options.timeoutMs = 1000;
+  const first = controller.reserve(request());
+  assert.equal(first.deadline, 150);
+  first.deadline = 9999;
+  controller.snapshot().attempts[0]!.deadline = 9999;
+  assert.equal(controller.snapshot().attempts[0]!.deadline, 150);
+  controller.complete("attempt-a", "failed");
+  now = 110;
+  assert.equal(controller.reserve(request("retry")).deadline, 160);
+});
+
 function mapping(
   spec: ReturnType<typeof validWorkflow>,
   unit: string,

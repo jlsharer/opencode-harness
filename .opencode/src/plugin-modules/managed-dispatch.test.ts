@@ -319,6 +319,90 @@ test("current task view fails closed on unsafe goals and stale reservations", as
   assert.equal(blocked.managed.currentTaskView("child"), null);
 });
 
+test("current declared failure permits only a fresh task and child in the same run", async () => {
+  const f = fixture("researcher", 10000);
+  await f.start();
+  const { outputContract: _output, ...result } = f.success();
+  assert.equal(
+    f.finish({ ...result, outcome: "failed", reason: "bounded failure" }).outcome,
+    "failed",
+  );
+  assert.equal(f.managed.snapshot().stopped, false);
+  assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+  await assert.rejects(
+    f.managed.beforeTask({ sessionID: "parent", callID: "replay" }, f.args()),
+    /fresh child task|duplicate dispatch/,
+  );
+  await f.managed.beforeTask({ sessionID: "parent", callID: "retry" }, f.args(f.packet("retry")));
+  f.managed.sessionCreated({ id: "fresh-child", parentID: "parent" });
+  assert.equal(f.managed.currentTaskView("child"), null);
+  assert.equal(f.managed.currentTaskView("fresh-child")?.delegationTaskId, "retry");
+});
+
+test("current correlated malformed result fails locally after clean scope checks", async () => {
+  const f = fixture("researcher", 10000);
+  await f.start();
+  assert.equal(f.finish({ ...f.success(), outcome: "unknown" }).outcome, "rejected");
+  assert.equal(f.managed.snapshot().stopped, false);
+  assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+  assert.deepEqual(f.managed.snapshot().runs[0]!.gates, {});
+  await assert.rejects(
+    f.managed.beforeTask({ sessionID: "parent", callID: "replay" }, f.args()),
+    /fresh child task|duplicate dispatch/,
+  );
+  await f.managed.beforeTask({ sessionID: "parent", callID: "retry" }, f.args(f.packet("retry")));
+  assert.equal(f.managed.snapshot().runs[0]!.attempts.length, 2);
+});
+
+test("current missing trusted command proof interrupts previously registered runs too", async () => {
+  const f = fixture("researcher", 10000);
+  await f.start();
+  assert.equal(f.finish(f.success()).outcome, "success");
+  const id = "proof-failure";
+  fs.mkdirSync(path.join(f.trace, "orchestrations", id));
+  fs.writeFileSync(
+    path.join(f.trace, "orchestrations", id, "normalized-spec.json"),
+    JSON.stringify({
+      ...f.spec,
+      orchestrationId: id,
+      roleModeTaskMapping: [
+        {
+          workUnitId: "a",
+          role: "validator",
+          taskMode: "validation",
+          boundedTask: "independent proof",
+        },
+      ],
+    }),
+  );
+  const v = fixture("validator", 10000);
+  const validatorPacket = { ...v.packet("validation"), orchestrationId: id };
+  await f.managed.beforeTask(
+    { sessionID: "parent", callID: "validation" },
+    v.args(validatorPacket),
+  );
+  f.managed.sessionCreated({ id: "validator-child", parentID: "parent" });
+  const result = { ...v.success(), orchestrationId: id, delegationTaskId: "validation" };
+  const reference = `orchestrations/${id}/roles/validator/result.md`;
+  fs.mkdirSync(path.dirname(path.join(f.trace, reference)), { recursive: true });
+  fs.writeFileSync(path.join(f.trace, reference), "verified fixture");
+  result.artifacts[0]!.reference = reference;
+  result.artifacts[0]!.sha256 = captureArtifacts(f.trace, [reference])[reference];
+  result.outputContract.traceArtifactPath = reference;
+  assert.throws(() => f.finish(result, "validator-child", "validation"), /trusted command success/);
+  const snapshot = f.managed.snapshot();
+  assert.equal(snapshot.stopped, true);
+  assert.equal(snapshot.runs.length, 2);
+  assert.ok(snapshot.runs.every((run) => run.interrupted));
+  await assert.rejects(
+    f.managed.beforeTask(
+      { sessionID: "parent", callID: "after-stop" },
+      f.args(f.packet("after-stop")),
+    ),
+    /interrupted; non-resumable/,
+  );
+});
+
 test("managed native hooks accept correlated research with exact artifact proof and reject duplicate completion", async () => {
   const f = fixture();
   await f.start();
