@@ -415,6 +415,38 @@ test("prepare creates a deterministic owner-only runtime and reuses it", () => {
   assert.equal(second.stdout.trim(), runtime);
 });
 
+test("development resources match runtime mappings and missing managed references reject", () => {
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(ROOT, ".opencode/runtime.manifest.json"), "utf8"),
+  ) as {
+    files: { source: string; destination: string }[];
+  };
+  for (const name of ["development-workflow.md", "task-contract-examples.md"]) {
+    const prepared = prepare(`development-${name}`);
+    const source = `.opencode/skills/delegation-orchestrator/references/${name}`;
+    const destination = source.replace(/^\.opencode\//, "");
+    assert.ok(
+      manifest.files.some((entry) => entry.source === source && entry.destination === destination),
+      source,
+    );
+    const installed = path.join(prepared.runtime, destination);
+    assert.equal(
+      fs.readFileSync(installed, "utf8"),
+      fs.readFileSync(path.join(ROOT, source), "utf8"),
+    );
+    const skill = fs.readFileSync(
+      path.join(prepared.runtime, "skills/delegation-orchestrator/SKILL.md"),
+      "utf8",
+    );
+    assert.ok(skill.includes(`references/${name}`));
+    fs.unlinkSync(installed);
+    const rejected = run(["prepare", "--cache-root", prepared.cache]);
+    assert.notEqual(rejected.status, 0);
+    assert.match(rejected.stderr, /missing|inventory|managed/i);
+    assert.equal(fs.existsSync(installed), false);
+  }
+});
+
 test("prepare accepts arbitrary releases and separates diagnostic-version caches", () => {
   const cache = path.join(temp, "version-policy-cache");
   const maximum = fake("version-maximum", "1.18.25");

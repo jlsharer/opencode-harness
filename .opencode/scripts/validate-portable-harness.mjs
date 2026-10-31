@@ -44,6 +44,8 @@ const REQUIRED_TRACE_FIELDS = [
 const DARWIN_HELPER_PATH = ".opencode/bootstrap/native/darwin-portable-fs.universal";
 const DARWIN_HELPER_SHA256 = "931f981849fdd209fc8fa066dd194eb33075ff9c88dc936dd0792695896918a9";
 const EXPECTED_MANAGED_FILES = [
+    ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
+    ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
     ...ROLES.map((role) => `.opencode/agents/${role}.md`),
     ".opencode/commands/delegate-implement.md",
     ".opencode/commands/delegate-orchestration.md",
@@ -229,8 +231,8 @@ function validateManifest(manifest) {
         !Array.isArray(manifest.forbiddenReferences))
         fail("manifest inventories must be arrays");
     const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, ".opencode/"));
-    if (managed.length !== 65)
-        fail(`managed inventory must contain exactly 65 files; got ${managed.length}`);
+    if (managed.length !== 67)
+        fail(`managed inventory must contain exactly 67 files; got ${managed.length}`);
     if (new Set(managed).size !== managed.length ||
         !managed.includes(".opencode/portable.manifest.json"))
         fail("managed inventory must be unique and self-containing");

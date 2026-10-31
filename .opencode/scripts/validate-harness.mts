@@ -154,6 +154,8 @@ const COMMAND_ROLE_MAP: Record<RoleCommand, Role> = {
   "delegate-validate": "validator",
 };
 const STATIC_MANIFEST_PATHS = [
+  ".opencode/scripts/development-workflow.test.mts",
+  ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
   ".opencode/scripts/render-task-contract-examples.mts",
   ".opencode/scripts/render-task-contract-examples.test.mts",
   ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
@@ -692,13 +694,24 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
   if (!destinations.includes("schemas/opencode-provider-projection.schema.json"))
     fail("Runtime manifest must include the provider projection schema");
   if (
-    runtimeManifest.files.length !== 52 ||
+    runtimeManifest.files.length !== 54 ||
     !destinations.includes("plugin-modules/task-thread-policy.js") ||
     !destinations.includes("plugin-modules/trace-root-permissions.js")
   )
     fail(
-      "Runtime manifest must contain the exact 52-file external runtime including compaction handoff and scoped external actions",
+      "Runtime manifest must contain the exact 54-file external runtime including compaction handoff and scoped external actions",
     );
+  for (const resource of [
+    ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
+    ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
+  ])
+    if (
+      !runtimeManifest.files.some(
+        (entry) =>
+          entry.source === resource && entry.destination === resource.replace(/^\.opencode\//, ""),
+      )
+    )
+      fail(`Runtime manifest missing development resource: ${resource}`);
   const packageManifest = json("package.json");
   if (
     packageManifest.version !== "0.1.20" ||
@@ -814,6 +827,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
   if (new Set(packageManifest.files).size !== packageManifest.files.length)
     fail("Package files selector allowlist must contain unique entries");
   const selectors = [
+    ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
+    ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
     "bin/global-harness.mjs",
     ".opencode/global.manifest.json",
     ".opencode/plugin-modules/global-*.js",
@@ -907,6 +922,9 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
   const launcher = report.files.find((entry) => entry.path === "bin/opencode-harness.mjs");
   if (!launcher || launcher.mode !== 0o755) fail("npm payload launcher must retain mode 0755");
   for (const forbidden of [
+    ".opencode/scripts/development-workflow.test.mts",
+    ".opencode/scripts/render-task-contract-examples.mts",
+    ".opencode/scripts/render-task-contract-examples.test.mts",
     ".opencode/plugin-modules/trace-root-permissions.test.mjs",
     ".opencode/bootstrap/native/darwin-portable-fs.c",
     ".opencode/bootstrap/native/darwin-portable-fs.universal",
@@ -1139,8 +1157,8 @@ function assertMemorySeeds() {
   }
   const portableManifest = json(".opencode/portable.manifest.json");
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 65 || mappings.length !== 6)
-    fail("Portable manifest must contain exactly 65 managed files plus six memory seeds");
+  if (portableManifest.managedFiles?.length !== 67 || mappings.length !== 6)
+    fail("Portable manifest must contain exactly 67 managed files plus six memory seeds");
   const expectedTargets = [
     ".memory/INDEX.md",
     ".memory/protocols/memory-management.md",

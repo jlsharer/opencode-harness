@@ -38,7 +38,7 @@ function parsePortableManifest(text) {
     return value;
 }
 const execFileAsync = promisify(execFile);
-const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const SOURCE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), import.meta.url.endsWith(".ts") ? "../../.." : "../..");
 const BOOTSTRAP = path.join(SOURCE_ROOT, ".opencode/scripts/bootstrap-portable-harness.mjs");
 const DARWIN_ACTIVATION_PARENT = "/private/var/tmp";
 async function runNode(args, options = {}) {
@@ -93,7 +93,7 @@ test.after(async () => rm(tempParent, { recursive: true, force: true }));
 test("fresh foreign repository installs and validates without source-owned roots or history", async () => {
     const repo = await makeRepo(tempParent, "fresh");
     const installed = await runNode([BOOTSTRAP, "--target", repo]);
-    assert.match(installed.stdout, /created\/updated=65, memory-created=6, unchanged=0, collisions=0/);
+    assert.match(installed.stdout, /created\/updated=67, memory-created=6, unchanged=0, collisions=0/);
     assert.match(installed.stdout, process.platform === "darwin"
         ? /write-safety=darwin-native-race-detecting/
         : /write-safety=linux-descriptor-relative-race-detecting:\/proc\/self\/fd/);
@@ -120,13 +120,52 @@ test("fresh foreign repository installs and validates without source-owned roots
     await runNode(["--test", path.join(repo, ".opencode/plugin-modules/task-thread-policy.test.mjs")], { cwd: repo });
     await runNode(["--test", path.join(repo, ".opencode/plugin-modules/trace-root-permissions.test.mjs")], { cwd: repo });
 });
+test("development resources survive independent portable installation and inventory omission rejects", async () => {
+    const repo = await makeRepo(tempParent, "development-resources");
+    await runNode([BOOTSTRAP, "--target", repo]);
+    const skillPath = path.join(repo, ".opencode/skills/delegation-orchestrator/SKILL.md");
+    const skill = await readFile(skillPath, "utf8");
+    const references = path.join(path.dirname(skillPath), "references");
+    for (const name of ["development-workflow.md", "task-contract-examples.md"]) {
+        assert.ok(skill.includes(`references/${name}`), `skill must require ${name}`);
+        const content = await readFile(path.join(references, name), "utf8");
+        assert.ok(content.length > 0);
+        for (const match of content.matchAll(/\]\(([^)#]+\.md)(?:#[^)]*)?\)/g)) {
+            assert.ok(!path.isAbsolute(match[1]));
+            await readFile(path.resolve(references, match[1]), "utf8");
+        }
+    }
+    assert.deepEqual((await readdir(path.join(repo, ".opencode/agents"))).sort(), [
+        "implementer.md",
+        "planner.md",
+        "researcher.md",
+        "validator.md",
+    ]);
+    assert.deepEqual((await readdir(repo)).sort(), [".memory", ".opencode"]);
+    assert.ok(!(await walk(repo)).some((item) => /render-task-contract|^docs\//.test(item)));
+    const manifestPath = path.join(repo, ".opencode/portable.manifest.json");
+    const original = await readFile(manifestPath, "utf8");
+    for (const name of ["development-workflow.md", "task-contract-examples.md"]) {
+        const manifest = parsePortableManifest(original);
+        const removed = `.opencode/skills/delegation-orchestrator/references/${name}`;
+        manifest.managedFiles = manifest.managedFiles.filter((item) => item !== removed);
+        await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+        await rm(path.join(repo, removed));
+        assert.match(await expectFailure([
+            path.join(repo, ".opencode/scripts/validate-portable-harness.mjs"),
+            "--root",
+            repo,
+        ]), /exact portable-core contract|exactly 67 files/);
+        await writeFile(path.join(repo, removed), await readFile(path.join(SOURCE_ROOT, removed)));
+    }
+});
 test("bootstrap is idempotent and dry-run performs no writes", async () => {
     const repo = path.join(tempParent, "fresh");
     const second = await runNode([BOOTSTRAP, "--target", repo]);
-    assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=71, collisions=0/);
+    assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=73, collisions=0/);
     const dryRepo = await makeRepo(tempParent, "dry-run");
     const dry = await runNode([BOOTSTRAP, "--target", dryRepo, "--dry-run"]);
-    assert.match(dry.stdout, /dry-run complete: created\/updated=65, memory-created=6/);
+    assert.match(dry.stdout, /dry-run complete: created\/updated=67, memory-created=6/);
     assert.deepEqual(await readdir(dryRepo), []);
 });
 test("installed validator accepts an explicit root from nested cwd", async () => {
@@ -427,7 +466,7 @@ test("installed validator independently rejects removed inventory entries", asyn
     await writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
     await rm(path.join(repo, removed));
     const validator = path.join(repo, ".opencode/scripts/validate-portable-harness.mjs");
-    assert.match(await expectFailure([validator, "--root", repo]), /exact portable-core contract|exactly 65 files/);
+    assert.match(await expectFailure([validator, "--root", repo]), /exact portable-core contract|exactly 67 files/);
 });
 test("installed validator rejects missing task-thread policy assets and stale policy wording", async () => {
     const repo = await makeRepo(tempParent, "thread-policy-corruption");

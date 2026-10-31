@@ -70,6 +70,18 @@
       "discovery": "skills/delegation-orchestrator/references/llama-cpp-integration-guide.md"
     },
     {
+      "source": ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
+      "release": ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/references/development-workflow.md"
+    },
+    {
+      "source": ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
+      "release": ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md",
+      "kind": "native-projection",
+      "discovery": "skills/delegation-orchestrator/references/task-contract-examples.md"
+    },
+    {
       "source": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
       "release": ".opencode/skills/delegation-orchestrator/references/role-routing-matrix.md",
       "kind": "native-projection",

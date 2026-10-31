@@ -4,7 +4,7 @@ This ledger reconciles the source manifest, external-runtime manifest, portable 
 
 | Capability | Global destination/equivalent | Boundary |
 | --- | --- | --- |
-| Four roles, five commands, four complete skill trees and four delegation references | Manifest-owned native discovery; profile-specific delegation authority uses the original skill name | Legacy conservative role/command assets preserved |
+| Four roles, five commands, four complete skill trees and six delegation references | Manifest-owned native discovery; profile-specific delegation authority uses the original skill name | Legacy conservative role/command assets preserved |
 | Input/output contracts, modes, DAG, budgets, fresh children, remediation and independent acceptance | global-protocol + global-native-plugin + pure contracts/controller | Task-local; no general tool restrictions |
 | Foreground clarification | Exact child-originated nonce response, max eight turns, declared agent budget | Terminal/replayed/changed work uses fresh tasks |
 | Background Job transport/context updates | Existing legacy adapter only | Global background is explicitly unavailable; running text never accepted |
@@ -124,6 +124,9 @@ This ledger reconciles the source manifest, external-runtime manifest, portable 
 | `.opencode/scripts/operator-approved-artifact-install.test.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 | `.opencode/scripts/operator-external-qa.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 | `.opencode/scripts/operator-external-qa.test.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
+| `.opencode/scripts/development-workflow.test.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
+| `.opencode/scripts/render-task-contract-examples.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
+| `.opencode/scripts/render-task-contract-examples.test.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 | `.opencode/scripts/paired-benchmark.test.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 | `.opencode/scripts/portable-harness.test.mjs` | — | yes | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 | `.opencode/scripts/prepare-paired-benchmark.mts` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
@@ -136,6 +139,8 @@ This ledger reconciles the source manifest, external-runtime manifest, portable 
 | `.opencode/scripts/validate-portable-harness.mjs` | — | yes | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 | `.opencode/skills/delegation-orchestrator/SKILL.md` | yes | yes | Profile-specific equivalent at .opencode/global/skills/delegation-orchestrator/SKILL.md | `skills/delegation-orchestrator/SKILL.md` |
 | `.opencode/skills/delegation-orchestrator/references/llama-cpp-integration-guide.md` | — | — | Global discovery projection | `skills/delegation-orchestrator/references/llama-cpp-integration-guide.md` |
+| `.opencode/skills/delegation-orchestrator/references/development-workflow.md` | yes | yes | Global discovery projection | `skills/delegation-orchestrator/references/development-workflow.md` |
+| `.opencode/skills/delegation-orchestrator/references/task-contract-examples.md` | yes | yes | Global discovery projection | `skills/delegation-orchestrator/references/task-contract-examples.md` |
 | `.opencode/skills/delegation-orchestrator/references/role-routing-matrix.md` | yes | yes | Global discovery projection | `skills/delegation-orchestrator/references/role-routing-matrix.md` |
 | `.opencode/skills/delegation-orchestrator/references/trust-and-restart-guide.md` | yes | yes | Global discovery projection | `skills/delegation-orchestrator/references/trust-and-restart-guide.md` |
 | `.opencode/skills/delegation-orchestrator/references/validation-checklist.md` | yes | yes | Global discovery projection | `skills/delegation-orchestrator/references/validation-checklist.md` |
@@ -196,3 +201,5 @@ This ledger reconciles the source manifest, external-runtime manifest, portable 
 | `tsconfig.json` | — | — | Source-only; global runtime does not depend on it | `Source QA/documentation/history` |
 
 The generic `runGlobalBuild` utility retains the exact command/cwd/script-policy/time/output request and exact confirmation before a bounded native shell invocation, with no stopped-run prerequisite. It sets npm offline input intent and reports `networkIsolation: native-policy`; it does not promise a network sandbox. The operator must select an offline command/input set and native permissions. It returns exit/signal/error/output and `accepted: false`; fake-executor fixtures cover success, failure and denied confirmation. This is the explicit native-policy equivalent of legacy isolated recovery build, whose Bubblewrap isolation remains legacy-only.
+
+The shared development guide and generated task examples are native projections in both the immutable release and discovery closure. Their source-only renderer and development-policy tests remain source QA; installed profiles read only the published Markdown and existing authority skill.

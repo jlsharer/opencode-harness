@@ -9,6 +9,8 @@ This skill is the sole authoritative harness delegation protocol. Primary sessio
 
 Bounded **external operator actions** are separate from delegated work and never count as managed gates. The primary may use the exact download/install/recovery tools under their declared scope and native permission. For OpenCourt, use the read-only Win64 plan or existing-snapshot verification tools first; a new nonoverwriting build and a later nine-case run are separate approved actions. An old snapshot may be relaunched only under its exact launcher opt-in. These tools are unavailable to leaves and cannot prove PIE. The managed acceptance shell stays read-only; there is no general external shell escape.
 
+Before dispatch for substantive development, read [shared development practice](references/development-workflow.md) once per scoped plan and the relevant role/mode sections of [task/result examples](references/task-contract-examples.md). Reuse matching approved design and owner authorization; carry bounded relevant guidance in leaf packets. These references supply practice and illustrative shapes; this skill remains the protocol authority.
+
 ## Intake and Normalization
 
 `.opencode/schemas/orchestration-input.schema.json` defines the parent's normalized internal execution specification. It is not a required user prompt format.

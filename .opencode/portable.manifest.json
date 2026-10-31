@@ -97,7 +97,9 @@
     ".opencode/bootstrap/memory/templates/orchestration-index.md",
     ".opencode/bootstrap/memory/templates/compaction-handoff.md",
     ".opencode/bootstrap/memory/templates/role-trace-artifact.md",
-    ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md"
+    ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md",
+    ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
+    ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md"
   ],
   "memorySeeds": [
     {

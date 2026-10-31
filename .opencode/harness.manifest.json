@@ -3,6 +3,8 @@
   "adapterVersion": "0.1.0",
   "schemaVersion": "0.1.0",
   "artifacts": [
+    {"path": ".opencode/scripts/development-workflow.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
+    {"path": ".opencode/skills/delegation-orchestrator/references/development-workflow.md", "kind": "opencode-skill-reference", "owner": "harness-owned"},
     {"path": ".opencode/scripts/render-task-contract-examples.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/scripts/render-task-contract-examples.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/evaluation/paired-tasks.json", "kind": "source-only-evaluation", "owner": "harness-owned"},

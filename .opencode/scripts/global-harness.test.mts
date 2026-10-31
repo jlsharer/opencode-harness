@@ -113,6 +113,69 @@ test("dry-run is inert; install/verify/uninstall preserve native config, auth an
     assert.equal(fs.readFileSync(path.join(root, name), "utf8"), "sentinel");
 });
 
+test("development resources project into release and discovery with links rewritten exactly once", (t) => {
+  const { options } = fixture(t);
+  // The install uses only the manifest closure; source documentation and renderer are absent.
+  const packageRoot = path.join(path.dirname(options.stateRoot), "closure");
+  fs.mkdirSync(packageRoot);
+  const manifest = globalManifest(process.cwd());
+  for (const asset of manifest.assets) {
+    const target = path.join(packageRoot, asset.source);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(asset.source, target);
+  }
+  assert.equal(
+    fs.existsSync(path.join(packageRoot, ".opencode/scripts/render-task-contract-examples.mts")),
+    false,
+  );
+  assert.equal(fs.existsSync(path.join(packageRoot, "docs")), false);
+  globalOperation("install", { ...options, packageRoot, apply: true });
+  const release = globalOperation("doctor", { ...options, packageRoot }).activeRelease as string;
+  const skill = fs.readFileSync(
+    path.join(options.configRoot, "skills/delegation-orchestrator/SKILL.md"),
+    "utf8",
+  );
+  assert.deepEqual(fs.readdirSync(path.join(options.configRoot, "agents")).sort(), [
+    "implementer.md",
+    "planner.md",
+    "researcher.md",
+    "validator.md",
+  ]);
+  for (const name of ["development-workflow.md", "task-contract-examples.md"]) {
+    const relative = `.opencode/skills/delegation-orchestrator/references/${name}`;
+    const discovery = relative.replace(/^\.opencode\//, "");
+    assert.ok(
+      manifest.assets.some(
+        (asset) =>
+          asset.source === relative &&
+          asset.release === relative &&
+          asset.discovery === discovery &&
+          asset.kind === "native-projection",
+      ),
+    );
+    const installed = fs.readFileSync(path.join(options.configRoot, discovery), "utf8");
+    assert.equal(installed, fs.readFileSync(path.join(release, relative), "utf8"));
+    assert.ok(skill.includes(`${release}/${relative}`));
+    for (const match of installed.matchAll(/\]\(([^)#]+\.md)(?:#[^)]*)?\)/g)) {
+      assert.ok(
+        fs.existsSync(
+          path.resolve(path.dirname(path.join(options.configRoot, discovery)), match[1]!),
+        ),
+      );
+    }
+    assert.ok(!installed.includes(`${release}/${release}`));
+    assert.doesNotMatch(installed, /(?:^|[\s`"(])\.opencode\//m);
+    assert.ok(!installed.includes(process.cwd()));
+    assert.doesNotMatch(installed, /plugins\/cache/);
+    if (name === "task-contract-examples.md") {
+      assert.ok(
+        installed.includes(`${release}/.opencode/scripts/render-task-contract-examples.mts`),
+      );
+      assert.ok(installed.includes(`${release}/.memory/orchestrations/example-workflow/`));
+    }
+  }
+});
+
 test("unowned collisions and modified owned files fail without overwriting bytes", (t) => {
   const { options } = fixture(t);
   fs.mkdirSync(path.join(options.configRoot, "agents"), { recursive: true });

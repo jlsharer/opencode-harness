@@ -72,6 +72,8 @@
     { "source": ".opencode/bootstrap/memory/templates/orchestration-index.md", "destination": "bootstrap/memory/templates/orchestration-index.md" },
     { "source": ".opencode/bootstrap/memory/templates/compaction-handoff.md", "destination": "bootstrap/memory/templates/compaction-handoff.md" },
     { "source": ".opencode/bootstrap/memory/templates/role-trace-artifact.md", "destination": "bootstrap/memory/templates/role-trace-artifact.md" },
-    { "source": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md", "destination": "bootstrap/memory/templates/interactive-refinement-test-plan.md" }
+    { "source": ".opencode/bootstrap/memory/templates/interactive-refinement-test-plan.md", "destination": "bootstrap/memory/templates/interactive-refinement-test-plan.md" },
+    { "source": ".opencode/skills/delegation-orchestrator/references/development-workflow.md", "destination": "skills/delegation-orchestrator/references/development-workflow.md" },
+    { "source": ".opencode/skills/delegation-orchestrator/references/task-contract-examples.md", "destination": "skills/delegation-orchestrator/references/task-contract-examples.md" }
   ]
 }
