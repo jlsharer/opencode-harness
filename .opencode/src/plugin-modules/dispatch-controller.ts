@@ -823,7 +823,7 @@ export function createDispatchController(
       if (spec.schemaVersion !== "2.0.0") return;
       gates.clear();
       for (const mapping of spec.roleModeTaskMapping) {
-        if (mapping.role !== "validator") continue;
+        if (mapping.role !== "validator" || !completed.has(key(mapping))) continue;
         completed.delete(key(mapping));
         lastAttemptGeneration.delete(key(mapping));
       }

@@ -28,6 +28,12 @@ The owner subsequently authorized designs and tests for the conditional runtime 
 
 The design-and-test phase is complete: twelve new characterizations pass within 151 affected-suite tests, the complete `npm test` pipeline and 71-file package dry run pass, and independent review found no important issues. The characterization plan records the checks and platform limits; production runtime files remain unchanged.
 
+### Authorized runtime implementation: November 1
+
+The owner subsequently authorized implementation and validation through the existing Codex bootstrap exception. The [runtime implementation plan](../plans/2026-11-01-runtime-implementation.md) records this separate increment. Workflow v2 now implements explicit mapping gate ownership and immutable admitted deadlines. Global profile v2 implements current required-validator evidence, accepted-run retirement and finite exact replay protection; ordinary native permissions remain unchanged. These changes supersede the corresponding future-tense remedies below for v2, while v1 compatibility remains explicit. Final integrated verification and review are recorded in the implementation plan.
+
+Native V2 local retry remains deferred: the supported host API cannot replace every independently delivered terminal success surface. Keep conservative stop, capacity reservation and verified recovery. Actual Job/session identity checks, bounded raw-output handling and owned launch-callback hardening are retained. Active-profile ownership and complete-input evidence reuse also remain deferred. No installation, activation or native managed acceptance follows from this bootstrap implementation.
+
 ## Current foundations
 
 | Foundation | Existing strength | Refactor implication |

@@ -1977,6 +1977,111 @@ test("native acceptance rechecks frozen cwd after awaited persistence and dispos
   }
 });
 
+for (const mutation of [
+  "cwd",
+  "parent-id",
+  "parent-role",
+  "child-id",
+  "child-parent",
+  "child-role",
+] as const)
+  test(`result persistence drift rejects managed evidence and retirement: ${mutation}`, async (t) => {
+    let mutate = () => {};
+    const f = fixture(t, {
+      persist: async (record) => {
+        if (record.event === "task.result" && record.role === "validator") mutate();
+      },
+    });
+    await admit(f.adapter);
+    const research = event();
+    await f.adapter.before(research);
+    research.status = "completed";
+    research.result = nativeResult(structured(), "child");
+    await f.adapter.after(research);
+    assert.equal((research.result as any).metadata.status, "completed");
+    const originalParent = structuredClone(f.sessions.get("parent")!);
+    const originalChild = structuredClone(f.sessions.get("validator")!);
+    mutate = () => {
+      if (mutation === "cwd") f.sessions.get("parent")!.location.directory = f.cwd + "/moved";
+      if (mutation === "parent-id") f.sessions.get("parent")!.id = "other-parent";
+      if (mutation === "parent-role") f.sessions.get("parent")!.agent = "plan";
+      if (mutation === "child-id") f.sessions.get("validator")!.id = "other-child";
+      if (mutation === "child-parent") f.sessions.get("validator")!.parentID = "other-parent";
+      if (mutation === "child-role") f.sessions.get("validator")!.agent = "researcher";
+    };
+    const validation = event("validator", "validation");
+    await f.adapter.before(validation);
+    validation.status = "completed";
+    validation.result = nativeResult(
+      structured("validator", "validation", (await declaredFileEvidence(f.cwd, ["a.txt"])).sha256),
+      "validator",
+    );
+    await f.adapter.after(validation);
+    assert.equal((validation.result as any).metadata.harness, "rejected");
+    assert.doesNotMatch(JSON.stringify(validation.result), /outputContract|<subagent/);
+    assert.deepEqual(f.adapter.protocol.snapshot("parent", "run").gates, {});
+    f.sessions.set("parent", originalParent);
+    f.sessions.set("validator", originalChild);
+    await assert.rejects(
+      f.adapter.action("parent", {
+        version: 2,
+        action: "orchestration.accept",
+        orchestrationId: "run",
+      }),
+      /incomplete|gate|failed/,
+    );
+    await assert.rejects(
+      f.adapter.action("parent", {
+        version: 2,
+        action: "retire",
+        orchestrationId: "run",
+        acceptanceDigest: "a".repeat(64),
+      }),
+      /not accepted|uncertain/,
+    );
+    await ordinary(f.adapter);
+  });
+
+for (const changeRevision of [false, true])
+  test(`failed review remediation remains bounded across revision observations: ${changeRevision}`, () => {
+    const spec = v2GlobalWorkflow();
+    spec.budgets.maxLeafAgentsByRole.validator = 6;
+    const protocol = createGlobalProtocol({ now: () => 100 });
+    protocol.admitOrchestration("parent", "/var/tmp", spec);
+    for (let i = 0; i < 2; i++) {
+      const id = "failed-review-" + i;
+      const { context } = protocol.admitTask("parent", "call-" + i, "validator", {
+        ...packet("validator", id),
+        taskMode: "review",
+      });
+      protocol.started("parent", context, {
+        id: "child-" + i,
+        parentID: "parent",
+        agent: "validator",
+      });
+      const result: Record<string, unknown> = {
+        ...structured("validator", id),
+        taskMode: "review",
+        outcome: "failed",
+        reason: "review found a defect",
+      };
+      delete result.outputContract;
+      protocol.result("parent", context, result, {
+        treeHash: (changeRevision && i === 1 ? "b" : "a").repeat(64),
+        gateIds: [],
+      });
+    }
+    assert.throws(
+      () =>
+        protocol.admitTask("parent", "third-call", "validator", {
+          ...packet("validator", "third-review"),
+          taskMode: "review",
+        }),
+      /remediation budget exhausted/,
+    );
+    assert.equal(protocol.snapshot("parent", "run").attempts.length, 2);
+  });
+
 test("pending admission persistence cannot return launch authority after native cwd moves", async (t) => {
   let mutate = () => {};
   const f = fixture(t, {

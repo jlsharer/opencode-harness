@@ -626,7 +626,7 @@ export function createDispatchController(input, options = {}) {
                 return;
             gates.clear();
             for (const mapping of spec.roleModeTaskMapping) {
-                if (mapping.role !== "validator")
+                if (mapping.role !== "validator" || !completed.has(key(mapping)))
                     continue;
                 completed.delete(key(mapping));
                 lastAttemptGeneration.delete(key(mapping));

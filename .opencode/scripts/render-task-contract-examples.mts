@@ -303,11 +303,20 @@ export function renderTaskContractExamples(): string {
     "",
     "## Workflow versions and gate duties",
     "",
-    "V1 retains all unit gates for every validator, including review. V1 rejects gateObligations and taskTimeoutMs. Its unit/gate declarations may be historically asymmetric: diagnostics name the mismatch, and legacy unit proof must not be claimed as global acceptance. Reconcile both edge sets before migrating.",
+    "V1 retains all unit gates for every validator, including review. V1 rejects gateObligations and taskTimeoutMs. " +
+      "Its unit/gate declarations may be historically asymmetric: diagnostics name the mismatch, and legacy unit " +
+      "proof must not be claimed as global acceptance. Reconcile both edge sets before migrating.",
     "",
-    "V2 requires explicit gateObligations on every mapping, empty for non-validators. Each gate has exactly one covered validator owner. Advisory review has no duties and closes no gates; it cannot cross blocked dependency gates. Unit final gates remain nonempty and both association declarations must agree. A later writer invalidates every gate and completed validator, including advisory review.",
+    "V2 requires explicit gateObligations on every mapping, empty for non-validators. Each gate has exactly one " +
+      "covered validator owner. Advisory review has no duties and closes no gates; it cannot cross blocked dependency " +
+      "gates. Unit final gates remain nonempty and both association declarations must agree. A later writer " +
+      "invalidates every gate and completed validator, including advisory review.",
     "",
-    "V2 mapping taskTimeoutMs defaults to 300000 and accepts safe integers 1..3600000. The trusted maxTaskTimeoutMs ceiling defaults to 3600000; exceeding it rejects rather than clamps, including an omitted duration above a lower ceiling. The example owner receives 600000 while advisory review retains 300000. Legacy construction timeoutMs is v1 only. Reservation freezes one deadline; clarification, updates and compaction never renew it. Expiry retains capacity until termination is reconciled.",
+    "V2 mapping taskTimeoutMs defaults to 300000 and accepts safe integers 1..3600000. The trusted maxTaskTimeoutMs " +
+      "ceiling defaults to 3600000; exceeding it rejects rather than clamps, including an omitted duration above a " +
+      "lower ceiling. The example owner receives 600000 while advisory review retains 300000. Legacy construction " +
+      "timeoutMs is v1 only. Reservation freezes one deadline; clarification, updates and compaction never renew it. " +
+      "Expiry retains capacity until termination is reconciled.",
     "",
     ...buildWorkflowExamples().flatMap((workflow) => [jsonFence(workflow), ""]),
     "## Select one role and mode",

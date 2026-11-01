@@ -9,6 +9,8 @@ The design-and-characterization phase is complete. On November 1, 2026, the owne
 
 The four proposals address mapping-specific gate duties, immutable admitted deadlines, proven local task failure, and accepted global run retirement. Active-profile ownership and complete-input evidence reuse receive separate feasibility decisions. Keep four roles, existing modes, fresh task and child identities, independent acceptance, serial writer isolation, scope controls, and conservative uncertainty handling. Workflow budgets remain independent of deadlines and finite resource limits.
 
+Implementation disposition, November 1: mapping gate duties, admitted deadlines and global accepted retirement are implemented, with integrated verification and independent review tracked in the implementation plan. Section 3's new native local-failure transition is deferred because the actual host cannot provide all-surface terminal replacement; only supported identity/output/callback hardening ships. Sections 5 and 6 remain feasibility deferrals. Descriptions of baseline behavior below refer to the characterized v1 baseline, not to newly admitted v2 workflows.
+
 ## Evidence and architecture
 
 The source research inspected these existing seams; the baseline tests below characterize them without changing them:

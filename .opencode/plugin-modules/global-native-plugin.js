@@ -223,6 +223,7 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                     throw new Error("native cwd moved before continuation launch");
                 calls.set(callKey(event), {
                     parentID: event.sessionID,
+                    parentAgent: nativeParent.agent,
                     ...admitted,
                     consumed: false,
                     continuedChild: childID,
@@ -255,7 +256,12 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             const current = await parent(event.sessionID);
             if (current.location.directory !== admitted.cwd)
                 throw new Error("native cwd moved before launch");
-            calls.set(callKey(event), { parentID: event.sessionID, ...admitted, consumed: false });
+            calls.set(callKey(event), {
+                parentID: event.sessionID,
+                parentAgent: nativeParent.agent,
+                ...admitted,
+                consumed: false,
+            });
         }
         catch (error) {
             protocol.reject(event.sessionID, admitted.context);
@@ -325,8 +331,19 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 childID,
                 evidence,
             });
+            const currentChild = await ctx.session.get({ sessionID: childID });
+            const currentParent = await parent(call.parentID);
             if (disposed)
                 throw new Error("global harness instance disposed; late result rejected");
+            if (currentParent.id !== call.parentID ||
+                currentParent.parentID ||
+                currentParent.agent !== call.parentAgent ||
+                currentParent.location.directory !== call.cwd)
+                throw new Error("native parent identity or cwd moved before result completion");
+            if (currentChild.id !== childID ||
+                currentChild.parentID !== call.parentID ||
+                currentChild.agent !== call.context.role)
+                throw new Error("native child identity moved before result completion");
             protocol.result(call.parentID, call.context, decoded, {
                 treeHash: evidence.sha256,
                 gateIds: gateObligationsFor(spec, {
