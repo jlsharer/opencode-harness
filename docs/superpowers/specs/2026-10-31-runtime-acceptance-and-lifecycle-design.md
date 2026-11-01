@@ -1,7 +1,7 @@
 # Runtime acceptance and lifecycle follow-up design
 
 Date: October 31, 2026  
-Status: Design and characterization complete; implementation and validation authorized November 1, 2026
+Status: Supported runtime changes implemented, independently reviewed and offline validated November 1, 2026; native local retry deferred
 Parent: [Shared orchestration workflow](2026-10-31-orchestration-workflow-refactor-design.md)  
 Execution plan for this phase: [Runtime characterization](../plans/2026-10-31-runtime-design-characterization.md)
 
