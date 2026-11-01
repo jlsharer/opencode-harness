@@ -29,6 +29,10 @@ import {
 import type { TaskThreadRole } from "../src/plugin-modules/task-thread-policy.ts";
 import { TASK_MODES, taskContractShape } from "../src/plugin-modules/task-contracts.ts";
 import type { TaskEvidence } from "../src/plugin-modules/task-contracts.ts";
+import {
+  buildWorkflowExamples,
+  buildTaskContractExamples,
+} from "./render-task-contract-examples.mts";
 
 function workflow() {
   return {
@@ -1346,6 +1350,62 @@ function v2GlobalWorkflow() {
     ],
   };
 }
+
+for (const binding of ["stale", "missing", "current"] as const)
+  test(`v2 global advisory review requires current-tree result evidence: ${binding}`, () => {
+    const spec = buildWorkflowExamples()[1]!;
+    spec.roleModeTaskMapping = spec.roleModeTaskMapping.filter((m) => m.role === "validator");
+    const example = buildTaskContractExamples().find(
+      (e) =>
+        e.context.role === "validator" &&
+        e.context.taskMode === "review" &&
+        e.result.outcome === "success",
+    )!;
+    const identity = {
+      orchestrationId: spec.orchestrationId,
+      scopeKey: "parser",
+      delegationTaskId: "advisory-" + binding,
+      taskMode: "review",
+    };
+    const protocol = createGlobalProtocol({ now: () => 100 });
+    protocol.admitOrchestration("parent", "/var/tmp", spec);
+    const { context } = protocol.admitTask("parent", "advisory-call", "validator", {
+      ...example.packet,
+      ...identity,
+    });
+    protocol.started("parent", context, {
+      id: "advisory-child",
+      parentID: "parent",
+      agent: "validator",
+    });
+    const result = {
+      ...example.result,
+      ...identity,
+      evidence: [
+        {
+          reference: "review.log",
+          ...(binding === "missing"
+            ? {}
+            : { sha256: (binding === "current" ? "a" : "b").repeat(64) }),
+        },
+      ],
+    };
+    const complete = () =>
+      protocol.result("parent", context, result, { treeHash: "a".repeat(64), gateIds: [] });
+    if (binding === "current") {
+      complete();
+      assert.equal(protocol.snapshot("parent", spec.orchestrationId).attempts[0]!.state, "success");
+    } else {
+      assert.throws(complete, /tree-bound advisory evidence required/);
+      assert.equal(protocol.snapshot("parent", spec.orchestrationId).attempts[0]!.state, "running");
+      assert.equal(protocol.snapshot("parent", spec.orchestrationId).active, 1);
+    }
+    assert.deepEqual(protocol.snapshot("parent", spec.orchestrationId).gates, {});
+    assert.throws(
+      () => protocol.accept("parent", spec.orchestrationId, "a".repeat(64)),
+      /incomplete/,
+    );
+  });
 
 test("v2 global advisory review completes only its mapping and exact owner closes final acceptance", () => {
   const protocol = createGlobalProtocol();

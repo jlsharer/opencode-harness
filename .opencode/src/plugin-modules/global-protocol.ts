@@ -264,6 +264,12 @@ export function createGlobalProtocol(
               taskMode: context.taskMode,
             });
       if (
+        owner.controller.spec.schemaVersion === "2.0.0" &&
+        gates.length === 0 &&
+        (!proof.treeHash || !decoded.evidence.some((e) => e.sha256 === proof.treeHash))
+      )
+        throw new Error("current tree-bound advisory evidence required");
+      if (
         gates.some(
           (g) =>
             !decoded.evidence.some(
