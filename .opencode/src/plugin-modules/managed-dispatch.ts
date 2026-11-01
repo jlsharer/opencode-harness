@@ -3,7 +3,11 @@ import path from "node:path";
 import os from "node:os";
 import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { withinScope, createDispatchController } from "./dispatch-controller.ts";
+import {
+  withinScope,
+  createDispatchController,
+  gateObligationsFor,
+} from "./dispatch-controller.ts";
 import { formatTaskResultWrapper, createTaskThreadPolicy } from "./task-thread-policy.ts";
 import { validateTaskPacket } from "./task-contracts.ts";
 import type { TaskContext } from "./task-contracts.ts";
@@ -215,6 +219,7 @@ export function createManagedDispatch(options: {
   traceRoot: string;
   now?: () => number;
   timeoutMs?: number;
+  maxTaskTimeoutMs?: number;
   telemetry?: (record: RecordValue) => void;
   delegation?: unknown;
   registryCapacity?: number | null;
@@ -940,7 +945,10 @@ export function createManagedDispatch(options: {
         throw new Error("workflow registry capacity reached");
       const controller = createDispatchController(doc.value, {
         ...(options.now ? { now: options.now } : {}),
-        ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+        ...(Object.hasOwn(options, "timeoutMs") ? { timeoutMs: options.timeoutMs } : {}),
+        ...(Object.hasOwn(options, "maxTaskTimeoutMs")
+          ? { maxTaskTimeoutMs: options.maxTaskTimeoutMs }
+          : {}),
       });
       if (controller.spec.orchestrationId !== orchestrationId)
         throw new Error("workflow identity mismatch");
@@ -1258,9 +1266,11 @@ export function createManagedDispatch(options: {
     }
     const commands =
       role === "validator"
-        ? active.run.controller.spec.acceptanceGates
-            .filter((g) => unit.acceptanceGateIds.includes(g.id))
-            .map((g) => g.evidenceCommand)
+        ? gateObligationsFor(active.run.controller.spec, {
+            workUnitId: active.context.scopeKey,
+            role: active.context.role,
+            taskMode: active.context.taskMode,
+          }).map((g) => g.evidenceCommand)
         : role === "implementer"
           ? (active.packet.verificationCommands as string[])
           : [];
@@ -1632,9 +1642,11 @@ export function createManagedDispatch(options: {
         for (const artifact of result.result.artifacts)
           artifact.sha256 = artifacts[artifact.reference]!;
         if (task.context.role === "validator") {
-          const gates = task.run.controller.spec.acceptanceGates.filter((g) =>
-            unit.acceptanceGateIds.includes(g.id),
-          );
+          const gates = gateObligationsFor(task.run.controller.spec, {
+            workUnitId: task.context.scopeKey,
+            role: task.context.role,
+            taskMode: task.context.taskMode,
+          });
           if (
             gates.some(
               (g) =>
@@ -1642,18 +1654,31 @@ export function createManagedDispatch(options: {
             )
           )
             throw new Error("acceptance gate lacks trusted command success");
-          verifyAcceptance({
-            before: task.run.baseline,
-            after,
-            current: snapshot(task.context.orchestrationId),
-            allowedPaths: task.run.controller.spec.allowedPaths,
-            artifacts,
-            currentArtifacts: captureArtifacts(options.traceRoot, paths),
-            commands: task.commands,
-            validatorTaskId: task.context.delegationTaskId,
-          });
+          if (!gates.length) {
+            // Advisory validation still binds real artifacts to the current unchanged tree.
+            // It has no command duties and produces no acceptance records.
+            const current = snapshot(task.context.orchestrationId);
+            const currentArtifacts = captureArtifacts(options.traceRoot, paths);
+            if (
+              after.root !== current.root ||
+              after.treeHash !== current.treeHash ||
+              !paths.length ||
+              JSON.stringify(artifacts) !== JSON.stringify(currentArtifacts)
+            )
+              throw new Error("stale or missing advisory validation evidence");
+          } else
+            verifyAcceptance({
+              before: task.run.baseline,
+              after,
+              current: snapshot(task.context.orchestrationId),
+              allowedPaths: task.run.controller.spec.allowedPaths,
+              artifacts,
+              currentArtifacts: captureArtifacts(options.traceRoot, paths),
+              commands: task.commands,
+              validatorTaskId: task.context.delegationTaskId,
+            });
           task.run.controller.complete(task.context.delegationTaskId, "success", {
-            gateIds: unit.acceptanceGateIds,
+            gateIds: gates.map((g) => g.id),
             treeHash: after.treeHash,
           });
           for (const gate of gates)
@@ -1744,6 +1769,7 @@ export function createManagedDispatch(options: {
 
   return {
     currentTaskView,
+    diagnostics: () => [...runs.values()].map((r) => r.controller.diagnostics()),
     compactionPointer,
     assertExternalActionCaller,
     isActiveParent,

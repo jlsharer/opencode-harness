@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import path from "node:path";
-import { createDispatchController, safeScopePath, withinScope } from "./dispatch-controller.ts";
+import {
+  createDispatchController,
+  gateObligationsFor,
+  safeScopePath,
+  withinScope,
+} from "./dispatch-controller.ts";
 import { validateTaskPacket, validateTaskResult } from "./task-contracts.ts";
 import type { TaskContext, TaskResult } from "./task-contracts.ts";
 
@@ -78,7 +83,10 @@ type Task = {
 };
 
 /** Ephemeral authorization is never restored from traces, context or compaction. */
-export function createGlobalProtocol() {
+export function createGlobalProtocol(
+  options: { now?: () => number; maxTaskTimeoutMs?: number } = {},
+) {
+  const trustedOptions = { ...options };
   const runs = new Map<
     string,
     {
@@ -106,7 +114,10 @@ export function createGlobalProtocol() {
   ) {
     identifier(parentID);
     if (!path.isAbsolute(cwd) || path.resolve(cwd) !== cwd) throw new Error("invalid native cwd");
-    const controller = createDispatchController(spec, { acceptanceGatePolicy: "native-host" });
+    const controller = createDispatchController(spec, {
+      ...trustedOptions,
+      acceptanceGatePolicy: "native-host",
+    });
     const evidenceFiles = declaredFiles ?? [
       ...controller.spec.allowedPaths,
       ...controller.spec.validationInputs,
@@ -241,9 +252,17 @@ export function createGlobalProtocol() {
       return decoded;
     }
     if (decoded.outcome === "success" && context.role === "validator") {
-      const gates = owner.controller.spec.acceptanceGates.filter((g) =>
-        g.workUnitIds.includes(context.scopeKey),
-      );
+      // V1 deliberately retains historical reverse-edge command proof. V2 uses exact owners.
+      const gates =
+        owner.controller.spec.schemaVersion === "1.0.0"
+          ? owner.controller.spec.acceptanceGates.filter((g) =>
+              g.workUnitIds.includes(context.scopeKey),
+            )
+          : gateObligationsFor(owner.controller.spec, {
+              workUnitId: context.scopeKey,
+              role: context.role,
+              taskMode: context.taskMode,
+            });
       if (
         gates.some(
           (g) =>
@@ -307,8 +326,20 @@ export function createGlobalProtocol() {
   function accept(parentID: string, id: string, treeHash: string) {
     const owner = run(parentID, id);
     const state = owner.controller.snapshot();
+    if (owner.controller.spec.associationDiagnostics.length) {
+      const details = owner.controller.spec.associationDiagnostics
+        .map(
+          (d) =>
+            `unit ${d.workUnitId}, gate ${d.gateId}: unitDeclares=${d.unitDeclares}, gateDeclares=${d.gateDeclares}`,
+        )
+        .join("; ");
+      throw new Error(
+        `independent acceptance incomplete: inconsistent v1 association declarations (${details}); legacy unit proof does not establish global acceptance`,
+      );
+    }
     if (
       owner.accepted ||
+      (owner.controller.spec.schemaVersion === "2.0.0" && !owner.controller.mappingsComplete()) ||
       state.active ||
       [...owner.tasks.values()].some((t) =>
         ["admitted", "running", "awaiting-guidance", "cancelled"].includes(t.state),
@@ -340,6 +371,7 @@ export function createGlobalProtocol() {
     cancel,
     accept,
     snapshot: (parentID: string, id: string) => run(parentID, id).controller.snapshot(),
+    diagnostics: (parentID: string, id: string) => run(parentID, id).controller.diagnostics(),
     evidenceFiles: (parentID: string, id: string) => [...run(parentID, id).evidenceFiles],
     cwd: (parentID: string, id: string) => run(parentID, id).cwd,
     spec: (parentID: string, id: string) => run(parentID, id).controller.spec,

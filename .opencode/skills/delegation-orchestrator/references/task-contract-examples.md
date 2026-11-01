@@ -9,6 +9,198 @@ The active profile skill remains the delegation authority. Packet validity does 
 
 Profile-specific hashes: legacy managed adapters seal returned artifact bytes, so leaf artifacts omit sha256 here. Evidence hashes are illustrative placeholders. For global-native, validator gate evidence requires the exact assigned command, exitCode 0, and sha256 equal to the adapter's current declared-file evidence tree hash. Supply that profile-specific proof from actual observations; it is not a new required common-validator artifact field. These common-validator examples do not satisfy those additional profile requirements.
 
+## Workflow versions and gate duties
+
+V1 retains all unit gates for every validator, including review. V1 rejects gateObligations and taskTimeoutMs. Its unit/gate declarations may be historically asymmetric: diagnostics name the mismatch, and legacy unit proof must not be claimed as global acceptance. Reconcile both edge sets before migrating.
+
+V2 requires explicit gateObligations on every mapping, empty for non-validators. Each gate has exactly one covered validator owner. Advisory review has no duties and closes no gates; it cannot cross blocked dependency gates. Unit final gates remain nonempty and both association declarations must agree. A later writer invalidates every gate and completed validator, including advisory review.
+
+V2 mapping taskTimeoutMs defaults to 300000 and accepts safe integers 1..3600000. The trusted maxTaskTimeoutMs ceiling defaults to 3600000; exceeding it rejects rather than clamps, including an omitted duration above a lower ceiling. The example owner receives 600000 while advisory review retains 300000. Legacy construction timeoutMs is v1 only. Reservation freezes one deadline; clarification, updates and compaction never renew it. Expiry retains capacity until termination is reconciled.
+
+```json
+{
+  "schemaVersion": "1.0.0",
+  "orchestrationId": "example-workflow",
+  "goal": "Independently verify the parser correction",
+  "deliverables": [
+    "src/example-parser.mjs"
+  ],
+  "nonGoals": [
+    "Unrelated behavior"
+  ],
+  "allowedPaths": [
+    "src/example-parser.mjs"
+  ],
+  "validationInputs": [
+    "test/example-parser.test.mjs"
+  ],
+  "workUnits": [
+    {
+      "id": "parser",
+      "goal": "Correct parser",
+      "deliverable": "src/example-parser.mjs",
+      "nonGoals": [
+        "Unrelated behavior"
+      ],
+      "allowedPaths": [
+        "src/example-parser.mjs"
+      ],
+      "acceptanceGateIds": [
+        "parser-tests"
+      ]
+    }
+  ],
+  "acceptanceGates": [
+    {
+      "id": "parser-tests",
+      "criterion": "Parser regression checks pass",
+      "evidenceCommand": "node --test test/example-parser.test.mjs",
+      "workUnitIds": [
+        "parser"
+      ]
+    }
+  ],
+  "roleModeTaskMapping": [
+    {
+      "workUnitId": "parser",
+      "role": "implementer",
+      "taskMode": "implementation",
+      "boundedTask": "Correct parser under the approved plan"
+    },
+    {
+      "workUnitId": "parser",
+      "role": "validator",
+      "taskMode": "validation",
+      "boundedTask": "Independently review and prove parser checks"
+    }
+  ],
+  "dag": {
+    "dependencies": [],
+    "parallelism": {
+      "mode": "serial",
+      "authorization": "not-authorized",
+      "distinctCapacityEvidence": null
+    }
+  },
+  "budgets": {
+    "mode": "unbounded"
+  },
+  "scopeExpansion": {
+    "policy": "deny",
+    "requiresUserApproval": true
+  },
+  "authorization": {
+    "liveProviders": false,
+    "userGlobalMutation": false,
+    "git": {
+      "commit": false,
+      "amend": false,
+      "push": false,
+      "otherMutation": false
+    }
+  },
+  "routingMetadataStatus": "absent"
+}
+```
+
+```json
+{
+  "schemaVersion": "2.0.0",
+  "orchestrationId": "example-workflow",
+  "goal": "Independently verify the parser correction",
+  "deliverables": [
+    "src/example-parser.mjs"
+  ],
+  "nonGoals": [
+    "Unrelated behavior"
+  ],
+  "allowedPaths": [
+    "src/example-parser.mjs"
+  ],
+  "validationInputs": [
+    "test/example-parser.test.mjs"
+  ],
+  "workUnits": [
+    {
+      "id": "parser",
+      "goal": "Correct parser",
+      "deliverable": "src/example-parser.mjs",
+      "nonGoals": [
+        "Unrelated behavior"
+      ],
+      "allowedPaths": [
+        "src/example-parser.mjs"
+      ],
+      "acceptanceGateIds": [
+        "parser-tests"
+      ]
+    }
+  ],
+  "acceptanceGates": [
+    {
+      "id": "parser-tests",
+      "criterion": "Parser regression checks pass",
+      "evidenceCommand": "node --test test/example-parser.test.mjs",
+      "workUnitIds": [
+        "parser"
+      ]
+    }
+  ],
+  "roleModeTaskMapping": [
+    {
+      "workUnitId": "parser",
+      "role": "implementer",
+      "taskMode": "implementation",
+      "boundedTask": "Correct parser under the approved plan",
+      "gateObligations": []
+    },
+    {
+      "workUnitId": "parser",
+      "role": "validator",
+      "taskMode": "review",
+      "boundedTask": "Advisory requirements and quality review",
+      "gateObligations": []
+    },
+    {
+      "workUnitId": "parser",
+      "role": "validator",
+      "taskMode": "validation",
+      "boundedTask": "Independently review and prove parser checks",
+      "gateObligations": [
+        "parser-tests"
+      ],
+      "taskTimeoutMs": 600000
+    }
+  ],
+  "dag": {
+    "dependencies": [],
+    "parallelism": {
+      "mode": "serial",
+      "authorization": "not-authorized",
+      "distinctCapacityEvidence": null
+    }
+  },
+  "budgets": {
+    "mode": "unbounded"
+  },
+  "scopeExpansion": {
+    "policy": "deny",
+    "requiresUserApproval": true
+  },
+  "authorization": {
+    "liveProviders": false,
+    "userGlobalMutation": false,
+    "git": {
+      "commit": false,
+      "amend": false,
+      "push": false,
+      "otherMutation": false
+    }
+  },
+  "routingMetadataStatus": "absent"
+}
+```
+
 ## Select one role and mode
 
 Use the links below to read only the executable shape and the relevant role/mode example. Non-success examples demonstrate outcome-specific fields without success output; they grant no retry or acceptance authority.

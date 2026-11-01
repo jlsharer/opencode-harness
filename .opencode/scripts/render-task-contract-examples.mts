@@ -8,6 +8,7 @@ import {
   validateTaskResult,
 } from "../src/plugin-modules/task-contracts.ts";
 import type { TaskContext, TaskResult } from "../src/plugin-modules/task-contracts.ts";
+import { validateWorkflow } from "../src/plugin-modules/dispatch-controller.ts";
 import type { TaskThreadRole } from "../src/plugin-modules/task-thread-policy.ts";
 
 export interface ContractExample {
@@ -196,6 +197,83 @@ export function buildTaskContractExamples(): ContractExample[] {
   return examples;
 }
 
+export function buildWorkflowExamples() {
+  const base = {
+    schemaVersion: "1.0.0",
+    orchestrationId: "example-workflow",
+    goal: "Independently verify the parser correction",
+    deliverables: ["src/example-parser.mjs"],
+    nonGoals: ["Unrelated behavior"],
+    allowedPaths: ["src/example-parser.mjs"],
+    validationInputs: ["test/example-parser.test.mjs"],
+    workUnits: [
+      {
+        id: "parser",
+        goal: "Correct parser",
+        deliverable: "src/example-parser.mjs",
+        nonGoals: ["Unrelated behavior"],
+        allowedPaths: ["src/example-parser.mjs"],
+        acceptanceGateIds: ["parser-tests"],
+      },
+    ],
+    acceptanceGates: [
+      {
+        id: "parser-tests",
+        criterion: "Parser regression checks pass",
+        evidenceCommand: "node --test test/example-parser.test.mjs",
+        workUnitIds: ["parser"],
+      },
+    ],
+    roleModeTaskMapping: [
+      {
+        workUnitId: "parser",
+        role: "implementer",
+        taskMode: "implementation",
+        boundedTask: "Correct parser under the approved plan",
+      },
+      {
+        workUnitId: "parser",
+        role: "validator",
+        taskMode: "validation",
+        boundedTask: "Independently review and prove parser checks",
+      },
+    ],
+    dag: {
+      dependencies: [],
+      parallelism: {
+        mode: "serial",
+        authorization: "not-authorized",
+        distinctCapacityEvidence: null,
+      },
+    },
+    budgets: { mode: "unbounded" },
+    scopeExpansion: { policy: "deny", requiresUserApproval: true },
+    authorization: {
+      liveProviders: false,
+      userGlobalMutation: false,
+      git: { commit: false, amend: false, push: false, otherMutation: false },
+    },
+    routingMetadataStatus: "absent",
+  };
+  const v2 = {
+    ...structuredClone(base),
+    schemaVersion: "2.0.0",
+    roleModeTaskMapping: [
+      { ...base.roleModeTaskMapping[0]!, gateObligations: [] },
+      {
+        workUnitId: "parser",
+        role: "validator",
+        taskMode: "review",
+        boundedTask: "Advisory requirements and quality review",
+        gateObligations: [],
+      },
+      { ...base.roleModeTaskMapping[1]!, gateObligations: ["parser-tests"], taskTimeoutMs: 600000 },
+    ],
+  };
+  for (const example of [base, v2]) validateWorkflow(example);
+  return [base, v2];
+}
+
 function jsonFence(value: unknown): string {
   return "```json\n" + JSON.stringify(value, null, 2) + "\n```";
 }
@@ -223,6 +301,15 @@ export function renderTaskContractExamples(): string {
       "Supply that profile-specific proof from actual observations; it is not a new required common-validator artifact field. " +
       "These common-validator examples do not satisfy those additional profile requirements.",
     "",
+    "## Workflow versions and gate duties",
+    "",
+    "V1 retains all unit gates for every validator, including review. V1 rejects gateObligations and taskTimeoutMs. Its unit/gate declarations may be historically asymmetric: diagnostics name the mismatch, and legacy unit proof must not be claimed as global acceptance. Reconcile both edge sets before migrating.",
+    "",
+    "V2 requires explicit gateObligations on every mapping, empty for non-validators. Each gate has exactly one covered validator owner. Advisory review has no duties and closes no gates; it cannot cross blocked dependency gates. Unit final gates remain nonempty and both association declarations must agree. A later writer invalidates every gate and completed validator, including advisory review.",
+    "",
+    "V2 mapping taskTimeoutMs defaults to 300000 and accepts safe integers 1..3600000. The trusted maxTaskTimeoutMs ceiling defaults to 3600000; exceeding it rejects rather than clamps, including an omitted duration above a lower ceiling. The example owner receives 600000 while advisory review retains 300000. Legacy construction timeoutMs is v1 only. Reservation freezes one deadline; clarification, updates and compaction never renew it. Expiry retains capacity until termination is reconciled.",
+    "",
+    ...buildWorkflowExamples().flatMap((workflow) => [jsonFence(workflow), ""]),
     "## Select one role and mode",
     "",
     "Use the links below to read only the executable shape and the relevant role/mode example. Non-success examples demonstrate outcome-specific fields without success output; they grant no retry or acceptance authority.",

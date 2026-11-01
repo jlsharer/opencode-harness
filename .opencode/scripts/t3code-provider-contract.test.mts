@@ -1320,3 +1320,179 @@ test("global gates use native host policy while legacy gates keep read-only rest
     );
   }
 });
+
+function v2GlobalWorkflow() {
+  const spec = workflow();
+  return {
+    ...spec,
+    schemaVersion: "2.0.0",
+    roleModeTaskMapping: [
+      {
+        workUnitId: "unit",
+        role: "validator",
+        taskMode: "review",
+        boundedTask: "advisory",
+        gateObligations: [],
+        taskTimeoutMs: 25,
+      },
+      {
+        workUnitId: "unit",
+        role: "validator",
+        taskMode: "validation",
+        boundedTask: "prove",
+        gateObligations: ["gate"],
+        taskTimeoutMs: 50,
+      },
+    ],
+  };
+}
+
+test("v2 global advisory review completes only its mapping and exact owner closes final acceptance", () => {
+  const protocol = createGlobalProtocol();
+  protocol.admitOrchestration("parent", "/var/tmp", v2GlobalWorkflow());
+  const reviewPacket = { ...packet("validator", "review"), taskMode: "review" };
+  const { context } = protocol.admitTask("parent", "review-call", "validator", reviewPacket);
+  protocol.started("parent", context, {
+    id: "review-child",
+    parentID: "parent",
+    agent: "validator",
+  });
+  const review = {
+    ...structured("validator", "review"),
+    taskMode: "review",
+    evidence: [{ reference: "review.log", sha256: "a".repeat(64) }],
+  };
+  protocol.result("parent", context, review, { treeHash: "a".repeat(64), gateIds: [] });
+  assert.deepEqual(protocol.snapshot("parent", "run").gates, {});
+  assert.throws(() => protocol.accept("parent", "run", "a".repeat(64)), /incomplete/);
+  const owner = protocol.admitTask(
+    "parent",
+    "owner-call",
+    "validator",
+    packet("validator", "owner"),
+  );
+  protocol.started("parent", owner.context, {
+    id: "owner-child",
+    parentID: "parent",
+    agent: "validator",
+  });
+  assert.throws(
+    () =>
+      protocol.result("parent", owner.context, structured("validator", "owner"), {
+        treeHash: "a".repeat(64),
+        gateIds: [],
+      }),
+    /gate/,
+  );
+  protocol.result("parent", owner.context, structured("validator", "owner"), {
+    treeHash: "a".repeat(64),
+    gateIds: ["gate"],
+  });
+  assert.equal(protocol.accept("parent", "run", "a".repeat(64)).accepted, true);
+});
+
+test("global fake clock enforces admitted duration at exact immutable deadline", () => {
+  let now = 100;
+  const protocol = createGlobalProtocol({ now: () => now, maxTaskTimeoutMs: 50 });
+  protocol.admitOrchestration("parent", "/var/tmp", v2GlobalWorkflow());
+  const { context } = protocol.admitTask("parent", "review-call", "validator", {
+    ...packet("validator", "review"),
+    taskMode: "review",
+  });
+  protocol.started("parent", context, {
+    id: "review-child",
+    parentID: "parent",
+    agent: "validator",
+  });
+  assert.equal(protocol.snapshot("parent", "run").attempts[0]!.deadline, 125);
+  now = 124;
+  assert.equal(protocol.snapshot("parent", "run").attempts[0]!.state, "running");
+  now = 125;
+  assert.equal(protocol.snapshot("parent", "run").attempts[0]!.state, "cancel-requested");
+  assert.throws(
+    () =>
+      protocol.result(
+        "parent",
+        context,
+        { ...structured("validator", "review"), taskMode: "review" },
+        { treeHash: "a".repeat(64), gateIds: [] },
+      ),
+    /late/,
+  );
+  assert.equal(protocol.snapshot("parent", "run").active, 1);
+  const rejected = createGlobalProtocol({ maxTaskTimeoutMs: 24 });
+  assert.throws(
+    () => rejected.admitOrchestration("parent", "/var/tmp", v2GlobalWorkflow()),
+    /ceiling/,
+  );
+});
+
+test("v2 global final acceptance rejects advisory completion invalidated by a later writer", () => {
+  const base = workflow();
+  const spec = {
+    ...base,
+    schemaVersion: "2.0.0",
+    budgets: { mode: "unbounded" },
+    workUnits: ["a", "b", "c"].map((id) => ({
+      ...base.workUnits[0]!,
+      id,
+      acceptanceGateIds: id === "c" ? ["gate-a", "gate-b", "gate-c"] : ["gate-" + id],
+    })),
+    acceptanceGates: ["a", "b", "c"].map((id) => ({
+      ...base.acceptanceGates[0]!,
+      id: "gate-" + id,
+      workUnitIds: id === "c" ? ["c"] : [id, "c"],
+    })),
+    roleModeTaskMapping: [
+      {
+        workUnitId: "a",
+        role: "validator",
+        taskMode: "review",
+        boundedTask: "advisory",
+        gateObligations: [],
+      },
+      {
+        workUnitId: "b",
+        role: "implementer",
+        taskMode: "implementation",
+        boundedTask: "write",
+        gateObligations: [],
+      },
+      {
+        workUnitId: "c",
+        role: "validator",
+        taskMode: "validation",
+        boundedTask: "prove all",
+        gateObligations: ["gate-a", "gate-b", "gate-c"],
+      },
+    ],
+  };
+  const protocol = createGlobalProtocol();
+  protocol.admitOrchestration("parent", "/var/tmp", spec);
+  const complete = (
+    unit: string,
+    role: TaskThreadRole,
+    mode: string,
+    id: string,
+    gateIds: string[],
+  ) => {
+    const { context } = protocol.admitTask("parent", id, role, {
+      ...packet(role, id),
+      scopeKey: unit,
+      taskMode: mode,
+    });
+    protocol.started("parent", context, { id: id + "-child", parentID: "parent", agent: role });
+    protocol.result(
+      "parent",
+      context,
+      { ...structured(role, id), scopeKey: unit, taskMode: mode },
+      { treeHash: "a".repeat(64), gateIds },
+    );
+  };
+  complete("a", "validator", "review", "review", []);
+  complete("b", "implementer", "implementation", "writer", []);
+  complete("c", "validator", "validation", "owner", ["gate-a", "gate-b", "gate-c"]);
+  assert.throws(() => protocol.accept("parent", "run", "a".repeat(64)), /incomplete/);
+  complete("a", "validator", "review", "review-fresh", []);
+  assert.equal(protocol.accept("parent", "run", "a".repeat(64)).accepted, true);
+});

@@ -726,7 +726,8 @@ test("managed tools deny shell for research, unauthorized commands, and edits ou
 });
 test("managed REA static inspection requires active child, scoped spec and matching target", async () => {
     for (const role of ["researcher", "validator"]) {
-        const f = fixture(role);
+        // This checks REA scope and native command proof, not deadline expiration.
+        const f = fixture(role, 10_000);
         const target = path.join(f.root, "fixture.exe");
         fs.writeFileSync(target, "inert fixture bytes");
         Object.assign(f.spec.workUnits[0], {
@@ -1872,4 +1873,70 @@ test("cancellation retains capacity until every pending queued launch is acknowl
     await cancelled;
     assert.equal(f.abortCalls(), 2);
     assert.equal(f.managed.snapshot().runs[0].active, 0);
+});
+function managedV2Fixture() {
+    const f = fixture("validator");
+    Object.assign(f.spec, {
+        schemaVersion: "2.0.0",
+        roleModeTaskMapping: [
+            {
+                workUnitId: "a",
+                role: "validator",
+                taskMode: "review",
+                boundedTask: "advisory",
+                gateObligations: [],
+                taskTimeoutMs: 25,
+            },
+            {
+                workUnitId: "a",
+                role: "validator",
+                taskMode: "validation",
+                boundedTask: "own gate",
+                gateObligations: ["gate-a"],
+                taskTimeoutMs: 50,
+            },
+        ],
+    });
+    fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+    const { timeoutMs: _legacy, ...options } = f.options;
+    const managed = createManagedDispatch({ ...options, maxTaskTimeoutMs: 50 });
+    return { ...f, managed };
+}
+test("managed v2 advisory review needs current artifacts but closes no gates", async () => {
+    const f = managedV2Fixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "review" }, f.args({ ...f.packet(), taskMode: "review" }));
+    f.managed.sessionCreated({ id: "review-child", parentID: "parent" });
+    assert.throws(() => f.managed.verifyCommand("review-child", "true"), /command|authorized/);
+    const review = { ...f.success(), taskMode: "review" };
+    const result = f.managed.afterTask({ callID: "review" }, {
+        metadata: { sessionId: "review-child" },
+        output: formatTaskResultWrapper(JSON.stringify(review), "review-child"),
+    });
+    assert.equal(result.outcome, "success");
+    assert.deepEqual(f.managed.snapshot().runs[0].gates, {});
+    await f.managed.beforeTask({ sessionID: "parent", callID: "owner" }, f.args(f.packet("owner")));
+    f.managed.sessionCreated({ id: "owner-child", parentID: "parent" });
+    f.managed.verifyCommand("owner-child", "true");
+    const owner = { ...f.success(), delegationTaskId: "owner" };
+    f.managed.afterTask({ callID: "owner" }, {
+        metadata: { sessionId: "owner-child" },
+        output: formatTaskResultWrapper(JSON.stringify(owner), "owner-child"),
+    });
+    assert.match(f.managed.snapshot().runs[0].gates["gate-a"], /^[a-f0-9]{64}$/);
+});
+test("managed v2 forwards selected duration and ceiling without legacy override", async () => {
+    const f = managedV2Fixture();
+    await f.managed.beforeTask({ sessionID: "parent", callID: "review" }, f.args({ ...f.packet(), taskMode: "review" }));
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].deadline, 125);
+    f.managed.snapshot().runs[0].attempts[0].deadline = 999;
+    f.advance();
+    f.advance();
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "running");
+    f.advance();
+    assert.equal(f.managed.snapshot().runs[0].attempts[0].state, "cancel-requested");
+    assert.equal(f.managed.snapshot().runs[0].active, 1);
+    const rejected = managedV2Fixture();
+    const { timeoutMs: _legacy, ...options } = rejected.options;
+    const managed = createManagedDispatch({ ...options, maxTaskTimeoutMs: 24 });
+    await assert.rejects(managed.beforeTask({ sessionID: "parent", callID: "review" }, rejected.args({ ...rejected.packet(), taskMode: "review" })), /ceiling/);
 });

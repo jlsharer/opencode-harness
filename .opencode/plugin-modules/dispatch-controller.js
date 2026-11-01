@@ -74,7 +74,8 @@ function exact(value, required, optional = []) {
         Object.keys(value).some((key) => !required.includes(key) && !optional.includes(key)))
         fail("missing or unexpected normalized field");
 }
-export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only") {
+export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only", maxTaskTimeoutMs = 3600000) {
+    integer(maxTaskTimeoutMs, "timeout ceiling", 1, 3600000);
     if (!["legacy-read-only", "native-host"].includes(acceptanceGatePolicy))
         fail("invalid acceptance gate policy");
     const value = record(input, "workflow");
@@ -98,8 +99,9 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         record(value.routingMetadata, "routingMetadata");
     else if (value.routingMetadataStatus !== "absent" || Object.hasOwn(value, "routingMetadata"))
         fail("invalid routing metadata status");
-    if (value.schemaVersion !== "1.0.0")
+    if (value.schemaVersion !== "1.0.0" && value.schemaVersion !== "2.0.0")
         fail("unsupported workflow version");
+    const v2 = value.schemaVersion === "2.0.0";
     text(value.goal, "goal");
     strings(value.deliverables, "deliverables");
     strings(value.nonGoals, "nonGoals");
@@ -143,6 +145,7 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         exact(gate, ["id", "criterion", "evidenceCommand", "workUnitIds"]);
         text(gate.criterion, "criterion");
         return {
+            owner: null,
             id: id(gate.id),
             evidenceCommand: acceptanceGatePolicy === "native-host"
                 ? text(gate.evidenceCommand, "evidenceCommand")
@@ -164,7 +167,7 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
             fail("gate does not cover work unit");
     const roleModeTaskMapping = list(value.roleModeTaskMapping, "roleModeTaskMapping").map((entry) => {
         const mapping = record(entry, "mapping");
-        exact(mapping, ["workUnitId", "role", "taskMode", "boundedTask"]);
+        exact(mapping, ["workUnitId", "role", "taskMode", "boundedTask", ...(v2 ? ["gateObligations"] : [])], v2 ? ["taskTimeoutMs"] : []);
         const role = text(mapping.role, "role");
         const taskMode = text(mapping.taskMode, "taskMode");
         text(mapping.boundedTask, "boundedTask");
@@ -173,7 +176,22 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         const workUnitId = id(mapping.workUnitId);
         if (!units.has(workUnitId))
             fail("unknown mapping work unit");
-        return { workUnitId, role, taskMode };
+        const gateObligations = v2
+            ? strings(mapping.gateObligations, "gateObligations", true).map(id)
+            : undefined;
+        if (gateObligations?.length && role !== "validator")
+            fail("gate owner must be a validator");
+        const taskTimeoutMs = v2
+            ? integer(mapping.taskTimeoutMs === undefined ? 300000 : mapping.taskTimeoutMs, "task timeout duration", 1, 3600000)
+            : undefined;
+        if (taskTimeoutMs !== undefined && taskTimeoutMs > maxTaskTimeoutMs)
+            fail("task timeout duration exceeds ceiling");
+        return {
+            workUnitId,
+            role,
+            taskMode,
+            ...(v2 ? { gateObligations: gateObligations, taskTimeoutMs: taskTimeoutMs } : {}),
+        };
     });
     const mappingKeys = roleModeTaskMapping.map((m) => `${m.workUnitId}:${m.role}:${m.taskMode}`);
     if (new Set(mappingKeys).size !== mappingKeys.length ||
@@ -183,6 +201,41 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         if (unit.reaStaticInspection &&
             !roleModeTaskMapping.some((mapping) => mapping.workUnitId === unit.id && ["researcher", "validator"].includes(mapping.role)))
             fail("REA static inspection requires a researcher or validator work unit");
+    const associationDiagnostics = [];
+    for (const gate of acceptanceGates) {
+        for (const unit of workUnits) {
+            const unitDeclares = unit.acceptanceGateIds.includes(gate.id);
+            const gateDeclares = gate.workUnitIds.includes(unit.id);
+            if (unitDeclares !== gateDeclares)
+                associationDiagnostics.push({
+                    workUnitId: unit.id,
+                    gateId: gate.id,
+                    unitDeclares,
+                    gateDeclares,
+                });
+        }
+    }
+    if (v2 && associationDiagnostics.length)
+        fail("unit/gate association declarations disagree");
+    if (v2) {
+        for (const mapping of roleModeTaskMapping)
+            for (const obligation of mapping.gateObligations) {
+                const gate = acceptanceGates.find((g) => g.id === obligation);
+                if (!gate)
+                    fail("unknown gate obligation");
+                if (!gate.workUnitIds.includes(mapping.workUnitId))
+                    fail("gate owner unit is uncovered");
+                if (gate.owner)
+                    fail("duplicate gate owner");
+                gate.owner = {
+                    workUnitId: mapping.workUnitId,
+                    role: mapping.role,
+                    taskMode: mapping.taskMode,
+                };
+            }
+        if (acceptanceGates.some((g) => !g.owner))
+            fail("missing gate owner");
+    }
     const dag = record(value.dag, "dag");
     exact(dag, ["dependencies", "parallelism"]);
     const dependencies = list(dag.dependencies, "dependencies", true).map((entry) => {
@@ -267,7 +320,9 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         fail("invalid scope approval");
     if (scope.policy !== "deny")
         fail("scope expansion is unsupported; register a separately reviewed workflow");
-    return {
+    return deepFreeze({
+        schemaVersion: value.schemaVersion,
+        associationDiagnostics,
         orchestrationId: id(value.orchestrationId),
         validationInputs: value.validationInputs === undefined
             ? []
@@ -278,7 +333,23 @@ export function validateWorkflow(input, acceptanceGatePolicy = "legacy-read-only
         roleModeTaskMapping,
         dag: { dependencies, parallelism: { mode: parallel.mode } },
         budgets: normalizedBudgets,
-    };
+    });
+}
+/** Shared authoritative v2 owner relation; v1 deliberately retains unit-declared duties. */
+export function gateObligationsFor(spec, mapping) {
+    const declared = spec.roleModeTaskMapping.find((m) => m.workUnitId === mapping.workUnitId &&
+        m.role === mapping.role &&
+        m.taskMode === mapping.taskMode);
+    if (!declared)
+        fail("undeclared obligation mapping");
+    if (mapping.role !== "validator")
+        return Object.freeze([]);
+    const unit = spec.workUnits.find((u) => u.id === mapping.workUnitId);
+    return Object.freeze(spec.acceptanceGates.filter((g) => spec.schemaVersion === "2.0.0"
+        ? g.owner?.workUnitId === mapping.workUnitId &&
+            g.owner.role === mapping.role &&
+            g.owner.taskMode === mapping.taskMode
+        : unit.acceptanceGateIds.includes(g.id)));
 }
 function deepFreeze(value) {
     if (value && typeof value === "object") {
@@ -288,7 +359,10 @@ function deepFreeze(value) {
     return value;
 }
 export function createDispatchController(input, options = {}) {
-    const spec = deepFreeze(validateWorkflow(input, options.acceptanceGatePolicy));
+    const maxTaskTimeoutMs = integer(options.maxTaskTimeoutMs === undefined ? 3600000 : options.maxTaskTimeoutMs, "timeout ceiling", 1, 3600000);
+    const spec = validateWorkflow(input, options.acceptanceGatePolicy, maxTaskTimeoutMs);
+    if (spec.schemaVersion === "2.0.0" && Object.hasOwn(options, "timeoutMs"))
+        fail("legacy timeoutMs conflicts with v2 workflow");
     const now = options.now ?? Date.now;
     const maxConcurrent = integer(options.maxConcurrent ?? 1, "capacity", 1, 16);
     const maxConcurrentByRole = Object.fromEntries(ROLES.map((role) => [
@@ -310,15 +384,18 @@ export function createDispatchController(input, options = {}) {
     const unitDone = (unit) => spec.roleModeTaskMapping
         .filter((m) => m.workUnitId === unit)
         .every((m) => completed.has(`${unit}:${m.role}:${m.taskMode}`));
-    function sweep() {
+    function sweep(observedAt = now()) {
         for (const attempt of active())
-            if (attempt.state !== "cancel-requested" && now() >= attempt.deadline) {
+            if (attempt.state !== "cancel-requested" && observedAt >= attempt.deadline) {
                 attempt.state = "cancel-requested";
                 attempt.reason = "timeout: worker termination must be reconciled";
             }
     }
     function reserve(request) {
-        sweep();
+        const startedAt = now();
+        if (!Number.isSafeInteger(startedAt))
+            fail("invalid reservation clock");
+        sweep(startedAt);
         if (interrupted)
             fail("ephemeral workflow interrupted; cannot resume");
         id(request.id);
@@ -371,7 +448,7 @@ export function createDispatchController(input, options = {}) {
                 const definition = spec.acceptanceGates.find((g) => g.id === gate);
                 const closesGate = request.role === "validator" &&
                     definition.workUnitIds.includes(request.workUnitId) &&
-                    spec.workUnits.find((u) => u.id === request.workUnitId).acceptanceGateIds.includes(gate);
+                    gateObligationsFor(spec, request).some((g) => g.id === gate);
                 if (!gates.has(gate) && !closesGate)
                     fail("dependency gate not ready");
             }
@@ -401,6 +478,10 @@ export function createDispatchController(input, options = {}) {
             (attempts.size + continuations >= spec.budgets.maxTotalLeafAgents ||
                 counts[request.role] >= spec.budgets.maxLeafAgentsByRole[request.role]))
             fail("agent budget exhausted");
+        const taskTimeoutMs = spec.schemaVersion === "2.0.0" ? sequence[index].taskTimeoutMs : timeoutMs;
+        const deadline = startedAt + taskTimeoutMs;
+        if (!Number.isSafeInteger(deadline))
+            fail("unsafe deadline arithmetic");
         // All validation occurs before this synchronous reservation; there is no await race.
         owner = request.parentSessionId;
         const nextGeneration = startsCycle ? generation + 1 : generation;
@@ -416,7 +497,7 @@ export function createDispatchController(input, options = {}) {
         // A writer begins a new tree revision. Dependency authorization was checked above;
         // prior acceptance must now be re-established on that revision, without charging
         // a remediation cycle merely for successful validators rerunning after new work.
-        if (request.role === "implementer" && gates.size) {
+        if (request.role === "implementer" && (spec.schemaVersion === "2.0.0" || gates.size)) {
             gates.clear();
             for (const mapping of spec.roleModeTaskMapping) {
                 const mappingKey = `${mapping.workUnitId}:${mapping.role}:${mapping.taskMode}`;
@@ -430,8 +511,9 @@ export function createDispatchController(input, options = {}) {
         const attempt = {
             ...request,
             state: "running",
-            startedAt: now(),
-            deadline: now() + timeoutMs,
+            taskTimeoutMs,
+            startedAt,
+            deadline,
         };
         attempts.set(request.id, attempt);
         return { ...attempt };
@@ -448,10 +530,13 @@ export function createDispatchController(input, options = {}) {
         if (attempt.state !== "running")
             fail("duplicate, cancelled, or late completion");
         if (outcome === "success" && attempt.role === "validator") {
-            if (!proof.treeHash || !/^[a-f0-9]{64}$/.test(proof.treeHash) || !proof.gateIds?.length)
+            if (!proof.treeHash ||
+                !/^[a-f0-9]{64}$/.test(proof.treeHash) ||
+                !Array.isArray(proof.gateIds))
                 fail("independent tree-bound gate evidence required");
-            const required = spec.workUnits.find((u) => u.id === attempt.workUnitId).acceptanceGateIds;
-            if (proof.gateIds.some((g) => !required.includes(g)) ||
+            const required = gateObligationsFor(spec, attempt).map((g) => g.id);
+            if ((spec.schemaVersion === "2.0.0" && new Set(proof.gateIds).size !== proof.gateIds.length) ||
+                proof.gateIds.some((g) => !required.includes(g)) ||
                 required.some((g) => !proof.gateIds.includes(g)))
                 fail("gate evidence mismatch");
             for (const gate of proof.gateIds)
@@ -519,6 +604,8 @@ export function createDispatchController(input, options = {}) {
     function snapshot() {
         sweep();
         return {
+            maxTaskTimeoutMs,
+            associationDiagnostics: spec.associationDiagnostics.map((d) => ({ ...d })),
             mode: "ephemeral",
             resumable: false,
             interrupted,
@@ -531,6 +618,7 @@ export function createDispatchController(input, options = {}) {
     }
     return {
         spec,
+        mappingsComplete: () => spec.workUnits.every((u) => unitDone(u.id)),
         reserve,
         complete,
         clarification,
@@ -542,5 +630,12 @@ export function createDispatchController(input, options = {}) {
         sweep,
         interrupt,
         snapshot,
+        diagnostics: () => ({
+            maxTaskTimeoutMs,
+            attempts: [...attempts.values()].map((a) => ({
+                ...a,
+                remainingMs: Math.max(0, a.deadline - now()),
+            })),
+        }),
     };
 }

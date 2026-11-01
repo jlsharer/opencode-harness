@@ -1,3 +1,4 @@
+import { gateObligationsFor } from "./dispatch-controller.ts";
 import { randomUUID } from "node:crypto";
 import { mkdir, lstat, open, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -169,12 +170,14 @@ function nativeTextContent(content: unknown): string {
 export function createGlobalNativeAdapter(
   ctx: GlobalNativeContext,
   options: {
+    now?: () => number;
+    maxTaskTimeoutMs?: number;
     traceRoot?: string;
     persist?: (record: Record<string, unknown>) => Promise<void>;
     collision?: () => Promise<string | null>;
   } = {},
 ) {
-  const protocol = createGlobalProtocol();
+  const protocol = createGlobalProtocol(options);
   let disposed = false;
   const calls = new Map<
     string,
@@ -430,7 +433,11 @@ export function createGlobalNativeAdapter(
       });
       protocol.result(call.parentID, call.context, decoded, {
         treeHash: evidence.sha256,
-        gateIds: spec.workUnits.find((u) => u.id === call.context.scopeKey)!.acceptanceGateIds,
+        gateIds: gateObligationsFor(spec, {
+          workUnitId: call.context.scopeKey,
+          role: call.context.role,
+          taskMode: call.context.taskMode,
+        }).map((g) => g.id),
       });
     } catch (error) {
       const reason = error instanceof Error ? error.message : "managed result rejected";

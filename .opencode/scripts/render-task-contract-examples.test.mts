@@ -10,6 +10,10 @@ import {
   validateTaskPacket,
   validateTaskResult,
 } from "../src/plugin-modules/task-contracts.ts";
+import {
+  createDispatchController,
+  gateObligationsFor,
+} from "../src/plugin-modules/dispatch-controller.ts";
 import type { TaskThreadRole } from "../src/plugin-modules/task-thread-policy.ts";
 import {
   buildTaskContractExamples,
@@ -88,7 +92,12 @@ test("Markdown JSON fences contain exactly the executable shapes and examples", 
   const objects = [...markdown.matchAll(/```json\n([\s\S]*?)\n```/g)].map((match) =>
     JSON.parse(match[1]!),
   );
-  const expected: unknown[] = [];
+  const workflows = objects.filter((object) => object.schemaVersion);
+  assert.deepEqual(
+    workflows.map((object) => object.schemaVersion),
+    ["1.0.0", "2.0.0"],
+  );
+  const expected: unknown[] = [...workflows];
   for (const role of Object.keys(TASK_MODES) as TaskThreadRole[]) {
     expected.push(taskContractShape(role));
     for (const example of buildTaskContractExamples().filter(
@@ -208,6 +217,7 @@ test("executable contract additions with unknown fields or types fail explicitly
         "scripts/render-task-contract-examples.mts",
         "src/plugin-modules/task-contracts.ts",
         "src/plugin-modules/task-thread-policy.ts",
+        "src/plugin-modules/dispatch-controller.ts",
       ])
         cpSync(path.join(sourceRoot, file), path.join(root, file));
       const sourcePath = path.join(root, mutation.file);
@@ -227,4 +237,70 @@ test("executable contract additions with unknown fields or types fail explicitly
       rmSync(root, { recursive: true, force: true });
     }
   }
+});
+
+test("rendered workflows admit advisory review and preserve v1 gate duties", () => {
+  const workflows = [...renderTaskContractExamples().matchAll(/```json\n([\s\S]*?)\n```/g)]
+    .map((m) => JSON.parse(m[1]!))
+    .filter((o) => o.schemaVersion);
+  assert.equal(workflows.length, 2);
+  for (const input of workflows) {
+    const controller = createDispatchController(input);
+    const validator = controller.spec.roleModeTaskMapping.find((m) => m.role === "validator")!;
+    assert.deepEqual(
+      gateObligationsFor(controller.spec, validator).map((g) => g.id),
+      input.schemaVersion === "2.0.0" ? [] : ["parser-tests"],
+    );
+    if (input.schemaVersion === "2.0.0") {
+      assert.equal(validator.taskTimeoutMs, 300000);
+      assert.equal(controller.spec.roleModeTaskMapping.at(-1)!.taskTimeoutMs, 600000);
+      assert.deepEqual(controller.spec.acceptanceGates[0]!.owner, {
+        workUnitId: "parser",
+        role: "validator",
+        taskMode: "validation",
+      });
+    }
+  }
+});
+
+test("workflow schema selects exact mapping fields independently for v1 and v2", () => {
+  const schema = JSON.parse(
+    readFileSync(new URL("../schemas/orchestration-input.schema.json", import.meta.url), "utf8"),
+  );
+  assert.deepEqual(schema.properties.schemaVersion.enum, ["1.0.0", "2.0.0"]);
+  const branch = schema.allOf[1];
+  assert.equal(branch.if.properties.schemaVersion.const, "2.0.0");
+  assert.deepEqual(
+    branch.then.properties.roleModeTaskMapping.items.oneOf.map(
+      (entry: { $ref: string }) => entry.$ref,
+    ),
+    [
+      "#/$defs/researchMappingV2",
+      "#/$defs/plannerMappingV2",
+      "#/$defs/implementerMappingV2",
+      "#/$defs/validatorMappingV2",
+    ],
+  );
+  assert.deepEqual(
+    branch.else.properties.roleModeTaskMapping.items.oneOf.map(
+      (entry: { $ref: string }) => entry.$ref,
+    ),
+    [
+      "#/$defs/researchMapping",
+      "#/$defs/plannerMapping",
+      "#/$defs/implementerMapping",
+      "#/$defs/validatorMapping",
+    ],
+  );
+  assert.equal(schema.$defs.mappingBase.additionalProperties, false);
+  assert.equal(schema.$defs.mappingBase.properties.gateObligations, undefined);
+  assert.equal(schema.$defs.mappingBase.properties.taskTimeoutMs, undefined);
+  assert.ok(schema.$defs.mappingBaseV2.required.includes("gateObligations"));
+  assert.equal(schema.$defs.mappingBaseV2.additionalProperties, false);
+  assert.deepEqual(schema.$defs.mappingBaseV2.properties.taskTimeoutMs, {
+    type: "integer",
+    minimum: 1,
+    maximum: 3600000,
+    default: 300000,
+  });
 });

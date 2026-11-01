@@ -438,9 +438,11 @@ export async function watchV2SessionEvents(subscribe, signal, onEvent, onConnect
 export function v2HarnessToolCodeMode(name) {
     return name === "harness_dispatch_status_code";
 }
-export const V2NativePlugin = {
-    id: "opencode-harness.v2",
-    async setup(context) {
+export function createV2NativePlugin(options = {}) {
+    return { id: "opencode-harness.v2", setup: v2NativeSetup({ ...options }) };
+}
+function v2NativeSetup(trustedOptions) {
+    return async function setup(context) {
         const workspaceRoot = process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
         const runtimeRoot = process.env.OPENCODE_HARNESS_RUNTIME_ROOT;
         const traceRoot = process.env.OPENCODE_HARNESS_TRACE_ROOT;
@@ -523,6 +525,7 @@ export const V2NativePlugin = {
             }
             : undefined;
         const dispatch = createManagedDispatch({
+            ...trustedOptions,
             workspaceRoot,
             traceRoot,
             runtimeRoot,
@@ -1239,5 +1242,6 @@ export const V2NativePlugin = {
             void activation;
             dispatch.interruptIfCurrent(undefined, "V2 native plugin unloaded");
         };
-    },
-};
+    };
+}
+export const V2NativePlugin = createV2NativePlugin();

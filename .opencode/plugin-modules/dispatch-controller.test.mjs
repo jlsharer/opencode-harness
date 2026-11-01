@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createDispatchController, validateWorkflow, safeScopePath, withinScope, } from "./dispatch-controller.js";
+import { createDispatchController, gateObligationsFor, validateWorkflow, safeScopePath, withinScope, } from "./dispatch-controller.js";
 export function validWorkflow() {
     return {
         schemaVersion: "1.0.0",
@@ -593,4 +593,223 @@ test("distinct integration deliverable adds one dispatch and still requires inde
     c.reserve(request("validate", "a", "validator", "validation"));
     c.complete("validate", "success", { treeHash: hash, gateIds: ["gate-a"] });
     assert.equal(c.snapshot().attempts.length, 3);
+});
+// A v2 review with no duties must not inherit the unit's gate authority.
+export function v2Workflow() {
+    const spec = validWorkflow();
+    return {
+        ...spec,
+        schemaVersion: "2.0.0",
+        roleModeTaskMapping: spec.roleModeTaskMapping.flatMap((m) => [
+            {
+                ...m,
+                role: "validator",
+                taskMode: "review",
+                gateObligations: [],
+                taskTimeoutMs: 25,
+            },
+            {
+                ...m,
+                role: "validator",
+                taskMode: "validation",
+                gateObligations: ["gate-" + m.workUnitId],
+                taskTimeoutMs: 50,
+            },
+        ]),
+    };
+}
+test("v2 advisory review does not close or bypass gates", () => {
+    const spec = v2Workflow();
+    spec.dag.dependencies = [{ workUnitId: "b", dependsOn: ["a"] }];
+    spec.acceptanceGates[0].workUnitIds.push("b");
+    spec.workUnits[1].acceptanceGateIds.push("gate-a");
+    spec.roleModeTaskMapping.find((m) => m.workUnitId === "a" && m.taskMode === "validation").gateObligations = [];
+    spec.roleModeTaskMapping
+        .find((m) => m.workUnitId === "b" && m.taskMode === "validation")
+        .gateObligations.push("gate-a");
+    const controller = createDispatchController(spec);
+    controller.reserve(request("review-a", "a", "validator", "review"));
+    controller.complete("review-a", "success", { treeHash: hash, gateIds: [] });
+    controller.reserve(request("validate-a", "a", "validator", "validation"));
+    controller.complete("validate-a", "success", { treeHash: hash, gateIds: [] });
+    assert.deepEqual(controller.snapshot().gates, {});
+    assert.throws(() => controller.reserve(request("review-b", "b", "validator", "review")), /dependency gate/);
+});
+test("v2 gate owners are unique and complete", () => {
+    assert.equal(createDispatchController(v2Workflow()).spec.schemaVersion, "2.0.0");
+    for (const mutate of [
+        (s) => {
+            s.roleModeTaskMapping[1].gateObligations = [];
+        },
+        (s) => {
+            s.roleModeTaskMapping[0].gateObligations = ["gate-a"];
+        },
+        (s) => {
+            s.roleModeTaskMapping[1].gateObligations.push("gate-a");
+        },
+        (s) => {
+            s.roleModeTaskMapping[1].gateObligations = ["unknown"];
+        },
+        (s) => {
+            s.roleModeTaskMapping[1].role = "researcher";
+            s.roleModeTaskMapping[1].taskMode = "research";
+        },
+        (s) => {
+            s.roleModeTaskMapping[1].gateObligations = ["gate-b"];
+        },
+    ]) {
+        const spec = v2Workflow();
+        mutate(spec);
+        assert.throws(() => createDispatchController(spec));
+    }
+});
+test("v2 association edges agree", () => {
+    const spec = v2Workflow();
+    spec.acceptanceGates[0].workUnitIds.push("b");
+    assert.throws(() => createDispatchController(spec), /association/);
+    const legacy = validWorkflow();
+    legacy.acceptanceGates[0].workUnitIds.push("b");
+    assert.deepEqual(createDispatchController(legacy).spec.associationDiagnostics, [
+        { workUnitId: "b", gateId: "gate-a", unitDeclares: false, gateDeclares: true },
+    ]);
+});
+test("admitted duration survives clarification and snapshot mutation", () => {
+    let now = 100;
+    const spec = v2Workflow();
+    const controller = createDispatchController(spec, { now: () => now });
+    const first = controller.reserve(request("review", "a", "validator", "review"));
+    assert.equal(first.taskTimeoutMs, 25);
+    assert.equal(first.deadline, 125);
+    spec.roleModeTaskMapping[0].taskTimeoutMs = 999;
+    first.deadline = 999;
+    controller.snapshot().attempts[0].deadline = 999;
+    controller.clarification("review");
+    now = 124;
+    controller.continueClarification("review");
+    assert.equal(controller.snapshot().attempts[0].state, "running");
+    now = 125;
+    assert.equal(controller.snapshot().attempts[0].state, "cancel-requested");
+    assert.equal(controller.snapshot().active, 1);
+    assert.throws(() => controller.complete("review", "success", { gateIds: [], treeHash: hash }), /late/);
+});
+test("ceiling rejects without clamping", () => {
+    for (const duration of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, NaN, Infinity, 3600001]) {
+        const spec = v2Workflow();
+        spec.roleModeTaskMapping[0].taskTimeoutMs = duration;
+        assert.throws(() => createDispatchController(spec), /timeout|duration/i);
+    }
+    const omitted = v2Workflow();
+    for (const m of omitted.roleModeTaskMapping)
+        Reflect.deleteProperty(m, "taskTimeoutMs");
+    assert.equal(createDispatchController(omitted).spec.roleModeTaskMapping[0].taskTimeoutMs, 300000);
+    assert.throws(() => createDispatchController(omitted, { maxTaskTimeoutMs: 299999 }), /ceiling/);
+    assert.throws(() => createDispatchController(v2Workflow(), { timeoutMs: 0 }), /v2|legacy/);
+    for (const ceiling of [0, -1, 1.5, NaN, Infinity, 3600001])
+        assert.throws(() => createDispatchController(v2Workflow(), { maxTaskTimeoutMs: ceiling }));
+    for (const duration of [1, 3600000]) {
+        const spec = v2Workflow();
+        spec.roleModeTaskMapping[0].taskTimeoutMs = duration;
+        assert.equal(createDispatchController(spec, { now: () => 100 }).reserve(request("review", "a", "validator", "review")).deadline, 100 + duration);
+    }
+});
+test("deadline arithmetic fails atomically", () => {
+    let time = NaN;
+    const controller = createDispatchController(v2Workflow(), { now: () => time });
+    for (time of [NaN, Infinity, 1.5, Number.MAX_SAFE_INTEGER, Number.MAX_SAFE_INTEGER + 1]) {
+        assert.throws(() => controller.reserve(request("review", "a", "validator", "review")), /clock|deadline/);
+        assert.equal(controller.snapshot().attempts.length, 0);
+        assert.equal(controller.snapshot().counts.validator, 0);
+    }
+    time = 100;
+    assert.equal(controller.reserve(request("review", "a", "validator", "review")).deadline, 125);
+});
+test("v2 exact owner closure and immutable lookup", () => {
+    const controller = createDispatchController(v2Workflow());
+    const mapping = { workUnitId: "a", role: "validator", taskMode: "validation" };
+    const gates = gateObligationsFor(controller.spec, mapping);
+    assert.deepEqual(gates.map((g) => g.id), ["gate-a"]);
+    assert.throws(() => {
+        gates.push({});
+    });
+    assert.throws(() => {
+        gates[0].owner.workUnitId = "b";
+    });
+    controller.reserve(request("review", "a", "validator", "review"));
+    controller.complete("review", "success", { treeHash: hash, gateIds: [] });
+    controller.reserve(request("owner", "a", "validator", "validation"));
+    for (const gateIds of [[], ["gate-a", "gate-b"], ["gate-a", "gate-a"]])
+        assert.throws(() => controller.complete("owner", "success", { treeHash: hash, gateIds }));
+    controller.complete("owner", "success", { treeHash: hash, gateIds: ["gate-a"] });
+    assert.deepEqual(controller.snapshot().gates, { "gate-a": hash });
+});
+test("v2 exact shared-gate owner alone may cross dependency while advisory and ordinary consumers wait", () => {
+    const spec = v2Workflow();
+    spec.roleModeTaskMapping = [
+        { ...spec.roleModeTaskMapping[0], role: "researcher", taskMode: "research" },
+        { ...spec.roleModeTaskMapping[3], gateObligations: ["gate-a", "gate-b"] },
+        ...spec.roleModeTaskMapping.slice(4),
+    ];
+    spec.workUnits[1].acceptanceGateIds.push("gate-a");
+    spec.acceptanceGates[0].workUnitIds.push("b");
+    spec.dag.dependencies = [
+        { workUnitId: "b", dependsOn: ["a"] },
+        { workUnitId: "c", dependsOn: ["a"] },
+    ];
+    const controller = createDispatchController(spec);
+    controller.reserve(request());
+    controller.complete("attempt-a", "success");
+    assert.throws(() => controller.reserve(request("review-c", "c", "validator", "review")), /dependency gate/);
+    controller.reserve(request("owner-b", "b", "validator", "validation"));
+    assert.throws(() => controller.complete("owner-b", "success", { treeHash: hash, gateIds: ["gate-b"] }), /mismatch/);
+    controller.complete("owner-b", "success", { treeHash: hash, gateIds: ["gate-a", "gate-b"] });
+    controller.reserve(request("review-c", "c", "validator", "review"));
+});
+test("v2 writer invalidates completed advisory review even before any gate closed", () => {
+    const spec = v2Workflow();
+    spec.roleModeTaskMapping = [
+        ...spec.roleModeTaskMapping.slice(0, 2),
+        { ...spec.roleModeTaskMapping[2], role: "implementer", taskMode: "implementation" },
+        spec.roleModeTaskMapping[3],
+        ...spec.roleModeTaskMapping.slice(4),
+    ];
+    const controller = createDispatchController(spec);
+    controller.reserve(request("review-a", "a", "validator", "review"));
+    controller.complete("review-a", "success", { treeHash: hash, gateIds: [] });
+    controller.reserve(request("writer-b", "b", "implementer", "implementation"));
+    controller.complete("writer-b", "success");
+    assert.throws(() => controller.reserve(request("owner-a", "a", "validator", "validation")), /prior task mode/);
+    controller.reserve(request("review-a-fresh", "a", "validator", "review"));
+});
+test("versioned mapping fields reject omissions, unknown fields and v1 additions", () => {
+    for (const field of ["gateObligations", "taskTimeoutMs"]) {
+        const legacy = validWorkflow();
+        Object.assign(legacy.roleModeTaskMapping[0], {
+            [field]: field === "gateObligations" ? [] : 25,
+        });
+        assert.throws(() => createDispatchController(legacy), /unexpected/);
+    }
+    const missing = v2Workflow();
+    Reflect.deleteProperty(missing.roleModeTaskMapping[0], "gateObligations");
+    assert.throws(() => createDispatchController(missing), /normalized field/);
+    const extra = v2Workflow();
+    Object.assign(extra.roleModeTaskMapping[0], { arbitrary: true });
+    assert.throws(() => createDispatchController(extra), /normalized field/);
+});
+test("reservation samples the clock once and retry preserves admitted duration", () => {
+    let now = 100, samples = 0;
+    const controller = createDispatchController(v2Workflow(), {
+        now: () => {
+            samples++;
+            return now;
+        },
+    });
+    controller.reserve(request("review", "a", "validator", "review"));
+    assert.equal(samples, 1);
+    controller.complete("review", "failed");
+    now = 110;
+    const retry = controller.reserve(request("retry", "a", "validator", "review"));
+    assert.equal(retry.taskTimeoutMs, 25);
+    assert.equal(retry.deadline, 135);
+    assert.equal(controller.diagnostics().maxTaskTimeoutMs, 3600000);
+    assert.equal(controller.diagnostics().attempts[1].remainingMs, 25);
 });

@@ -1,3 +1,4 @@
+import { gateObligationsFor } from "./dispatch-controller.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, lstat, open, readFile } from "node:fs/promises";
 import path from "node:path";
@@ -81,7 +82,7 @@ function nativeTextContent(content) {
     return block.text;
 }
 export function createGlobalNativeAdapter(ctx, options = {}) {
-    const protocol = createGlobalProtocol();
+    const protocol = createGlobalProtocol(options);
     let disposed = false;
     const calls = new Map();
     const traceRoot = options.traceRoot ??
@@ -303,7 +304,11 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             });
             protocol.result(call.parentID, call.context, decoded, {
                 treeHash: evidence.sha256,
-                gateIds: spec.workUnits.find((u) => u.id === call.context.scopeKey).acceptanceGateIds,
+                gateIds: gateObligationsFor(spec, {
+                    workUnitId: call.context.scopeKey,
+                    role: call.context.role,
+                    taskMode: call.context.taskMode,
+                }).map((g) => g.id),
             });
         }
         catch (error) {

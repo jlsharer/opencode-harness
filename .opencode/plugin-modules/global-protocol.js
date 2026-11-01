@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { lstat, open } from "node:fs/promises";
 import path from "node:path";
-import { createDispatchController, safeScopePath, withinScope } from "./dispatch-controller.js";
+import { createDispatchController, gateObligationsFor, safeScopePath, withinScope, } from "./dispatch-controller.js";
 import { validateTaskPacket, validateTaskResult } from "./task-contracts.js";
 export const GLOBAL_PROFILE_VERSION = "1.0.0";
 export const NATIVE_SOURCE_COMMIT = "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824";
@@ -67,7 +67,8 @@ export async function declaredFileEvidence(cwd, files) {
     return { records, sha256: createHash("sha256").update(JSON.stringify(records)).digest("hex") };
 }
 /** Ephemeral authorization is never restored from traces, context or compaction. */
-export function createGlobalProtocol() {
+export function createGlobalProtocol(options = {}) {
+    const trustedOptions = { ...options };
     const runs = new Map();
     const children = new Set();
     const key = (parentID, id) => JSON.stringify([parentID, id]);
@@ -81,7 +82,10 @@ export function createGlobalProtocol() {
         identifier(parentID);
         if (!path.isAbsolute(cwd) || path.resolve(cwd) !== cwd)
             throw new Error("invalid native cwd");
-        const controller = createDispatchController(spec, { acceptanceGatePolicy: "native-host" });
+        const controller = createDispatchController(spec, {
+            ...trustedOptions,
+            acceptanceGatePolicy: "native-host",
+        });
         const evidenceFiles = declaredFiles ?? [
             ...controller.spec.allowedPaths,
             ...controller.spec.validationInputs,
@@ -191,7 +195,14 @@ export function createGlobalProtocol() {
             return decoded;
         }
         if (decoded.outcome === "success" && context.role === "validator") {
-            const gates = owner.controller.spec.acceptanceGates.filter((g) => g.workUnitIds.includes(context.scopeKey));
+            // V1 deliberately retains historical reverse-edge command proof. V2 uses exact owners.
+            const gates = owner.controller.spec.schemaVersion === "1.0.0"
+                ? owner.controller.spec.acceptanceGates.filter((g) => g.workUnitIds.includes(context.scopeKey))
+                : gateObligationsFor(owner.controller.spec, {
+                    workUnitId: context.scopeKey,
+                    role: context.role,
+                    taskMode: context.taskMode,
+                });
             if (gates.some((g) => !decoded.evidence.some((e) => e.command === g.evidenceCommand && e.exitCode === 0 && e.sha256 === proof.treeHash)))
                 throw new Error("command-backed tree-bound gate evidence required");
         }
@@ -234,7 +245,14 @@ export function createGlobalProtocol() {
     function accept(parentID, id, treeHash) {
         const owner = run(parentID, id);
         const state = owner.controller.snapshot();
+        if (owner.controller.spec.associationDiagnostics.length) {
+            const details = owner.controller.spec.associationDiagnostics
+                .map((d) => `unit ${d.workUnitId}, gate ${d.gateId}: unitDeclares=${d.unitDeclares}, gateDeclares=${d.gateDeclares}`)
+                .join("; ");
+            throw new Error(`independent acceptance incomplete: inconsistent v1 association declarations (${details}); legacy unit proof does not establish global acceptance`);
+        }
         if (owner.accepted ||
+            (owner.controller.spec.schemaVersion === "2.0.0" && !owner.controller.mappingsComplete()) ||
             state.active ||
             [...owner.tasks.values()].some((t) => ["admitted", "running", "awaiting-guidance", "cancelled"].includes(t.state)) ||
             owner.controller.spec.roleModeTaskMapping.some((m) => ![...owner.tasks.values()].some((t) => t.context.scopeKey === m.workUnitId &&
@@ -256,6 +274,7 @@ export function createGlobalProtocol() {
         cancel,
         accept,
         snapshot: (parentID, id) => run(parentID, id).controller.snapshot(),
+        diagnostics: (parentID, id) => run(parentID, id).controller.diagnostics(),
         evidenceFiles: (parentID, id) => [...run(parentID, id).evidenceFiles],
         cwd: (parentID, id) => run(parentID, id).cwd,
         spec: (parentID, id) => run(parentID, id).controller.spec,
