@@ -796,6 +796,48 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
       await delegationContext(event);
       handoff(event, "context");
     });
+    const observeTerminal = (
+      view: NonNullable<ReturnType<typeof dispatch.currentTaskView>>,
+      nativeState?: unknown,
+      diagnostic?: string,
+    ) => {
+      const snapshot = dispatch.snapshot();
+      const run = snapshot.runs.find((candidate) =>
+        candidate.attempts.some((attempt) => attempt.id === view.delegationTaskId),
+      );
+      const attempt = run?.attempts.find((item) => item.id === view.delegationTaskId);
+      if (!attempt || (attempt.state === "running" && !snapshot.stopped)) return false;
+      // A concurrent observer must not occupy the immutable diagnostic path
+      // before the rejecting reconciliation records its original reason.
+      if (snapshot.stopped && !diagnostic) return true;
+      try {
+        const directory = path.join(
+          traceRoot,
+          "orchestrations",
+          view.orchestrationId,
+          "validation",
+        );
+        fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+        fs.writeFileSync(
+          path.join(directory, `${view.delegationTaskId}-v2-terminal-observation.json`),
+          JSON.stringify({
+            kind: "v2-background-terminal-observation",
+            acceptanceProof: false,
+            orchestrationId: view.orchestrationId,
+            delegationTaskId: view.delegationTaskId,
+            nativeState,
+            controllerState: attempt.state,
+            active: run!.active,
+            stopped: snapshot.stopped,
+            ...(diagnostic ? { diagnostic } : {}),
+          }) + "\n",
+          { flag: "wx", mode: 0o600 },
+        );
+      } catch {
+        // Coordination only; persistence cannot change acceptance or the stop reason.
+      }
+      return true;
+    };
     const backgroundObservers = new Set<ReturnType<typeof setInterval>>();
     let ready = false;
     let activationFailed = false;
@@ -821,43 +863,21 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
             void dispatch
               .reconcileBackground(metadata.childID)
               .then(() => {
-                const run = dispatch
-                  .snapshot()
-                  .runs.find((candidate) =>
-                    candidate.attempts.some((attempt) => attempt.id === view.delegationTaskId),
-                  );
-                const attempt = run?.attempts.find((item) => item.id === view.delegationTaskId);
-                if (!attempt || attempt.state === "running") return;
-                const filename = path.join(
-                  traceRoot,
-                  "orchestrations",
-                  view.orchestrationId,
-                  "validation",
-                  `${view.delegationTaskId}-v2-terminal-observation.json`,
-                );
-                try {
-                  fs.writeFileSync(
-                    filename,
-                    JSON.stringify({
-                      kind: "v2-background-terminal-observation",
-                      acceptanceProof: false,
-                      orchestrationId: view.orchestrationId,
-                      delegationTaskId: view.delegationTaskId,
-                      nativeState: metadata.state,
-                      controllerState: attempt.state,
-                    }) + "\n",
-                    { flag: "wx", mode: 0o600 },
-                  );
-                } catch {
-                  // Coordination only; acceptance remains controller- and validator-bound.
-                }
+                observeTerminal(view, metadata.state);
               })
-              .catch(() =>
+              .catch((error: unknown) => {
+                // The host already persisted this independent synthetic message.
+                // Subscription is observational; it cannot rewrite native delivery.
                 dispatch.interruptIfCurrent(
                   event.sessionID,
                   "V2 native background terminal result rejected",
-                ),
-              );
+                );
+                observeTerminal(
+                  view,
+                  metadata.state,
+                  error instanceof Error ? error.message : "native proof unavailable",
+                );
+              });
           }
           return;
         }
@@ -958,7 +978,6 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
           sessionID: event.sessionID,
           callID: event.id,
         });
-        let failure: unknown;
         try {
           const result = event.status === "completed" ? record(event.result) : {};
           const metadata =
@@ -967,21 +986,12 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
             { sessionID: event.sessionID, callID: event.id, tool: nativeTool(event.tool) },
             { metadata },
           );
-        } catch (error) {
-          failure = error;
-          throw error;
         } finally {
-          settle(failure);
+          settle();
         }
         return;
       }
-      const priorLocal = dispatch.localRejection(event.id);
-      if (priorLocal) {
-        rejectV2Result(event, priorLocal.rejection, true);
-        return;
-      }
       const settle = dispatch.beginOwnedCallback({ sessionID: event.sessionID, callID: event.id });
-      let callbackFailure: unknown;
       let view: ReturnType<typeof dispatch.currentTaskView> = null;
       const observe = (
         outcome: string,
@@ -1061,14 +1071,8 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
               : "invalid V2 terminal result";
           }
         }
-        if (completed.outcome === "rejected" || completed.outcome === "rejected-local") {
-          rejectV2Result(
-            event,
-            completed.outcome === "rejected-local"
-              ? completed.rejection
-              : (diagnostic ?? "task result rejected"),
-            !dispatch.snapshot().stopped,
-          );
+        if (completed.outcome === "rejected") {
+          rejectV2Result(event, diagnostic ?? "task result rejected", !dispatch.snapshot().stopped);
         }
         observe(
           completed.outcome,
@@ -1084,55 +1088,22 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
             pending = true;
             void dispatch
               .reconcileBackground(childID)
-              .then((outcome) => {
-                const local = dispatch.localRejection(event.id);
-                if (local) rejectV2Result(event, local.rejection, true);
-                else if (outcome?.outcome === "rejected-local")
-                  rejectV2Result(event, outcome.rejection, true);
-                const snapshot = dispatch.snapshot();
-                const run = snapshot.runs.find((candidate) =>
-                  candidate.attempts.some((attempt) => attempt.id === current.delegationTaskId),
-                );
-                const attempt = run?.attempts.find((item) => item.id === current.delegationTaskId);
-                if (!attempt || (attempt.state === "running" && !snapshot.stopped)) return;
+              .then(() => {
+                if (!observeTerminal(current)) return;
                 clearInterval(timer);
                 backgroundObservers.delete(timer);
-                const filename = path.join(
-                  traceRoot,
-                  "orchestrations",
-                  current.orchestrationId,
-                  "validation",
-                  `${current.delegationTaskId}-v2-terminal-observation.json`,
-                );
-                try {
-                  fs.writeFileSync(
-                    filename,
-                    JSON.stringify({
-                      kind: "v2-background-terminal-observation",
-                      acceptanceProof: false,
-                      orchestrationId: current.orchestrationId,
-                      delegationTaskId: current.delegationTaskId,
-                      controllerState: attempt.state,
-                      stopped: snapshot.stopped,
-                    }) + "\n",
-                    { flag: "wx", mode: 0o600 },
-                  );
-                } catch {
-                  // Coordination only; no acceptance proof is inferred.
-                }
               })
               .catch((error: unknown) => {
                 clearInterval(timer);
                 backgroundObservers.delete(timer);
-                const local = dispatch.localRejection(event.id);
-                rejectV2Result(
-                  event,
-                  local?.rejection ??
-                    (error instanceof Error ? error.message : "native proof unavailable"),
-                  !!local,
+                dispatch.interruptIfCurrent(childID, "V2 background Job inspection rejected");
+                observeTerminal(
+                  current,
+                  undefined,
+                  error instanceof Error ? error.message : "native proof unavailable",
                 );
-                if (!local)
-                  dispatch.interruptIfCurrent(childID, "V2 background Job inspection rejected");
+                // execute.after has returned and the host copied its result. Never
+                // pretend mutating that stale launch event replaces terminal delivery.
               })
               .finally(() => {
                 pending = false;
@@ -1142,21 +1113,18 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
           backgroundObservers.add(timer);
         }
       } catch (error) {
-        callbackFailure = error;
-        const local = dispatch.localRejection(event.id);
-        if (!local)
-          dispatch.interruptIfCurrent(
-            event.sessionID,
-            "V2 native subagent completion could not be proven",
-          );
+        dispatch.interruptIfCurrent(
+          event.sessionID,
+          "V2 native subagent completion could not be proven",
+        );
         observe("result-proof-failed");
         rejectV2Result(
           event,
-          local?.rejection ?? (error instanceof Error ? error.message : "native proof unavailable"),
-          !!local,
+          error instanceof Error ? error.message : "native proof unavailable",
+          false,
         );
       } finally {
-        settle(callbackFailure);
+        settle();
       }
     });
     await context.tool.transform((editor) => {

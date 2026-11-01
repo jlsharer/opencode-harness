@@ -305,7 +305,7 @@ test("V2 fresh launch checks actual returned JobInfo identity and type", () => {
     ])
         assert.throws(() => runningV2Subagent(event, child, bad), /identity/);
 });
-test("V2 rejection removes every native success surface and preserves the original reason", () => {
+test("V2 before-return rejection replaces native result fields and preserves the original reason", () => {
     for (const local of [false, true]) {
         const event = {
             tool: "subagent",
@@ -326,4 +326,27 @@ test("V2 rejection removes every native success surface and preserves the origin
         assert.match(text, /artifact proof digest mismatched/);
         assert.match(text, local ? /failed locally/ : /stopped/);
     }
+});
+test("V2 late hook replacement cannot alter a previously copied host result", () => {
+    const event = {
+        tool: "subagent",
+        sessionID: "parent",
+        id: "call",
+        input: {},
+        status: "completed",
+        result: {
+            output: { status: "running" },
+            content: "Background launch",
+            metadata: { status: "running" },
+        },
+    };
+    const hostReturn = {
+        output: event.result.output,
+        content: event.result.content,
+        metadata: event.result.metadata,
+    };
+    rejectV2Result(event, "artifact proof digest mismatched", false);
+    assert.equal(event.result.output.status, "rejected");
+    assert.equal(hostReturn.output.status, "running");
+    assert.doesNotMatch(JSON.stringify(hostReturn), /digest mismatched|rejected/);
 });

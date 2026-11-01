@@ -9,6 +9,8 @@ import {
   parseDelegationPolicy,
   parseWorkflowRegistryCapacity,
 } from "./managed-dispatch.ts";
+import { createV2NativePlugin } from "./v2-native-plugin.ts";
+import type { V2ToolBefore, V2ToolAfter } from "./v2-dispatch-bridge.ts";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.ts";
 import { captureArtifacts, captureWorkspace } from "./acceptance-proof.ts";
 import {
@@ -2566,21 +2568,8 @@ test("managed v2 forwards selected duration and ceiling without legacy override"
 
 // Actual native JobInfo fields; the transport preserves these identities separately
 // from the lookup arguments. No generation token or globally settled hook is invented.
-async function nativeLocalFixture(
-  role: TaskThreadRole = "researcher",
-  holdLaunch = false,
-  withValidator = false,
-) {
+async function nativeTerminalFixture(role: TaskThreadRole = "researcher", holdLaunch = false) {
   const f = fixture(role, 100000);
-  if (withValidator) {
-    f.spec.roleModeTaskMapping.push({
-      workUnitId: "a",
-      role: "validator",
-      taskMode: "validation",
-      boundedTask: "Independently validate retained effects",
-    });
-    fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
-  }
   let child = "native-child";
   let job = {
     id: child,
@@ -2669,69 +2658,41 @@ async function nativeLocalFixture(
 }
 
 for (const role of ["researcher", "validator"] as const) {
-  test(`fresh native initial turn rejects ${role === "validator" ? "missing command" : "artifact"} proof locally and permits fresh remediation`, async () => {
-    const f = await nativeLocalFixture(role);
+  test(`fresh native initial turn retains stop for ${role === "validator" ? "missing command" : "artifact"} proof without delivery ownership`, async () => {
+    const f = await nativeTerminalFixture(role);
     const result = f.success();
     if (role === "researcher") result.artifacts[0]!.sha256 = "0".repeat(64);
     f.terminal(result);
-    const outcome = await f.managed.reconcileBackground("native-child");
-    assert.equal(f.managed.snapshot().stopped, false);
-    assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+    const reason = role === "validator" ? /trusted command/ : /digest mismatched/;
+    await assert.rejects(f.managed.reconcileBackground("native-child"), reason);
+    assert.equal(f.managed.snapshot().stopped, true);
+    assert.notEqual(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
     assert.equal(f.managed.snapshot().runs[0]!.gates["gate-a"], undefined);
     assert.match(
-      JSON.stringify(outcome),
-      role === "validator" ? /trusted command/ : /digest mismatched/,
+      String(f.telemetry.find((entry) => entry.event === "interrupted")?.reason),
+      reason,
     );
     await assert.rejects(
-      () =>
-        f.managed.beforeTask(
-          { sessionID: "parent", callID: "native-call" },
-          f.args(f.packet("retry")),
-        ),
-      /replay|duplicate|used/,
-    );
-    const retryAdmission = await f.start("retry", "retry-call", "retry-child");
-    assert.match(retryAdmission.prompt, /unaccepted rejected-attempt effects/);
-    const retry = { ...f.success(), delegationTaskId: "retry" };
-    if (role === "validator") f.managed.verifyCommand("retry-child", "true");
-    f.terminal(retry);
-    await f.managed.reconcileBackground("retry-child");
-    assert.equal(f.managed.snapshot().runs[0]!.attempts[1]!.state, "success");
-    assert.throws(
-      () =>
-        f.managed.afterTask(
-          { callID: "native-call" },
-          { metadata: { sessionId: "native-child" }, output: "late" },
-        ),
-      /duplicate|uncorrelated/,
+      f.start("retry", "retry-call", "retry-child"),
+      /stopped|fresh|interrupted/,
     );
   });
 }
 
 for (const mutation of [
-  "job-id",
-  "job-type",
-  "session-id",
   "parent",
   "started",
   "completion",
   "completion-missing",
   "completion-reversed",
   "cancelled",
-  "callback",
-  "callback-poison",
-  "expired",
   "spec",
   "scope",
 ] as const) {
-  test(`local artifact rejection retains stop without ${mutation} proof`, async () => {
-    const f = await nativeLocalFixture();
+  test(`native terminal rejects ${mutation} uncertainty before accepting valid output`, async () => {
+    const f = await nativeTerminalFixture();
     const result = f.success();
-    result.artifacts[0]!.sha256 = "0".repeat(64);
     f.terminal(result);
-    if (mutation === "job-id") f.job().id = "foreign";
-    if (mutation === "job-type") f.job().type = "other";
-    if (mutation === "session-id") f.session().id = "foreign";
     if (mutation === "parent") f.session().parentID = "foreign";
     if (mutation === "started") f.job().started_at = 122;
     if (mutation === "completion") f.job().completed_at = NaN;
@@ -2739,85 +2700,26 @@ for (const mutation of [
       delete (f.job() as { completed_at?: number }).completed_at;
     if (mutation === "completion-reversed") f.job().completed_at = 122;
     if (mutation === "cancelled") f.job().status = "cancelled";
-    if (mutation === "callback") f.managed.beginOwnedCallback({ callID: "native-call" });
-    if (mutation === "callback-poison")
-      f.managed.beginOwnedCallback({ callID: "native-call" })(new Error("callback failed"));
-    if (mutation === "expired") f.expire();
     if (mutation === "spec")
       fs.writeFileSync(f.specFile, JSON.stringify({ ...f.spec, goal: "changed" }));
     if (mutation === "scope") fs.writeFileSync(path.join(f.workspace, "outside.txt"), "unexpected");
-    await assert.rejects(f.managed.reconcileBackground("native-child"));
+    await assert.rejects(
+      f.managed.reconcileBackground("native-child"),
+      mutation === "parent"
+        ? /parent identity/
+        : mutation === "spec"
+          ? /workflow changed/
+          : mutation === "scope"
+            ? /scope/
+            : /Job completion/,
+    );
     assert.equal(f.managed.snapshot().stopped, true);
     assert.notEqual(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
   });
 }
 
-for (const poison of [false, true])
-  test(`native command ${poison ? "failed callback" : "pending callback"} cannot authorize local proof rejection`, async () => {
-    const f = await nativeLocalFixture("validator");
-    f.managed.beforeTool(
-      { sessionID: "native-child", callID: "command", tool: "bash" },
-      { command: "true" },
-    );
-    if (poison) {
-      assert.throws(
-        () =>
-          f.managed.afterTool(
-            { sessionID: "native-child", callID: "command", tool: "bash" },
-            { metadata: {} },
-          ),
-        /exit status/,
-      );
-      // A subsequent good callback must not erase the original failed callback's poison.
-      f.managed.verifyCommand("native-child", "true");
-    }
-    const result = f.success();
-    result.artifacts[0]!.sha256 = "0".repeat(64);
-    f.terminal(result);
-    await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
-    assert.equal(f.managed.snapshot().stopped, true);
-  });
-
-test("ever-updated native turn stays ineligible after all acknowledgements clear", async () => {
-  const f = await nativeLocalFixture();
-  await f.managed.beforeTask(
-    { sessionID: "parent", callID: "update-call" },
-    {
-      subagent_type: "researcher",
-      task_id: "native-child",
-      prompt: formatTaskThreadEnvelope({
-        version: 1,
-        kind: "queued-update",
-        delegationTaskId: "task",
-        requestId: "update",
-        context: "New context",
-      }),
-    },
-  );
-  f.managed.afterTask(
-    { callID: "update-call" },
-    {
-      metadata: {
-        sessionId: "native-child",
-        jobId: "native-child",
-        jobType: "subagent",
-        background: true,
-        jobStartedAt: 123,
-        model: { providerID: "fixture", modelID: "worker" },
-      },
-      output: '<task id="native-child" state="running">updated</task>',
-    },
-  );
-  await new Promise((resolve) => setImmediate(resolve));
-  const result = f.success();
-  result.artifacts[0]!.sha256 = "0".repeat(64);
-  f.terminal(result);
-  await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
-  assert.equal(f.managed.snapshot().stopped, true);
-});
-
 test("admission awaiting inspection cannot become empty-ledger terminal proof", async () => {
-  const f = await nativeLocalFixture();
+  const f = await nativeTerminalFixture();
   let release!: () => void;
   const blocked = new Promise<void>((resolve) => {
     release = resolve;
@@ -2847,8 +2749,8 @@ test("admission awaiting inspection cannot become empty-ledger terminal proof", 
   assert.equal(f.managed.snapshot().stopped, true);
 });
 
-test("scope changes during terminal inspection retain stop and the original artifact rejection", async () => {
-  const f = await nativeLocalFixture("implementer");
+test("scope changes during terminal inspection retain stop with the scope rejection", async () => {
+  const f = await nativeTerminalFixture("implementer");
   const result = f.success();
   result.artifacts[0]!.sha256 = "0".repeat(64);
   f.terminal(result);
@@ -2859,91 +2761,21 @@ test("scope changes during terminal inspection retain stop and the original arti
   assert.equal(f.managed.snapshot().stopped, true);
 });
 
-test("retained writer effects remain unaccepted after proven local artifact rejection", async () => {
-  const f = await nativeLocalFixture("implementer");
+test("retained writer effects remain unaccepted after stopped artifact rejection", async () => {
+  const f = await nativeTerminalFixture("implementer");
   fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "rejected effects");
   const result = f.success();
   result.artifacts[0]!.sha256 = "0".repeat(64);
   f.terminal(result);
-  await f.managed.reconcileBackground("native-child");
-  assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "rejected effects");
-  assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
-  assert.deepEqual(f.managed.snapshot().runs[0]!.gates, {});
-  assert.match(
-    JSON.stringify(f.telemetry.find((entry) => entry.event === "failed-locally")),
-    /unaccepted rejected-attempt effects/,
-  );
-});
-
-for (const root of ["trace", "workspace"] as const)
-  test(`replacement ${root} root cannot supply local failure identity`, async () => {
-    const f = await nativeLocalFixture();
-    const result = f.success();
-    result.artifacts[0]!.sha256 = "0".repeat(64);
-    f.terminal(result);
-    fs.renameSync(f[root], f[root] + "-previous");
-    fs.cpSync(f[root] + "-previous", f[root], { recursive: true });
-    await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
-    assert.equal(f.managed.snapshot().stopped, true);
-  });
-
-test("ever-clarified native child stays ineligible after the response callback settles", async () => {
-  const f = await nativeLocalFixture();
-  f.terminal({
-    version: 1,
-    orchestrationId: "fixture",
-    delegationTaskId: "task",
-    scopeKey: "a",
-    role: "researcher",
-    taskMode: "research",
-    outcome: "clarification",
-    summary: "Need choice",
-    requestNonce: "nonce",
-    question: "Which input?",
-    evidence: [],
-    artifacts: [],
-  });
-  await f.managed.reconcileBackground("native-child");
-  await f.managed.beforeTask(
-    { sessionID: "parent", callID: "reply" },
-    {
-      subagent_type: "researcher",
-      task_id: "native-child",
-      prompt: formatTaskThreadEnvelope({
-        version: 1,
-        kind: "clarification-response",
-        delegationTaskId: "task",
-        requestNonce: "nonce",
-        answer: "fixture",
-      }),
-    },
-  );
-  f.job().status = "running";
-  f.managed.afterTask(
-    { callID: "reply" },
-    {
-      metadata: {
-        sessionId: "native-child",
-        jobId: "native-child",
-        jobType: "subagent",
-        background: true,
-        jobStartedAt: 123,
-        model: { providerID: "fixture", modelID: "worker" },
-      },
-      output: '<task id="native-child" state="running">reply</task>',
-    },
-  );
-  await new Promise((resolve) => setImmediate(resolve));
-  const result = f.success();
-  result.artifacts[0]!.sha256 = "0".repeat(64);
-  f.terminal(result);
   await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+  assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "rejected effects");
   assert.equal(f.managed.snapshot().stopped, true);
+  assert.deepEqual(f.managed.snapshot().runs[0]!.gates, {});
 });
 
 for (const race of ["second-inspection", "expiry", "interruption", "abort"] as const)
   test(`native terminal inspection rejects a raced ${race}`, async () => {
-    const f = await nativeLocalFixture();
+    const f = await nativeTerminalFixture();
     const result = f.success();
     result.artifacts[0]!.sha256 = "0".repeat(64);
     f.terminal(result);
@@ -2966,91 +2798,270 @@ for (const race of ["second-inspection", "expiry", "interruption", "abort"] as c
   });
 
 test("malformed fenced typed result cannot erase checked observation or create local failure proof", async () => {
-  const f = await nativeLocalFixture();
+  const f = await nativeTerminalFixture();
   f.terminal({});
   f.job().output = '```json\n{"broken":}\n```';
   await assert.rejects(f.managed.reconcileBackground("native-child"), /JSON/);
   assert.equal(f.managed.snapshot().stopped, true);
 });
 
-test("local failure leaves an unrelated workflow available for fresh dispatch", async () => {
-  const f = await nativeLocalFixture();
+test("unsupported native rejection blocks unrelated dispatch until reviewed recovery", async () => {
+  const f = await nativeTerminalFixture();
   const result = f.success();
   result.artifacts[0]!.sha256 = "0".repeat(64);
   f.terminal(result);
-  await f.managed.reconcileBackground("native-child");
-  const directory = path.join(f.trace, "orchestrations/unrelated");
-  fs.mkdirSync(directory);
-  fs.writeFileSync(
-    path.join(directory, "normalized-spec.json"),
-    JSON.stringify({ ...f.spec, orchestrationId: "unrelated" }),
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+  await assert.rejects(
+    f.managed.beforeTask(
+      { sessionID: "other-parent", callID: "other-call" },
+      f.args({ ...f.packet("other-task"), orchestrationId: "unrelated" }),
+    ),
+    /stopped|fresh|interrupted/,
   );
-  await f.managed.beforeTask(
-    { sessionID: "other-parent", callID: "other-call" },
-    f.args({ ...f.packet("other-task"), orchestrationId: "unrelated" }),
-  );
-  assert.equal(f.managed.snapshot().runs[0]!.interrupted, false);
-  assert.equal(f.managed.snapshot().runs[1]!.active, 1);
+  assert.equal(f.managed.snapshot().runs[0]!.interrupted, true);
 });
 
 test("owned launch callback retains pending admission until its entire callback settles", async () => {
-  const f = await nativeLocalFixture("researcher", true);
+  const f = await nativeTerminalFixture("researcher", true);
   const result = f.success();
   result.artifacts[0]!.sha256 = "0".repeat(64);
   f.terminal(result);
   await f.managed.reconcileBackground("native-child");
   assert.equal(f.managed.snapshot().runs[0]!.active, 1);
   f.finishLaunch();
-  await f.managed.reconcileBackground("native-child");
-  assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
-  assert.equal(f.managed.snapshot().stopped, false);
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+  assert.equal(f.managed.snapshot().stopped, true);
 });
 
-test("fresh writer remediation and independent validator alone accept retained rejected effects", async () => {
-  const f = await nativeLocalFixture("implementer", false, true);
-  fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "retained rejected edit");
-  const rejected = f.success();
-  rejected.artifacts[0]!.sha256 = "0".repeat(64);
-  f.terminal(rejected);
-  await f.managed.reconcileBackground("native-child");
-  await f.start("writer-retry", "writer-retry-call", "writer-retry-child");
-  f.terminal({ ...f.success(), delegationTaskId: "writer-retry" });
-  await f.managed.reconcileBackground("writer-retry-child");
-  assert.deepEqual(f.managed.snapshot().runs[0]!.gates, {});
-  const validator = fixture("validator");
-  const args = validator.args(validator.packet("independent-validation"));
-  f.job().id = "validator-child";
-  f.job().status = "running";
-  f.session().id = "validator-child";
-  await f.managed.beforeTask({ sessionID: "parent", callID: "validator-call" }, args);
-  assert.match(args.prompt, /unaccepted rejected-attempt effects/);
-  f.managed.sessionCreated({ id: "validator-child", parentID: "parent" });
-  f.managed.afterTask(
-    { callID: "validator-call" },
-    {
-      metadata: {
-        sessionId: "validator-child",
-        jobId: "validator-child",
-        jobType: "subagent",
-        background: true,
-        jobStartedAt: 123,
-        model: { providerID: "fixture", modelID: "worker" },
+// The former fresh-remediation positive depended on local release after a host
+// completion that the plugin cannot replace. It is intentionally deferred; the
+// native lifecycle tests below prove the supported stop/recovery boundary instead.
+
+// Native Tool.execute copies these fields after hooks return; SubagentCompletion
+// independently persists raw Job output before publishing session.synthetic.
+for (const { trigger, role, fault } of [
+  { trigger: "poll", role: "researcher", fault: "proof" },
+  { trigger: "poll", role: "validator", fault: "proof" },
+  { trigger: "synthetic", role: "researcher", fault: "proof" },
+  { trigger: "synthetic", role: "validator", fault: "proof" },
+  { trigger: "poll", role: "researcher", fault: "job-id" },
+  { trigger: "poll", role: "researcher", fault: "job-type" },
+  { trigger: "poll", role: "researcher", fault: "session-id" },
+] as const) {
+  test(`native plugin ${trigger} retains stop and capacity for ${role} ${fault} terminal rejection`, async () => {
+    const f = fixture(role, 100000);
+    fs.chmodSync(f.trace, 0o700);
+    const runtime = path.join(f.root, "runtime");
+    fs.mkdirSync(path.join(runtime, "routing"), { recursive: true });
+    fs.copyFileSync(
+      path.resolve(".opencode/routing/harness-model-routing.example.json"),
+      path.join(runtime, "routing/harness-model-routing.example.json"),
+    );
+    const env = {
+      OPENCODE_HARNESS_NATIVE_API: "v2",
+      OPENCODE_HARNESS_WORKSPACE_ROOT: f.workspace,
+      OPENCODE_HARNESS_RUNTIME_ROOT: runtime,
+      OPENCODE_HARNESS_TRACE_ROOT: f.trace,
+      OPENCODE_HARNESS_DELEGATION: JSON.stringify(backgroundPolicy),
+      OPENCODE_EXPERIMENTAL_BACKGROUND_SUBAGENTS: "true",
+    };
+    const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, env);
+    type Context = Parameters<ReturnType<typeof createV2NativePlugin>["setup"]>[0];
+    type Tool = Parameters<Parameters<Parameters<Context["tool"]["transform"]>[0]>[0]["add"]>[0];
+
+    const registered = new Map<string, Tool>();
+    let before!: (event: V2ToolBefore) => Promise<void>;
+    let after!: (event: V2ToolAfter) => Promise<void>;
+    const agents: Record<string, unknown>[] = [
+      "researcher",
+      "planner",
+      "implementer",
+      "validator",
+    ].map((id) => ({
+      id,
+      mode: "subagent",
+      permissions: [],
+      model: { providerID: "fixture", id: "worker" },
+    }));
+    agents.push({ id: "build", mode: "primary", permissions: [] });
+    const job = {
+      id: "native-child",
+      type: "subagent",
+      status: "running",
+      started_at: 123,
+      completed_at: 124,
+      output: "",
+    };
+    const events: unknown[] = [];
+    let wake: (() => void) | undefined;
+    let nativeAborts = 0;
+    const context: Context = {
+      location: { directory: f.workspace },
+      permission: { hook: async () => {}, assert: async () => {} },
+      agent: {
+        list: async () => agents,
+        reload: async () => {},
+        transform: async (callback) =>
+          callback({
+            list: () => agents,
+            get: (id) => agents.find((agent) => agent.id === id),
+            update: (id, change) => change(agents.find((agent) => agent.id === id)!),
+          }),
       },
-      output: '<task id="validator-child" state="running">validate</task>',
-    },
-  );
-  await new Promise((resolve) => setImmediate(resolve));
-  const accepted = { ...validator.success(), delegationTaskId: "independent-validation" };
-  const reference = accepted.artifacts[0]!.reference;
-  fs.mkdirSync(path.dirname(path.join(f.trace, reference)), { recursive: true });
-  fs.copyFileSync(path.join(validator.trace, reference), path.join(f.trace, reference));
-  f.managed.verifyCommand("validator-child", "true");
-  f.terminal(accepted);
-  await f.managed.reconcileBackground("validator-child");
-  assert.equal(typeof f.managed.snapshot().runs[0]!.gates["gate-a"], "string");
-  assert.equal(
-    fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"),
-    "retained rejected edit",
-  );
-  assert.equal(f.managed.snapshot().stopped, false);
-});
+      tool: {
+        reload: async () => {},
+        transform: async (callback) =>
+          callback({
+            list: () => [],
+            update: () => {},
+            add: (tool) => {
+              registered.set(tool.name, tool);
+            },
+          }),
+        hook: async (name, callback) => {
+          if (name === "execute.before") before = callback as typeof before;
+          else after = callback as typeof after;
+        },
+      },
+      session: {
+        hook: async () => {},
+        get: async ({ sessionID }) =>
+          sessionID === "parent"
+            ? { id: "parent", model: { providerID: "fixture", id: "parent" } }
+            : {
+                id:
+                  fault === "session-id" && job.status === "completed" ? "foreign" : "native-child",
+                parentID: "parent",
+                model: { providerID: "fixture", id: "worker" },
+                outcome: job.status === "completed" ? "succeeded" : undefined,
+                time: { idle: job.status === "completed" ? 124 : undefined },
+              },
+        interrupt: async () => {
+          nativeAborts++;
+          throw new Error("fixture native abort proof unavailable");
+        },
+        wait: async () => {},
+      },
+      job: {
+        get: async () => ({ ...job }),
+        wait: async () => ({ info: { ...job }, timedOut: false }),
+        cancel: async () => ({ ...job }),
+      },
+      model: { list: async () => [] },
+      provider: { list: async () => [] },
+      plugin: {
+        list: async () => [{ id: "opencode.config.agent", state: { status: "active" } }],
+      },
+      event: {
+        subscribe: async function* ({ signal } = {}) {
+          signal?.addEventListener("abort", () => wake?.(), { once: true });
+          while (!signal?.aborted) {
+            if (events.length) yield events.shift();
+            else
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+              });
+          }
+        },
+      },
+    };
+    let dispose: (() => void) | undefined;
+    const call = async (name: string) =>
+      JSON.parse(
+        (await registered.get(name)!.execute({}, { sessionID: "parent", agent: "build" })).content,
+      ) as Record<string, unknown>;
+    try {
+      dispose = await createV2NativePlugin({ now: () => 100 }).setup(context);
+      for (
+        let i = 0;
+        i < 100 && (await call("harness_dispatch_status")).status === "activating";
+        i++
+      )
+        await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await call("harness_dispatch_status")).status, "ready");
+      const input = { agent: role, description: "fixture", prompt: f.args().prompt };
+      const event = {
+        tool: "subagent",
+        sessionID: "parent",
+        id: "native-call",
+        input,
+        status: "completed",
+        result: {
+          output: { sessionID: "native-child", status: "running", output: "Background launch" },
+          content: "Background launch",
+          metadata: { sessionID: "native-child", status: "running" },
+        },
+      };
+      await before(event);
+      await after(event);
+      const hostReturn = {
+        output: event.result.output,
+        content: event.result.content,
+        metadata: event.result.metadata,
+      };
+      const result = f.success();
+      if (role === "researcher" && fault === "proof") result.artifacts[0]!.sha256 = "0".repeat(64);
+      job.output = JSON.stringify(result);
+      job.status = "completed";
+      if (fault === "job-id") job.id = "foreign";
+      if (fault === "job-type") job.type = "other";
+      const persisted = {
+        sessionID: "parent",
+        text: `<subagent sessionID="native-child" state="completed">\n${job.output}\n</subagent>`,
+        metadata: {
+          source: "subagent",
+          childID: "native-child",
+          agent: role,
+          state: "completed",
+        },
+      };
+      if (trigger === "synthetic") {
+        events.push({ type: "session.synthetic", data: persisted });
+        wake?.();
+      }
+      // Wait beyond the registered poll, including the negative case where unsafe
+      // local release leaves dispatch ready. No real provider or native activation.
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      assert.equal((await call("harness_dispatch_status")).status, "stopped");
+      assert.equal(nativeAborts, 1);
+      assert.equal((await call("harness_recovery_status")).state, "blocked");
+      await assert.rejects(
+        before({
+          ...event,
+          id: "retry",
+          input: { agent: role, description: "retry", prompt: f.args(f.packet("retry")).prompt },
+        }),
+        /stopped|fresh|interrupted/,
+      );
+      const observation = JSON.parse(
+        fs.readFileSync(
+          path.join(f.trace, "orchestrations/fixture/validation/task-v2-terminal-observation.json"),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+      assert.equal(observation.controllerState, "cancel-requested");
+      assert.equal(observation.active, 1);
+      assert.match(
+        String(observation.diagnostic),
+        fault !== "proof"
+          ? /V2 native inspected Job\/session identity mismatch/
+          : role === "researcher"
+            ? /artifact proof digest mismatched/
+            : /acceptance gate lacks trusted command success/,
+      );
+      assert.equal(hostReturn.output.status, "running");
+      assert.equal(event.result.output.status, "running");
+      // This host has no supported rewrite hook: explicitly characterize the
+      // unsuppressed persisted success rather than treating it as acceptance.
+      assert.equal(persisted.metadata.state, "completed");
+      assert.match(persisted.text, /"outcome":"success"/);
+    } finally {
+      dispose?.();
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+}

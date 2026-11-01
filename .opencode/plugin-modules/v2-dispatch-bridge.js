@@ -148,6 +148,7 @@ export function completedV2Subagent(event, child) {
         },
     };
 }
+/** Replace fields before execute.after returns; copied returns and synthetic delivery are independent. */
 export function rejectV2Result(event, reason, local) {
     const text = `Harness V2 managed result rejected: ${reason}. ` +
         (local

@@ -47,13 +47,7 @@ interface Active {
   packet: RecordValue;
   before: WorkspaceSnapshot;
   callId: string;
-  roots: { path: string; dev: number; ino: number; uid: number; mode: number }[];
-  originalCallId: string;
-  initialTurn: boolean;
-  nativeJobType?: string;
   ownedCallbacks: number;
-  inspections: number;
-  callbackPoison?: Error;
   childId?: string;
   commands: CommandObservation[];
   pendingCommands: Map<string, { command: string; treeHash: string; revision: number }>;
@@ -75,19 +69,6 @@ interface Active {
   updateCalls: Set<string>;
   controlCalls: Set<string>;
   timer?: ReturnType<typeof setTimeout>;
-}
-
-type FailureStage = "identity" | "scope" | "artifact" | "command" | "controller";
-interface NativeTerminalEvidence {
-  task: Active;
-  parent: string;
-  digest: string;
-  call: string;
-  child: string;
-  revision: number;
-  taskId: string;
-  mapping: string;
-  startedAt: number;
 }
 
 function record(value: unknown): RecordValue {
@@ -270,17 +251,6 @@ export function createManagedDispatch(options: {
   let reconcileAgain = false;
   const runs = new Map<string, Run>();
   const knownChildren = new Set<string>();
-  const rejectedCalls = new Map<
-    string,
-    {
-      rejection: string;
-      treeHash: string;
-      effects: string;
-      orchestrationId: string;
-      scopeKey: string;
-      taskId: string;
-    }
-  >();
   const terminalTasks = new Set<string>();
   const recoveryPrimaries = new Set<string>();
   let active: Active | null = null;
@@ -497,13 +467,7 @@ export function createManagedDispatch(options: {
             });
           await transport.abort(task.childId!);
         }
-        let observed: Awaited<ReturnType<BackgroundTransport["inspect"]>>;
-        task.inspections++;
-        try {
-          observed = await transport!.inspect(task.childId!);
-        } finally {
-          task.inspections--;
-        }
+        const observed = await transport!.inspect(task.childId!);
         if (
           active !== task ||
           observed.parent !== parent ||
@@ -548,14 +512,12 @@ export function createManagedDispatch(options: {
         input.callID !== task.callId &&
         !task.updateCalls.has(String(input.callID)))
     )
-      return (_error?: unknown) => {};
+      return () => {};
     task.ownedCallbacks++;
     let settled = false;
-    return (error?: unknown) => {
+    return () => {
       if (settled) return;
       settled = true;
-      if (error !== undefined)
-        task.callbackPoison = error instanceof Error ? error : new Error(String(error));
       task.ownedCallbacks--;
       if (!task.ownedCallbacks) {
         for (const call of task.acknowledgedCalls) task.pendingLaunches.delete(call);
@@ -563,131 +525,6 @@ export function createManagedDispatch(options: {
         if (task.nativeStarted) task.startWaiter?.();
       }
     };
-  }
-
-  function localCandidate(task: Active): boolean {
-    const state = task.run.controller.snapshot();
-    const attempt = state.attempts.find((a) => a.id === task.context.delegationTaskId);
-    return (
-      active === task &&
-      reconciling &&
-      !reconcileAgain &&
-      !dispatching &&
-      !stopped &&
-      !recoveryResolving &&
-      !recoveryFault &&
-      !task.termination &&
-      !task.terminationSettled &&
-      !task.ownedCallbacks &&
-      !task.inspections &&
-      !task.callbackPoison &&
-      !task.pendingCommands.size &&
-      !task.pendingLaunches.size &&
-      !task.updateCalls.size &&
-      !task.controlCalls.size &&
-      !task.updateIds.size &&
-      task.initialTurn &&
-      task.revision === 0 &&
-      task.expectedMessages === 1 &&
-      task.callId === task.originalCallId &&
-      task.acknowledged &&
-      task.acknowledgedCalls.size === 1 &&
-      task.acknowledgedCalls.has(task.originalCallId) &&
-      task.nativeJobType === "subagent" &&
-      task.background &&
-      task.nativeStarted &&
-      !!task.childId &&
-      !state.interrupted &&
-      attempt?.state === "running" &&
-      (options.now ?? Date.now)() < attempt.deadline &&
-      attempt.parentSessionId === task.run.parent &&
-      attempt.workUnitId === task.context.scopeKey &&
-      attempt.role === task.context.role &&
-      attempt.taskMode === task.context.taskMode
-    );
-  }
-
-  function tryFailLocally(
-    task: Active,
-    rejection: Error,
-    stage: FailureStage,
-    evidence: NativeTerminalEvidence | undefined,
-  ): boolean {
-    try {
-      if (!evidence || !["artifact", "command"].includes(stage) || !localCandidate(task))
-        return false;
-      if (
-        evidence.task !== task ||
-        evidence.parent !== task.run.parent ||
-        evidence.digest !== task.run.digest ||
-        evidence.call !== task.originalCallId ||
-        evidence.child !== task.childId ||
-        evidence.revision !== task.revision ||
-        evidence.taskId !== task.context.delegationTaskId ||
-        evidence.startedAt !== task.nativeJobStartedAt ||
-        evidence.mapping !==
-          `${task.context.scopeKey}/${task.context.role}/${task.context.taskMode}`
-      )
-        return false;
-      for (const root of task.roots) {
-        const current = fs.lstatSync(root.path);
-        if (
-          current.isSymbolicLink() ||
-          !current.isDirectory() ||
-          fs.realpathSync(root.path) !== root.path ||
-          current.dev !== root.dev ||
-          current.ino !== root.ino ||
-          current.uid !== root.uid ||
-          current.mode !== root.mode
-        )
-          return false;
-      }
-      verifySpec(task.run);
-      const tree = snapshot(task.context.orchestrationId);
-      const unit = task.run.controller.spec.workUnits.find((u) => u.id === task.context.scopeKey)!;
-      assertAllowedTransition(
-        task.before,
-        tree,
-        task.context.role === "implementer" ? unit.allowedPaths : [],
-      );
-      assertAllowedTransition(task.run.baseline, tree, task.run.controller.spec.allowedPaths);
-      verifySpec(task.run);
-      if (
-        !localCandidate(task) ||
-        snapshot(task.context.orchestrationId).treeHash !== tree.treeHash
-      )
-        return false;
-      // No await or user callback between the final proof, controller commit and tombstones.
-      const diagnostic = {
-        rejection: rejection.message,
-        orchestrationId: task.context.orchestrationId,
-        scopeKey: task.context.scopeKey,
-        taskId: task.context.delegationTaskId,
-        treeHash: tree.treeHash,
-        effects:
-          "unaccepted rejected-attempt effects; fresh remediation and independent validation required",
-      };
-      task.run.controller.complete(task.context.delegationTaskId, "failed");
-      rejectedCalls.set(task.originalCallId, diagnostic);
-      terminalTasks.add(task.context.delegationTaskId);
-      knownChildren.add(task.childId!);
-      if (task.timer) clearTimeout(task.timer);
-      active = null;
-      // Telemetry is coordination only and cannot undo a committed terminalization.
-      try {
-        report({
-          event: "failed-locally",
-          delegationTaskId: task.context.delegationTaskId,
-          stage,
-          ...diagnostic,
-        });
-      } catch {
-        /* committed */
-      }
-      return true;
-    } catch {
-      return false;
-    }
   }
 
   async function reconcileBackground(child?: string) {
@@ -702,14 +539,7 @@ export function createManagedDispatch(options: {
     reconciling = true;
     try {
       const revision = task.revision;
-      const eligibleBefore = localCandidate(task);
-      let observed: Awaited<ReturnType<BackgroundTransport["inspect"]>>;
-      task.inspections++;
-      try {
-        observed = await transport!.inspect(task.childId!);
-      } finally {
-        task.inspections--;
-      }
+      const observed = await transport!.inspect(task.childId!);
       if (active !== task || stopped || task.revision !== revision || !observed.idle) return;
       if (observed.parent !== task.run.parent)
         throw new Error("native background parent identity mismatch");
@@ -727,31 +557,12 @@ export function createManagedDispatch(options: {
         )
           throw new Error("native background Job completion is not correlated");
         if (task.updateCalls.size || task.pendingLaunches.size) return;
-        const evidence: NativeTerminalEvidence | undefined =
-          eligibleBefore &&
-          localCandidate(task) &&
-          observed.sessionId === task.childId &&
-          job.id === task.childId &&
-          job.type === "subagent"
-            ? {
-                task,
-                parent: task.run.parent,
-                digest: task.run.digest,
-                call: task.originalCallId,
-                child: task.childId,
-                revision,
-                taskId: task.context.delegationTaskId,
-                mapping: `${task.context.scopeKey}/${task.context.role}/${task.context.taskMode}`,
-                startedAt: job.startedAt,
-              }
-            : undefined;
         const completion = completeTask(
           { callID: task.callId },
           {
             metadata: { sessionId: task.childId },
             output: formatTaskResultWrapper(v2JsonResult(job.output), task.childId),
           },
-          evidence,
         );
         if (completion.outcome === "clarification") task.reconciledMessages = task.expectedMessages;
         else if (task.timer) clearTimeout(task.timer);
@@ -885,13 +696,7 @@ export function createManagedDispatch(options: {
       // background Task, a fresh abort acknowledgement is required even if an
       // earlier abort failed or appeared to succeed before termination.
       if (task.background) await transport.abort(task.childId);
-      let observed: Awaited<ReturnType<BackgroundTransport["inspect"]>>;
-      task.inspections++;
-      try {
-        observed = await transport!.inspect(task.childId!);
-      } finally {
-        task.inspections--;
-      }
+      const observed = await transport!.inspect(task.childId!);
       if (
         active !== task ||
         !stopped ||
@@ -965,13 +770,7 @@ export function createManagedDispatch(options: {
       )
         return blocked("native worker launch or termination remains unverified");
       try {
-        let observed: Awaited<ReturnType<BackgroundTransport["inspect"]>>;
-        task.inspections++;
-        try {
-          observed = await transport!.inspect(task.childId!);
-        } finally {
-          task.inspections--;
-        }
+        const observed = await transport!.inspect(task.childId!);
         if (!stopped || active !== task || observed.parent !== recoveryOwner || !observed.idle)
           return blocked("native worker is not confirmed idle under the bound parent");
       } catch {
@@ -1056,7 +855,6 @@ export function createManagedDispatch(options: {
     if (knownChildren.has(parent))
       throw new Error("managed children cannot delegate, including after completion");
     const callId = identifier(input.callID);
-    if (rejectedCalls.has(callId)) throw new Error("replayed rejected call identity");
     const parsed = envelope(args.prompt);
     if (
       Object.hasOwn(args, "task_id") &&
@@ -1085,7 +883,6 @@ export function createManagedDispatch(options: {
       const requestId = identifier(parsed.requestId);
       if (task.updateIds.has(requestId) || task.controlCalls.has(callId) || callId === task.callId)
         throw new Error("duplicate background control");
-      task.initialTurn = false;
       if (parsed.kind === "cancel") {
         task.updateIds.add(requestId);
         task.controlCalls.add(callId);
@@ -1109,13 +906,7 @@ export function createManagedDispatch(options: {
       )
         throw new Error("queued update exceeds configured bound");
       // Reject a terminal child rather than allowing native Task to resurrect it.
-      let observed: Awaited<ReturnType<BackgroundTransport["inspect"]>>;
-      task.inspections++;
-      try {
-        observed = await transport!.inspect(task.childId!);
-      } finally {
-        task.inspections--;
-      }
+      const observed = await transport!.inspect(task.childId!);
       if (active !== task || stopped || observed.parent !== parent || observed.idle)
         throw new Error("worker is no longer running; use a fresh task");
       if (task.revision >= delegation.maxQueuedUpdates || task.updateIds.has(requestId))
@@ -1153,7 +944,6 @@ export function createManagedDispatch(options: {
       )
         throw new Error("stale clarification reservation");
       verifySpec(active.run);
-      active.initialTurn = false;
       active.run.policy.beforeTask({ sessionID: parent, callID: callId, args });
       active.run.controller.continueClarification(active.context.delegationTaskId);
       active.callId = callId;
@@ -1233,10 +1023,6 @@ export function createManagedDispatch(options: {
       role,
       taskMode: String(packet.taskMode),
     };
-    const roots = [options.workspaceRoot, options.traceRoot].map((root) => {
-      const stat = fs.lstatSync(root);
-      return { path: root, dev: stat.dev, ino: stat.ino, uid: stat.uid, mode: stat.mode };
-    });
     const before = snapshot(orchestrationId);
     for (const [gate, proof] of run.accepted) {
       if (!run.controller.snapshot().gates[gate]) {
@@ -1261,25 +1047,6 @@ export function createManagedDispatch(options: {
     )
       throw new Error("packet target exceeds declared scope");
     assertAllowedTransition(run.baseline, before, run.controller.spec.allowedPaths);
-    const rejected = [...rejectedCalls.values()].findLast(
-      (entry) => entry.orchestrationId === orchestrationId && entry.scopeKey === context.scopeKey,
-    );
-    if (rejected) {
-      const field =
-        role === "researcher"
-          ? "sourceConstraints"
-          : role === "planner"
-            ? "researchEvidence"
-            : role === "implementer"
-              ? "preservationRequirements"
-              : "schemaContracts";
-      packet[field] = [
-        ...(packet[field] as string[]),
-        `Prior rejected attempt ${rejected.taskId}: ${rejected.effects}. Recorded tree ${rejected.treeHash}; current admitted tree ${before.treeHash}. Original rejection: ${rejected.rejection}`,
-      ];
-      validateTaskPacket(role, packet);
-      args.prompt = `<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n${JSON.stringify({ ...parsed, packet })}\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>`;
-    }
     // Optional explicitly indexed context is validated and measured, never recursively retrieved.
     const contextFile = path.join(
       options.traceRoot,
@@ -1373,11 +1140,7 @@ export function createManagedDispatch(options: {
       packet,
       before,
       callId,
-      roots,
-      originalCallId: callId,
-      initialTurn: true,
       ownedCallbacks: 0,
-      inspections: 0,
       commands: [],
       pendingCommands: new Map(),
       background,
@@ -1409,7 +1172,6 @@ export function createManagedDispatch(options: {
       throw new Error("multiple children for one managed reservation");
     }
     if (!active.childId && knownChildren.has(childId)) {
-      active.initialTurn = false;
       interrupt("reused child identity");
       throw new Error("reused managed child identity");
     }
@@ -1633,8 +1395,6 @@ export function createManagedDispatch(options: {
     const observation = active.pendingCommands.get(callId);
     if (!observation) throw new Error("uncorrelated command result");
     const task = active;
-    const priorPoison = task.callbackPoison;
-    task.callbackPoison = new Error("command callback proof incomplete");
     active.pendingCommands.delete(callId);
     const metadata = record(output.metadata);
     const exitCode = metadata.exit;
@@ -1642,8 +1402,6 @@ export function createManagedDispatch(options: {
       throw new Error("native command exit status unavailable; cannot accept evidence");
     if (snapshot(active.context.orchestrationId).treeHash !== observation.treeHash)
       throw new Error("command changed the validation tree");
-    if (priorPoison) task.callbackPoison = priorPoison;
-    else delete task.callbackPoison;
     if (observation.revision !== active.revision) return;
     active.commands.push({
       command: observation.command,
@@ -1665,7 +1423,6 @@ export function createManagedDispatch(options: {
       maxBuffer: 1024 * 1024,
     });
     if (run.error || !Number.isInteger(run.status)) {
-      if (active) active.callbackPoison = new Error("isolated command callback failed");
       active?.pendingCommands.delete(callID);
       throw new Error("isolated verification did not provide a native process exit status");
     }
@@ -1870,7 +1627,6 @@ export function createManagedDispatch(options: {
         }
         active.nativeJobStartedAt = metadata.jobStartedAt;
       }
-      if (metadata.jobType === "subagent") active.nativeJobType = "subagent";
       active.acknowledged = true;
       active.updateCalls.delete(callId);
       report({
@@ -1883,11 +1639,7 @@ export function createManagedDispatch(options: {
     return completeTask(input, output);
   }
 
-  function completeTask(
-    input: { callID?: unknown },
-    output: RecordValue,
-    evidence?: NativeTerminalEvidence,
-  ) {
+  function completeTask(input: { callID?: unknown }, output: RecordValue) {
     if (!active || identifier(input.callID) !== active.callId)
       throw new Error("duplicate or uncorrelated managed completion");
     const task = active;
@@ -1909,10 +1661,9 @@ export function createManagedDispatch(options: {
       task.run.controller.clarification(task.context.delegationTaskId);
       return result;
     }
-    let stage: FailureStage = "identity";
     try {
       verifySpec(task.run);
-      stage = "scope";
+
       const after = snapshot(task.context.orchestrationId);
       const unit = task.run.controller.spec.workUnits.find((u) => u.id === task.context.scopeKey)!;
       assertAllowedTransition(
@@ -1921,7 +1672,6 @@ export function createManagedDispatch(options: {
         task.context.role === "implementer" ? unit.allowedPaths : [],
       );
       if (result.outcome === "success" && result.result) {
-        stage = "artifact";
         const paths = result.result.artifacts.map((a) => a.reference);
         const prefix = `orchestrations/${task.context.orchestrationId}/roles/${task.context.role}/`;
         if (paths.some((p) => !p.startsWith(prefix)))
@@ -1936,7 +1686,6 @@ export function createManagedDispatch(options: {
         for (const artifact of result.result.artifacts)
           artifact.sha256 = artifacts[artifact.reference]!;
         if (task.context.role === "validator") {
-          stage = "command";
           const gates = gateObligationsFor(task.run.controller.spec, {
             workUnitId: task.context.scopeKey,
             role: task.context.role,
@@ -1972,7 +1721,7 @@ export function createManagedDispatch(options: {
               commands: task.commands,
               validatorTaskId: task.context.delegationTaskId,
             });
-          stage = "controller";
+
           task.run.controller.complete(task.context.delegationTaskId, "success", {
             gateIds: gates.map((g) => g.id),
             treeHash: after.treeHash,
@@ -1986,7 +1735,6 @@ export function createManagedDispatch(options: {
               artifacts,
             });
         } else {
-          stage = "controller";
           task.run.controller.complete(task.context.delegationTaskId, "success");
         }
       } else
@@ -2004,10 +1752,10 @@ export function createManagedDispatch(options: {
       return result;
     } catch (error) {
       const rejection = error instanceof Error ? error : new Error(String(error));
-      if (tryFailLocally(task, rejection, stage, evidence))
-        return { outcome: "rejected-local" as const, rejection: rejection.message };
-      // A rejected proof never becomes acceptance; unknown effects stop this ephemeral run.
-      interrupt("result or scope proof rejected");
+      // Native background delivery is independent of this result hook. No supported
+      // transport can replace all outward success surfaces, so proof failure cannot
+      // release this attempt locally, even with a completed native Job.
+      interrupt(`result or scope proof rejected: ${rejection.message}`);
       throw error;
     }
   }
@@ -2072,10 +1820,6 @@ export function createManagedDispatch(options: {
   return {
     currentTaskView,
     beginOwnedCallback,
-    localRejection: (call: unknown) => {
-      const rejected = rejectedCalls.get(String(call));
-      return rejected ? { ...rejected } : undefined;
-    },
     diagnostics: () => [...runs.values()].map((r) => r.controller.diagnostics()),
     compactionPointer,
     assertExternalActionCaller,
