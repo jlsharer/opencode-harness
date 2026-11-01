@@ -1,7 +1,7 @@
 {
   "version": 1,
   "profile": "global-native",
-  "protocolVersion": "1.0.0",
+  "protocolVersion": "2.0.0",
   "assets": [
     {
       "source": ".opencode/agents/implementer.md",

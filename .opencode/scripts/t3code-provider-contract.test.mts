@@ -18,6 +18,7 @@ import type {
   GlobalNativeContext,
   NativeEvent,
 } from "../src/plugin-modules/global-native-plugin.ts";
+import * as globalProtocolModule from "../src/plugin-modules/global-protocol.ts";
 import {
   createGlobalProtocol,
   declaredFileEvidence,
@@ -271,7 +272,7 @@ function fixture(
   t: { after(fn: () => void): void },
   options: Parameters<typeof createGlobalNativeAdapter>[1] = {},
 ) {
-  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "native-global-λ-"));
+  const cwd = fs.mkdtempSync("/var/tmp/native-global-λ-");
   t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
   fs.writeFileSync(path.join(cwd, "a.txt"), "evidence");
   const sessions = new Map<string, Awaited<ReturnType<GlobalNativeContext["session"]["get"]>>>([
@@ -1555,4 +1556,573 @@ test("v2 global final acceptance rejects advisory completion invalidated by a la
   assert.throws(() => protocol.accept("parent", "run", "a".repeat(64)), /incomplete/);
   complete("a", "validator", "review", "review-fresh", []);
   assert.equal(protocol.accept("parent", "run", "a".repeat(64)).accepted, true);
+});
+
+test("v2 observed declared revision rejects stale advisory and allows fresh exact current recovery", async (t) => {
+  const f = fixture(t);
+  const spec = { ...v2GlobalWorkflow(), budgets: { mode: "unbounded" } };
+  const files = ["a.txt", "a.test.mjs"];
+  fs.writeFileSync(
+    path.join(f.cwd, "a.test.mjs"),
+    'import { readFileSync } from "node:fs"; import assert from "node:assert/strict"; assert.ok(["evidence", "B"].includes(readFileSync("a.txt", "utf8")));',
+  );
+  spec.allowedPaths.push("a.test.mjs");
+  spec.workUnits[0]!.allowedPaths.push("a.test.mjs");
+  spec.workUnits.push({ ...structuredClone(spec.workUnits[0]!), id: "owner-unit" });
+  spec.acceptanceGates[0]!.workUnitIds.push("owner-unit");
+  spec.roleModeTaskMapping[1]!.workUnitId = "owner-unit";
+  const protocol = createGlobalProtocol({ now: () => 100 });
+  protocol.admitOrchestration("parent", f.cwd, spec);
+  const complete = (mode: string, id: string, hash: string) => {
+    const { context } = protocol.admitTask("parent", id, "validator", {
+      ...packet("validator", id),
+      taskMode: mode,
+      scopeKey: mode === "review" ? "unit" : "owner-unit",
+    });
+    protocol.started("parent", context, {
+      id: id + "-child",
+      parentID: "parent",
+      agent: "validator",
+    });
+    protocol.result(
+      "parent",
+      context,
+      { ...structured("validator", id, hash), taskMode: mode, scopeKey: context.scopeKey },
+      { treeHash: hash, gateIds: mode === "review" ? [] : ["gate"] },
+    );
+    return context;
+  };
+  const a = await declaredFileEvidence(f.cwd, files);
+  const old = complete("review", "review-a", a.sha256);
+  fs.writeFileSync(path.join(f.cwd, "a.txt"), "B");
+  const b = await declaredFileEvidence(f.cwd, files);
+  assert.notEqual(a.sha256, b.sha256);
+  // Two validator units share the exact admitted run-wide domain. Execute the actual gate on B.
+  const gate = spawnSync("node", ["--test"], { cwd: f.cwd, encoding: "utf8" });
+  assert.equal(gate.status, 0, gate.stderr);
+  complete("validation", "owner-b", b.sha256);
+  assert.throws(() => protocol.accept("parent", "run", b.sha256), /incomplete|stale/);
+  assert.deepEqual(protocol.snapshot("parent", "run").gates, {});
+  assert.throws(
+    () =>
+      protocol.admitTask("parent", "old-call", "validator", {
+        ...packet("validator", "review-a"),
+        taskMode: "review",
+      }),
+    /duplicate/,
+  );
+  assert.throws(
+    () => protocol.result("parent", old, structured("validator", "review-a")),
+    /late|duplicate/,
+  );
+  complete("review", "review-b", b.sha256);
+  complete("validation", "owner-b-fresh", b.sha256);
+  assert.equal(protocol.accept("parent", "run", b.sha256).accepted, true);
+});
+
+test("exact replay ledger ceilings include reservations and canonical UTF-8 bytes", () => {
+  const create = (globalProtocolModule as unknown as { createGlobalReplayLedger: () => any })
+    .createGlobalReplayLedger;
+  assert.equal(typeof create, "function");
+  const ledger = create();
+  const records = Array.from({ length: 65536 }, (_, i) => ({
+    kind: "child",
+    key: JSON.stringify(["child-" + i]),
+  }));
+  const bytes = records.reduce((n, r) => n + Buffer.byteLength(JSON.stringify(r)), 0);
+  const token = ledger.reserve(records.length, bytes);
+  assert.equal(ledger.snapshot().identityRecords, 65536);
+  assert.throws(() => ledger.reserve(1, 1), /exhausted/);
+  ledger.settle(token, records);
+  assert.equal(ledger.snapshot().canonicalBytes, bytes);
+  assert.equal(ledger.has("child", JSON.stringify(["child-65535"])), true);
+  const byteLedger = create();
+  const record = {
+    kind: "run",
+    key: JSON.stringify(["parent", "run"]),
+    summary: {
+      parentID: "parent",
+      orchestrationId: "run",
+      cwd: "/var/tmp/λ",
+      generation: "generation",
+      specDigest: "a".repeat(64),
+      treeHash: "b".repeat(64),
+      gates: [{ id: "gate", evidenceHash: "b".repeat(64) }],
+      sequence: Number.MAX_SAFE_INTEGER,
+    },
+  };
+  record.summary.cwd += "a".repeat(16777216 - Buffer.byteLength(JSON.stringify(record)));
+  assert.equal(Buffer.byteLength(JSON.stringify(record)), 16777216);
+  const reserved = byteLedger.reserve(1, 16777216);
+  assert.throws(() => byteLedger.reserve(1, 1), /exhausted/);
+  byteLedger.settle(reserved, [record]);
+  assert.equal(byteLedger.snapshot().canonicalBytes, 16777216);
+  const unused = create();
+  const credit = unused.reserve(3, 1000);
+  unused.releaseUnadmitted(credit);
+  assert.equal(unused.snapshot().identityRecords, 0);
+});
+
+async function acceptedNativeRun(f: ReturnType<typeof fixture>, runId: string, attempts = 2) {
+  const spec = { ...workflow(), orchestrationId: runId, budgets: { mode: "unbounded" } };
+  await f.adapter.action("parent", { version: 2, action: "orchestration.admit", spec });
+  const proof = await declaredFileEvidence(f.cwd, ["a.txt"]);
+  let last!: NativeEvent;
+  for (let i = 0; i < attempts; i++) {
+    const role = i === attempts - 1 ? "validator" : "researcher";
+    const id = runId + "-task-" + i;
+    const child = runId + "-child-" + i;
+    const call = event(role, id);
+    (call.input as Record<string, unknown>).prompt = formatTaskThreadEnvelope({
+      kind: "fresh",
+      version: 1,
+      role,
+      packet: { ...packet(role, id), orchestrationId: runId },
+    });
+    f.sessions.set(child, {
+      id: child,
+      parentID: "parent",
+      agent: role,
+      location: { directory: f.cwd },
+    });
+    await f.adapter.before(call);
+    const result: Record<string, unknown> = {
+      ...structured(role, id, proof.sha256),
+      orchestrationId: runId,
+    };
+    if (i < attempts - 2) {
+      Object.assign(result, { outcome: "failed", reason: "bounded retry" });
+      delete result.outputContract;
+    }
+    call.status = "completed";
+    call.result = nativeResult(result, child);
+    await f.adapter.after(call);
+    assert.equal((call.result as any).metadata.status, "completed", JSON.stringify(call.result));
+    last = call;
+  }
+  const acceptance = (await f.adapter.action("parent", {
+    version: 2,
+    action: "orchestration.accept",
+    orchestrationId: runId,
+  })) as any;
+  assert.match(acceptance.acceptanceDigest, /^[a-f0-9]{64}$/);
+  return { acceptance, last };
+}
+
+test("v2 accepted retirement crosses resident run and call ceilings with exact late rejection", async (t) => {
+  const f = fixture(t, { now: () => 100 });
+  let late!: NativeEvent;
+  let canonicalBytes = 0;
+  for (let i = 0; i < 129; i++) {
+    const runId = "retired-" + i;
+    const { acceptance, last } = await acceptedNativeRun(f, runId, 32);
+    canonicalBytes += Buffer.byteLength(
+      JSON.stringify({
+        kind: "run",
+        key: JSON.stringify(["parent", runId]),
+        summary: acceptance.summary,
+      }),
+    );
+    for (let task = 0; task < 32; task++) {
+      for (const record of [
+        { kind: "task", key: JSON.stringify(["parent", runId, runId + "-task-" + task]) },
+        { kind: "call", key: JSON.stringify(["parent", runId + "-task-" + task]) },
+        { kind: "child", key: JSON.stringify([runId + "-child-" + task]) },
+      ])
+        canonicalBytes += Buffer.byteLength(JSON.stringify(record));
+    }
+    const request = {
+      version: 2,
+      action: "retire",
+      orchestrationId: runId,
+      acceptanceDigest: acceptance.acceptanceDigest,
+    };
+    const retired = await f.adapter.action("parent", request);
+    assert.deepEqual(await f.adapter.action("parent", request), retired);
+    assert.equal(
+      ((await f.adapter.action("parent", { version: 2, action: "status" })) as any).residentRuns
+        .used,
+      0,
+    );
+    if (i === 0) late = last;
+  }
+  const status = (await f.adapter.action("parent", { version: 2, action: "status" })) as any;
+  assert.equal(status.residentCalls.used, 0);
+  assert.equal(status.replay.identityRecords, 129 * (1 + 32 * 3));
+  assert.equal(status.replay.reservedRecords, 0);
+  assert.equal(status.replay.reservedSummaryBytes, 0);
+  assert.equal(status.replay.canonicalBytes, canonicalBytes);
+  assert.throws(() => f.adapter.protocol.snapshot("parent", "retired-0"), /not admitted/);
+  await assert.rejects(
+    f.adapter.action("parent", {
+      version: 2,
+      action: "orchestration.admit",
+      spec: { ...workflow(), orchestrationId: "retired-0" },
+    }),
+    /duplicate|retired/,
+  );
+  await assert.rejects(f.adapter.before(late), /duplicate|stale/);
+  await f.adapter.after(late);
+  assert.equal((late.result as any).metadata.harness, "rejected");
+  assert.doesNotMatch(JSON.stringify(late.result), /outputContract/);
+  f.adapter.dispose();
+  late.result = {
+    output: { status: "completed" },
+    content: [{ type: "resource", data: "success" }],
+    metadata: { success: true },
+  };
+  await f.adapter.after(late);
+  assert.equal((late.result as any).metadata.harness, "rejected");
+  await ordinary(f.adapter);
+});
+
+test("v2 acceptance tracks every observed revision, even after a declared change and revert", () => {
+  const protocol = createGlobalProtocol({ now: () => 100 });
+  const spec = { ...v2GlobalWorkflow(), budgets: { mode: "unbounded" } };
+  protocol.admitOrchestration("parent", "/var/tmp", spec);
+  const complete = (mode: string, id: string, hash: string) => {
+    const { context } = protocol.admitTask("parent", id, "validator", {
+      ...packet("validator", id),
+      taskMode: mode,
+    });
+    protocol.started("parent", context, { id, parentID: "parent", agent: "validator" });
+    protocol.result(
+      "parent",
+      context,
+      { ...structured("validator", id, hash), taskMode: mode },
+      { treeHash: hash, gateIds: mode === "review" ? [] : ["gate"] },
+    );
+  };
+  complete("review", "review-a", "a".repeat(64));
+  complete("validation", "owner-b", "b".repeat(64));
+  // Observing B must already make review available, before final acceptance.
+  complete("review", "review-b", "b".repeat(64));
+  assert.throws(() => protocol.accept("parent", "run", "a".repeat(64)), /incomplete|stale/);
+  assert.deepEqual(protocol.snapshot("parent", "run").gates, {});
+});
+
+test("retirement preparation failure preserves full accepted records and exact bindings", () => {
+  const protocol = createGlobalProtocol({ generation: "generation" });
+  acceptedProtocolRun(protocol);
+  const state = protocol.status("parent", "/var/tmp");
+  const acceptanceDigest = state.runs[0]!.acceptanceDigest!;
+  const proof = {
+    generation: "generation",
+    parentID: "parent",
+    cwd: "/var/tmp",
+    pending: false,
+    callsConsumed: true,
+    prepare: () => () => {},
+  };
+  for (const [parent, cwd, digest, override] of [
+    ["other", "/var/tmp", acceptanceDigest, {}],
+    ["parent", "/var/tmp/other", acceptanceDigest, {}],
+    ["parent", "/var/tmp", "f".repeat(64), {}],
+    ["parent", "/var/tmp", acceptanceDigest, { generation: "other" }],
+    ["parent", "/var/tmp", acceptanceDigest, { pending: true }],
+    ["parent", "/var/tmp", acceptanceDigest, { callsConsumed: false }],
+  ] as const)
+    assert.throws(
+      () => protocol.retire(parent, cwd, "run", digest, { ...proof, ...override }),
+      /mismatch|refused|unknown/,
+    );
+  assert.throws(
+    () =>
+      protocol.retire("parent", "/var/tmp", "run", acceptanceDigest, {
+        ...proof,
+        prepare: () => {
+          throw new Error("injected preparation failure");
+        },
+      }),
+    /injected/,
+  );
+  assert.deepEqual(protocol.status("parent", "/var/tmp"), state);
+  assert.equal(protocol.snapshot("parent", "run").attempts.length, 2);
+  const retired = protocol.retire("parent", "/var/tmp", "run", acceptanceDigest, proof);
+  assert.deepEqual(protocol.retire("parent", "/var/tmp", "run", acceptanceDigest, proof), retired);
+  assert.throws(() => protocol.snapshot("parent", "run"), /not admitted/);
+  assert.throws(() => protocol.admitOrchestration("parent", "/var/tmp", workflow()), /duplicate/);
+  protocol.admitOrchestration("parent", "/var/tmp", { ...workflow(), orchestrationId: "new-run" });
+  const next = protocol.admitTask("parent", "new-call", "researcher", {
+    ...packet("researcher", "researcher"),
+    orchestrationId: "new-run",
+  });
+  assert.throws(
+    () =>
+      protocol.started("parent", next.context, {
+        id: "researcher-child",
+        parentID: "parent",
+        agent: "researcher",
+      }),
+    /reused/,
+  );
+});
+
+test("native v2 control exact fields, refusals, immutable summary and duplicate-after retirement race", async (t) => {
+  const f = fixture(t, { now: () => 100 });
+  await f.adapter.register();
+  assert.deepEqual(
+    (f.modelTools.get("harness_orchestration")!.input.properties as any).version.enum,
+    [1, 2],
+  );
+  for (const input of [
+    { version: 1, action: "status" },
+    { version: 1, action: "retire" },
+    { version: 3, action: "status" },
+    { version: 2, action: "clear" },
+    { version: 2, action: "status", parentID: "parent" },
+    {
+      version: 2,
+      action: "retire",
+      orchestrationId: "run",
+      acceptanceDigest: "a".repeat(64),
+      force: true,
+    },
+  ])
+    await assert.rejects(f.adapter.action("parent", input), /version|unsupported|unexpected/);
+  await admit(f.adapter);
+  await assert.rejects(
+    f.adapter.action("parent", {
+      version: 2,
+      action: "retire",
+      orchestrationId: "run",
+      acceptanceDigest: "a".repeat(64),
+    }),
+    /not accepted/,
+  );
+  const call = event();
+  await f.adapter.before(call);
+  const live = (await f.adapter.action("parent", { version: 2, action: "status" })) as any;
+  assert.equal(live.replay.reservedRecords, 1);
+  assert.ok(live.replay.reservedSummaryBytes > 0, "unaccepted fixed summary remains reserved");
+  assert.match(live.runs[0].retirementRefusal, /admitted.*callback/);
+  assert.ok(
+    live.replay.reservedBytes >=
+      Buffer.byteLength(JSON.stringify({ kind: "child", key: JSON.stringify(["x".repeat(160)]) })),
+  );
+  const context = {
+    orchestrationId: "run",
+    delegationTaskId: "task",
+    scopeKey: "unit",
+    role: "researcher",
+    taskMode: "research",
+  };
+  await f.adapter.action("parent", { version: 1, action: "task.cancel", context });
+  await assert.rejects(
+    f.adapter.action("parent", {
+      version: 2,
+      action: "retire",
+      orchestrationId: "run",
+      acceptanceDigest: "a".repeat(64),
+    }),
+    /not accepted|uncertain/,
+  );
+  const { acceptance, last } = await acceptedNativeRun(f, "accepted");
+  const request = {
+    version: 2,
+    action: "retire",
+    orchestrationId: "accepted",
+    acceptanceDigest: acceptance.acceptanceDigest,
+  };
+  const originalSummary = structuredClone(acceptance.summary);
+  acceptance.summary.cwd = "/forged";
+  await assert.rejects(
+    f.adapter.action("parent", { ...request, acceptanceDigest: "f".repeat(64) }),
+    /digest/,
+  );
+  const original = f.sessions.get("parent")!;
+  f.sessions.set("parent", { ...original, location: { directory: f.cwd + "/elsewhere" } });
+  await assert.rejects(f.adapter.action("parent", request), /cwd/);
+  f.sessions.set("parent", original);
+  const [, retired] = await Promise.all([
+    f.adapter.after(last),
+    f.adapter.action("parent", request),
+  ]);
+  assert.equal((last.result as any).metadata.harness, "rejected");
+  assert.deepEqual((retired as any).summary, originalSummary);
+  for (const result of [
+    "success",
+    {
+      output: { status: "success" },
+      content: "success",
+      metadata: { status: "completed", arbitrary: "success" },
+    },
+    { content: [{ type: "image", data: "success" }] },
+  ]) {
+    last.result = result;
+    await f.adapter.after(last);
+    assert.equal((last.result as any).metadata.harness, "rejected");
+    assert.doesNotMatch(JSON.stringify(last.result), /success/);
+  }
+  const status = (await f.adapter.action("parent", { version: 2, action: "status" })) as any;
+  assert.equal(status.residentRuns.used, 1);
+  assert.equal(status.replay.reservedRecords, 1, "cancelled unknown child credit is retained");
+});
+
+test("native acceptance rechecks frozen cwd after awaited persistence and disposal", async (t) => {
+  for (const mutation of ["cwd", "dispose"] as const) {
+    let mutate = () => {};
+    const f = fixture(t, {
+      persist: async (record) => {
+        if (record.event === "orchestration.accept") mutate();
+      },
+    });
+    // Complete through the real adapter, then mutate native identity at the acceptance await.
+    mutate = () => {
+      if (mutation === "cwd") f.sessions.get("parent")!.location.directory = f.cwd + "/moved";
+      else f.adapter.dispose();
+    };
+    await assert.rejects(acceptedNativeRun(f, "raced"), /cwd|disposed/);
+    assert.equal(f.adapter.protocol.status("parent", f.cwd).runs[0]!.accepted, false);
+  }
+});
+
+test("pending admission persistence cannot return launch authority after native cwd moves", async (t) => {
+  let mutate = () => {};
+  const f = fixture(t, {
+    persist: async (record) => {
+      if (record.event === "task.admit") mutate();
+    },
+  });
+  await admit(f.adapter);
+  mutate = () => {
+    f.sessions.get("parent")!.location.directory = f.cwd + "/moved";
+  };
+  await assert.rejects(f.adapter.before(event()), /cwd/);
+  assert.equal(f.adapter.protocol.status("parent", f.cwd).replay.reservedRecords, 1);
+});
+
+test("real protocol denies exhausted identity and byte credit before controller authority", () => {
+  for (const bound of ["records", "bytes"] as const) {
+    const ledger = globalProtocolModule.createGlobalReplayLedger();
+    const protocol = createGlobalProtocol({ replayLedger: ledger, generation: "g" });
+    protocol.admitOrchestration("parent", "/var/tmp/λ", workflow());
+    const remaining = ledger.snapshot();
+    ledger.reserve(
+      bound === "records" ? remaining.remainingRecords : 1,
+      bound === "bytes" ? remaining.remainingBytes : 1,
+    );
+    assert.throws(() => protocol.admitTask("parent", "call", "researcher", packet()), /exhausted/);
+    assert.equal(protocol.snapshot("parent", "run").attempts.length, 0);
+    assert.equal(ledger.has("task", JSON.stringify(["parent", "run", "task"])), false);
+  }
+});
+
+test("native consumed callbacks without retirement still exhaust the 4096 resident call slots", async (t) => {
+  const f = fixture(t, { now: () => 100 });
+  await f.adapter.action("parent", {
+    version: 2,
+    action: "orchestration.admit",
+    spec: { ...workflow(), budgets: { mode: "unbounded" } },
+  });
+  const hash = (await declaredFileEvidence(f.cwd, ["a.txt"])).sha256;
+  for (let i = 0; i < 4096; i++) {
+    const id = "consumed-" + i;
+    const child = "child-" + i;
+    const call = event("researcher", id);
+    f.sessions.set(child, {
+      id: child,
+      parentID: "parent",
+      agent: "researcher",
+      location: { directory: f.cwd },
+    });
+    await f.adapter.before(call);
+    const result: Record<string, unknown> = {
+      ...structured("researcher", id, hash),
+      outcome: "failed",
+      reason: "fixture retry",
+    };
+    delete result.outputContract;
+    call.status = "completed";
+    call.result = nativeResult(result, child);
+    await f.adapter.after(call);
+    assert.equal((call.result as any).metadata.status, "completed");
+  }
+  await assert.rejects(f.adapter.before(event("researcher", "one-over")), /exhausted/);
+  assert.equal(f.adapter.protocol.snapshot("parent", "run").attempts.length, 4096);
+  assert.equal(
+    ((await f.adapter.action("parent", { version: 2, action: "status" })) as any).residentCalls
+      .used,
+    4096,
+  );
+});
+
+test("pending native command notification blocks retirement until its exact invocation finishes", async (t) => {
+  const f = fixture(t, { now: () => 100 });
+  let entered!: () => void, finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  f.ctx.session.synthetic = async () => {
+    entered();
+    await release;
+  };
+  await f.adapter.register();
+  await admit(f.adapter);
+  const command = f.commands
+    .get("delegate-research")!
+    .execute({ sessionID: "parent", prompt: { text: (event().input as any).prompt } });
+  await pending;
+  const validator = event("validator", "validation");
+  await f.adapter.before(validator);
+  validator.status = "completed";
+  validator.result = nativeResult(
+    structured("validator", "validation", (await declaredFileEvidence(f.cwd, ["a.txt"])).sha256),
+    "validator",
+  );
+  await f.adapter.after(validator);
+  const accepted = (await f.adapter.action("parent", {
+    version: 2,
+    action: "orchestration.accept",
+    orchestrationId: "run",
+  })) as any;
+  const request = {
+    version: 2,
+    action: "retire",
+    orchestrationId: "run",
+    acceptanceDigest: accepted.acceptanceDigest,
+  };
+  await assert.rejects(f.adapter.action("parent", request), /pending/);
+  assert.equal(
+    ((await f.adapter.action("parent", { version: 2, action: "status" })) as any).runs[0]
+      .retirementRefusal,
+    "pending command",
+  );
+  finish();
+  await command;
+  assert.equal(((await f.adapter.action("parent", request)) as any).retired, true);
+});
+
+test("disposal while a real after callback awaits persistence replaces every success surface", async (t) => {
+  let entered!: () => void, finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const release = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const f = fixture(t, {
+    persist: async (record) => {
+      if (record.event === "task.result") {
+        entered();
+        await release;
+      }
+    },
+  });
+  await admit(f.adapter);
+  const call = event();
+  await f.adapter.before(call);
+  call.status = "completed";
+  call.result = nativeResult(structured(), "child");
+  const completing = f.adapter.after(call);
+  await pending;
+  f.adapter.dispose();
+  finish();
+  await completing;
+  assert.equal((call.result as any).metadata.harness, "rejected");
+  assert.doesNotMatch(JSON.stringify(call.result), /outputContract|<subagent/);
+  await ordinary(f.adapter);
 });

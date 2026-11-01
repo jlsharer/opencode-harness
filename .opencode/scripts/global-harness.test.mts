@@ -6,13 +6,16 @@ import test from "node:test";
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { globalOperation, globalManifest } from "../../bin/global-harness.ts";
-import { declaredFileEvidence } from "../src/plugin-modules/global-protocol.ts";
+import {
+  declaredFileEvidence,
+  GLOBAL_PROFILE_VERSION,
+} from "../src/plugin-modules/global-protocol.ts";
 import { validateGlobalHarness } from "./validate-global-harness.mts";
 import { taskContractShape } from "../src/plugin-modules/task-contracts.ts";
 import type { TaskThreadRole } from "../src/plugin-modules/task-thread-policy.ts";
 
 function fixture(t: { after(fn: () => void): void }) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "global harness-λ-"));
+  const root = fs.mkdtempSync("/var/tmp/global-harness-λ-");
   fs.chmodSync(root, 0o700);
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return {
@@ -345,4 +348,97 @@ test("dangling unowned discovery symlinks are collisions and never replaced", (t
   fs.symlinkSync("missing", link);
   assert.throws(() => globalOperation("install", { ...options, apply: true }), /symlink|collision/);
   assert.equal(fs.readlinkSync(link), "missing");
+});
+
+test("current global package requires profile 2 and agrees with schema and exported constant", (t) => {
+  assert.equal(GLOBAL_PROFILE_VERSION, "2.0.0");
+  assert.equal(globalManifest(process.cwd()).protocolVersion, "2.0.0");
+  const { root } = fixture(t);
+  const copy = path.join(root, "package");
+  for (const asset of globalManifest(process.cwd()).assets) {
+    const target = path.join(copy, asset.source);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(asset.source, target);
+  }
+  const filename = path.join(copy, ".opencode/global.manifest.json");
+  const original = JSON.parse(fs.readFileSync(filename, "utf8"));
+  for (const version of ["1.0.0", "3.0.0", null]) {
+    fs.writeFileSync(filename, JSON.stringify({ ...original, protocolVersion: version }));
+    assert.throws(() => globalManifest(copy), /manifest/);
+  }
+  fs.writeFileSync(filename, JSON.stringify(original));
+  const schema = path.join(copy, ".opencode/schemas/global.manifest.schema.json");
+  const schemaValue = JSON.parse(fs.readFileSync(schema, "utf8"));
+  schemaValue.properties.protocolVersion.const = "1.0.0";
+  fs.writeFileSync(schema, JSON.stringify(schemaValue));
+  assert.throws(() => validateGlobalHarness(copy), /version/);
+});
+
+test("verified installed profile 1 metadata survives upgrade and rollback without corrupt fallback", (t) => {
+  const { root, options } = fixture(t);
+  globalOperation("install", { ...options, apply: true });
+  const record = JSON.parse(
+    fs.readFileSync(path.join(options.stateRoot, "installation.json"), "utf8"),
+  );
+  const installedManifest = path.join(record.release, ".opencode/global.manifest.json");
+  const inventoryPath = path.join(record.release, "release.json");
+  const inventory = JSON.parse(fs.readFileSync(inventoryPath, "utf8")) as {
+    path: string;
+    sha256: string;
+  }[];
+  // Model an explicitly versioned, already verified owned older release. No missing-version heuristic.
+  const oldManifest = {
+    ...JSON.parse(fs.readFileSync(installedManifest, "utf8")),
+    protocolVersion: "1.0.0",
+  };
+  fs.chmodSync(installedManifest, 0o600);
+  fs.writeFileSync(installedManifest, JSON.stringify(oldManifest));
+  for (const relative of [
+    ".opencode/schemas/global.manifest.schema.json",
+    ".opencode/plugin-modules/global-protocol.js",
+  ]) {
+    const filename = path.join(record.release, relative);
+    fs.chmodSync(filename, 0o600);
+    fs.writeFileSync(filename, fs.readFileSync(filename, "utf8").replaceAll('"2.0.0"', '"1.0.0"'));
+    inventory.find((entry) => entry.path === relative)!.sha256 = createHash("sha256")
+      .update(fs.readFileSync(filename))
+      .digest("hex");
+  }
+  const member = inventory.find((entry) => entry.path === ".opencode/global.manifest.json")!;
+  member.sha256 = createHash("sha256").update(fs.readFileSync(installedManifest)).digest("hex");
+  fs.chmodSync(inventoryPath, 0o600);
+  fs.writeFileSync(inventoryPath, JSON.stringify(inventory));
+  assert.equal(globalOperation("doctor", options).protocolVersion, "1.0.0");
+  const copy = path.join(root, "package");
+  for (const asset of globalManifest(process.cwd()).assets) {
+    const target = path.join(copy, asset.source);
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.copyFileSync(asset.source, target);
+  }
+  const pkg = path.join(copy, "package.json");
+  fs.writeFileSync(
+    pkg,
+    JSON.stringify({ ...JSON.parse(fs.readFileSync(pkg, "utf8")), version: "0.1.21" }),
+  );
+  globalOperation("install", { ...options, packageRoot: copy, apply: true });
+  assert.equal(globalOperation("doctor", options).protocolVersion, "2.0.0");
+  globalOperation("rollback", { ...options, apply: true });
+  assert.equal(globalOperation("doctor", options).protocolVersion, "1.0.0");
+  for (const owned of record.owned)
+    assert.equal(
+      fs.readFileSync(path.join(options.configRoot, owned.path)).toString("base64"),
+      owned.bytes,
+    );
+  fs.writeFileSync(inventoryPath, JSON.stringify(inventory.filter((entry) => entry !== member)));
+  assert.throws(() => globalOperation("doctor", options), /manifest|unexpected release leaf/);
+  fs.writeFileSync(inventoryPath, JSON.stringify(inventory));
+  for (const version of [undefined, "bad"]) {
+    const invalid = { ...oldManifest, protocolVersion: version };
+    fs.writeFileSync(installedManifest, JSON.stringify(invalid));
+    member.sha256 = createHash("sha256").update(fs.readFileSync(installedManifest)).digest("hex");
+    fs.writeFileSync(inventoryPath, JSON.stringify(inventory));
+    assert.throws(() => globalOperation("doctor", options), /manifest/);
+  }
+  fs.writeFileSync(installedManifest, JSON.stringify(oldManifest));
+  assert.throws(() => globalOperation("doctor", options), /modified release asset/);
 });

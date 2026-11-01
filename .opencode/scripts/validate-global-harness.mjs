@@ -3,6 +3,13 @@ import path from "node:path";
 import { globalManifest } from "../../bin/global-harness.mjs";
 export function validateGlobalHarness(root = process.cwd()) {
     const manifest = globalManifest(root);
+    const schema = JSON.parse(fs.readFileSync(path.join(root, ".opencode/schemas/global.manifest.schema.json"), "utf8"));
+    const exported = fs
+        .readFileSync(path.join(root, ".opencode/plugin-modules/global-protocol.js"), "utf8")
+        .match(/export const GLOBAL_PROFILE_VERSION = ["']([^"']+)["']/)?.[1];
+    if (schema.properties?.protocolVersion?.const !== manifest.protocolVersion ||
+        exported !== manifest.protocolVersion)
+        throw new Error("global profile version metadata mismatch");
     for (const asset of manifest.assets) {
         const target = path.join(root, asset.source);
         const stat = fs.lstatSync(target);

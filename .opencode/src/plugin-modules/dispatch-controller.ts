@@ -546,7 +546,7 @@ export function createDispatchController(
   let owner: string | null = null;
   let interrupted = false;
   let continuations = 0;
-  const key = (r: DispatchRequest) => `${r.workUnitId}:${r.role}:${r.taskMode}`;
+  const key = (r: MappingKey) => `${r.workUnitId}:${r.role}:${r.taskMode}`;
   const active = () =>
     [...attempts.values()].filter((a) =>
       ["running", "awaiting-guidance", "cancel-requested"].includes(a.state),
@@ -817,6 +817,17 @@ export function createDispatchController(
   return {
     spec,
     mappingsComplete: () => spec.workUnits.every((u) => unitDone(u.id)),
+    // Current completion identity, never a historical successful attempt.
+    currentCompletion: (mapping: MappingKey) => completed.get(key(mapping)),
+    invalidateValidation: () => {
+      if (spec.schemaVersion !== "2.0.0") return;
+      gates.clear();
+      for (const mapping of spec.roleModeTaskMapping) {
+        if (mapping.role !== "validator") continue;
+        completed.delete(key(mapping));
+        lastAttemptGeneration.delete(key(mapping));
+      }
+    },
     reserve,
     complete,
     clarification,

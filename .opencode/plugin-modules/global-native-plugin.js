@@ -5,7 +5,7 @@ import path from "node:path";
 import { constants } from "node:fs";
 import { fileURLToPath } from "node:url";
 import os from "node:os";
-import { createGlobalProtocol, declaredFileEvidence, identifier, object, NATIVE_SOURCE_COMMIT, } from "./global-protocol.js";
+import { createGlobalProtocol, createGlobalReplayLedger, declaredFileEvidence, identifier, object, NATIVE_SOURCE_COMMIT, } from "./global-protocol.js";
 import { appendDelegationContext } from "./context-budget.js";
 export async function projectHarnessCollision(cwd) {
     let current = cwd;
@@ -82,9 +82,19 @@ function nativeTextContent(content) {
     return block.text;
 }
 export function createGlobalNativeAdapter(ctx, options = {}) {
-    const protocol = createGlobalProtocol(options);
+    const replayLedger = createGlobalReplayLedger();
+    const generation = randomUUID();
+    const protocol = createGlobalProtocol({ ...options, replayLedger, generation });
+    // Only managed mutations enter this queue. Ordinary tools keep their native path.
+    let tail = Promise.resolve();
+    const serial = (operation) => {
+        const result = tail.then(operation);
+        tail = result.catch(() => { });
+        return result;
+    };
+    const pendingCommands = new Set();
     let disposed = false;
-    const calls = new Map();
+    let calls = new Map();
     const traceRoot = options.traceRoot ??
         path.join(process.env.XDG_STATE_HOME ?? path.join(os.homedir(), ".local/state"), "opencode-harness", "traces");
     const callKey = (event) => JSON.stringify([event.sessionID, event.id]);
@@ -150,7 +160,9 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 "Choose one profile: review `opencode-harness global migrate-project --workspace ABS` " +
                 "before explicitly applying migration, or use the source/portable launcher without the global plugin. " +
                 "File presence is conservative collision evidence, not proof of two active plugins. No files were migrated.");
-        return session;
+        if (disposed)
+            throw new Error("global harness instance disposed");
+        return { ...session, location: { directory: session.location.directory } };
     }
     async function commandCaller(session) {
         if (session.agent !== undefined)
@@ -162,7 +174,7 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             throw new Error("native default agent unavailable for direct role command; use subagent");
         return selected.id;
     }
-    async function before(event) {
+    async function beforeManaged(event) {
         // No mutations or lookups for ordinary native tool calls, including Code Mode inner calls.
         if (event.tool !== "subagent")
             return;
@@ -183,6 +195,8 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             (input.background !== undefined && input.background !== false) ||
             (input.model !== undefined && typeof input.model !== "string"))
             throw new Error("managed foreground requires fresh native child; background/continuation unavailable");
+        if (calls.size >= 4096 || calls.has(callKey(event)) || replayLedger.has("call", callKey(event)))
+            throw new Error("duplicate, stale or exhausted native call ledger");
         if (Object.hasOwn(input, "sessionID")) {
             const childID = identifier(input.sessionID);
             if (typeof input.prompt !== "string" ||
@@ -204,6 +218,9 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                     sessionAgent: nativeParent.agent ?? null,
                     ...admitted.context,
                 });
+                const current = await parent(event.sessionID);
+                if (current.location.directory !== admitted.cwd)
+                    throw new Error("native cwd moved before continuation launch");
                 calls.set(callKey(event), {
                     parentID: event.sessionID,
                     ...admitted,
@@ -225,7 +242,7 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             if (admitted.cwd !== nativeParent.location.directory)
                 throw new Error("native cwd moved; admit a new orchestration");
             if (calls.size >= 4096 || calls.has(callKey(event)))
-                throw new Error("duplicate or exhausted native call ledger");
+                throw new Error("duplicate, stale or exhausted native call ledger");
             await persist({
                 event: "task.admit",
                 sessionID: event.sessionID,
@@ -235,6 +252,9 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 ...admitted.context,
                 cwd: admitted.cwd,
             });
+            const current = await parent(event.sessionID);
+            if (current.location.directory !== admitted.cwd)
+                throw new Error("native cwd moved before launch");
             calls.set(callKey(event), { parentID: event.sessionID, ...admitted, consumed: false });
         }
         catch (error) {
@@ -242,10 +262,13 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             throw error;
         }
     }
-    async function after(event) {
+    async function afterManaged(event) {
         const call = calls.get(callKey(event));
-        if (!call)
+        if (!call) {
+            if (replayLedger.has("call", callKey(event)))
+                replaceGlobalResult(event, "retired or rejected native call");
             return;
+        }
         let verifiedChildSessionID;
         try {
             if (disposed)
@@ -302,6 +325,8 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 childID,
                 evidence,
             });
+            if (disposed)
+                throw new Error("global harness instance disposed; late result rejected");
             protocol.result(call.parentID, call.context, decoded, {
                 treeHash: evidence.sha256,
                 gateIds: gateObligationsFor(spec, {
@@ -310,6 +335,7 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                     taskMode: call.context.taskMode,
                 }).map((g) => g.id),
             });
+            call.terminal = true;
         }
         catch (error) {
             const reason = error instanceof Error ? error.message : "managed result rejected";
@@ -335,11 +361,67 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             replaceGlobalResult(event, reason, verifiedChildSessionID);
         }
     }
-    async function action(sessionID, input) {
+    async function actionManaged(sessionID, input) {
         const session = await parent(sessionID);
         const request = object(input);
-        if (request.version !== 1)
-            throw new Error("protocol action version must be 1");
+        if (request.version !== 1 && request.version !== 2)
+            throw new Error("protocol action version must be 1 or 2");
+        if (request.version === 2 && request.action === "status") {
+            if (Object.keys(request).sort().join() !== "action,version")
+                throw new Error("unexpected status fields");
+            const status = protocol.status(sessionID, session.location.directory);
+            return {
+                ...status,
+                residentCalls: { used: calls.size, limit: 4096 },
+                runs: status.runs.map((run) => {
+                    const related = [...calls.values()].filter((c) => c.parentID === sessionID && c.context.orchestrationId === run.orchestrationId);
+                    const pending = [...pendingCommands].some((key) => {
+                        const c = calls.get(key);
+                        return c?.parentID === sessionID && c.context.orchestrationId === run.orchestrationId;
+                    });
+                    return {
+                        ...run,
+                        retirementRefusal: run.retirementRefusal ??
+                            (pending
+                                ? "pending command"
+                                : related.some((c) => !c.consumed || !c.terminal)
+                                    ? "pending callback or uncertain call"
+                                    : null),
+                    };
+                }),
+            };
+        }
+        if (request.version === 2 && request.action === "retire") {
+            if (Object.keys(request).sort().join() !== "acceptanceDigest,action,orchestrationId,version")
+                throw new Error("unexpected retirement fields");
+            const id = identifier(request.orchestrationId);
+            if (typeof request.acceptanceDigest !== "string" ||
+                !/^[a-f0-9]{64}$/.test(request.acceptanceDigest))
+                throw new Error("invalid acceptance digest");
+            // Re-fetch native binding after all awaited checks; caller cannot supply proof.
+            const current = await parent(sessionID);
+            if (current.location.directory !== session.location.directory)
+                throw new Error("native cwd moved before retirement");
+            const related = [...calls.entries()].filter(([, c]) => c.parentID === sessionID && c.context.orchestrationId === id);
+            return protocol.retire(sessionID, current.location.directory, id, request.acceptanceDigest, {
+                generation,
+                parentID: sessionID,
+                cwd: current.location.directory,
+                pending: related.some(([key]) => pendingCommands.has(key)),
+                callsConsumed: related.every(([, c]) => c.consumed && c.terminal),
+                prepare: () => {
+                    const replacement = new Map(calls);
+                    for (const [key] of related) {
+                        if (!replayLedger.has("call", key))
+                            throw new Error("missing exact rejection identity");
+                        replacement.delete(key);
+                    }
+                    return () => {
+                        calls = replacement;
+                    };
+                },
+            });
+        }
         if (request.action === "orchestration.admit") {
             if (!["action,spec,version", "action,evidenceFiles,spec,version"].includes(Object.keys(request).sort().join()))
                 throw new Error("unexpected admission fields");
@@ -350,6 +432,9 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 orchestrationId: id,
                 cwd: session.location.directory,
             });
+            const current = await parent(sessionID);
+            if (current.location.directory !== protocol.cwd(sessionID, id))
+                throw new Error("native cwd moved during admission");
             return {
                 admitted: id,
                 workspaceRoot: session.location.directory,
@@ -365,7 +450,11 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 throw new Error("native cwd moved before acceptance");
             const evidence = await declaredFileEvidence(session.location.directory, protocol.evidenceFiles(sessionID, id));
             await persist({ event: request.action, sessionID, orchestrationId: id, evidence });
-            return protocol.accept(sessionID, id, evidence.sha256);
+            const currentEvidence = await declaredFileEvidence(session.location.directory, protocol.evidenceFiles(sessionID, id));
+            const current = await parent(sessionID);
+            if (current.location.directory !== session.location.directory)
+                throw new Error("native cwd moved before acceptance");
+            return protocol.accept(sessionID, id, currentEvidence.sha256, request.version);
         }
         if (request.action === "task.cancel") {
             if (Object.keys(request).sort().join() !== "action,context,version")
@@ -373,6 +462,24 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
             return protocol.cancel(sessionID, object(request.context));
         }
         throw new Error("unsupported global protocol action");
+    }
+    function before(event) {
+        if (event.tool !== "subagent")
+            return Promise.resolve();
+        // Leaf delegation is managed policy; unrelated primary subagents need no queue.
+        const input = object(event.input);
+        if (!ROLES.includes(event.agent) &&
+            !ROLES.includes(input.agent))
+            return Promise.resolve();
+        return serial(() => beforeManaged(event));
+    }
+    function after(event) {
+        if (!calls.has(callKey(event)) && !replayLedger.has("call", callKey(event)))
+            return Promise.resolve();
+        return serial(() => afterManaged(event));
+    }
+    function action(sessionID, input) {
+        return serial(() => actionManaged(sessionID, input));
     }
     async function register() {
         if (disposed)
@@ -400,21 +507,28 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                 description: [
                     "Control the global four-role harness after loading the delegation-orchestrator skill:",
                     "admit its normalized specification, accept independently validated work, or cancel a task.",
-                    "Call with a version-1 action object. Native session identity comes from the host, never the request.",
+                    "Control versions 1 and 2 are supported; version 2 adds status and accepted retirement. Native session identity comes from the host, never the request.",
                     "Dispatch admitted role tasks through the native subagent tool.",
                 ].join(" "),
                 options: { codemode: false },
                 input: {
                     type: "object",
                     properties: {
-                        version: { type: "integer", const: 1 },
+                        version: { type: "integer", enum: [1, 2] },
                         action: {
                             type: "string",
-                            enum: ["orchestration.admit", "orchestration.accept", "task.cancel"],
+                            enum: [
+                                "orchestration.admit",
+                                "orchestration.accept",
+                                "task.cancel",
+                                "status",
+                                "retire",
+                            ],
                         },
                         spec: { type: "object", additionalProperties: true },
                         evidenceFiles: { type: "array", items: { type: "string" } },
                         orchestrationId: { type: "string" },
+                        acceptanceDigest: { type: "string", pattern: "^[a-f0-9]{64}$" },
                         context: { type: "object", additionalProperties: true },
                     },
                     required: ["version", "action"],
@@ -432,14 +546,14 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
         await ctx.command.transform((editor) => {
             editor.add({
                 name: "delegate-orchestration",
-                description: "Admit or accept a version-1 managed protocol action",
+                description: "Control the managed protocol with a version-1 or version-2 action",
                 execute: async (input) => {
                     let request;
                     try {
                         request = JSON.parse(input.prompt.text);
                     }
                     catch {
-                        throw new Error("delegate-orchestration requires a version-1 JSON action; use the global delegation-orchestrator skill for intake and specification assembly");
+                        throw new Error("delegate-orchestration requires a version-1 or version-2 JSON action; use the global delegation-orchestrator skill for intake and specification assembly");
                     }
                     const result = await action(input.sessionID, request);
                     await ctx.session.synthetic?.({
@@ -471,33 +585,39 @@ export function createGlobalNativeAdapter(ctx, options = {}) {
                                 background: false,
                             },
                         };
-                        await before(event);
+                        pendingCommands.add(callKey(event));
                         try {
-                            const tool = (await ctx.tool.list()).find((t) => t.id === "subagent");
-                            if (!tool)
-                                throw new Error("native subagent executor unavailable");
-                            event.result = await tool.execute(event.input, {
-                                sessionID: input.sessionID,
-                                agent: caller,
-                                messageID: event.messageID,
-                                id: event.id,
-                                signal: new AbortController().signal,
-                                progress: async () => { },
-                            });
-                            event.status = "completed";
-                        }
-                        catch (error) {
-                            event.status = "error";
+                            await before(event);
+                            try {
+                                const tool = (await ctx.tool.list()).find((t) => t.id === "subagent");
+                                if (!tool)
+                                    throw new Error("native subagent executor unavailable");
+                                event.result = await tool.execute(event.input, {
+                                    sessionID: input.sessionID,
+                                    agent: caller,
+                                    messageID: event.messageID,
+                                    id: event.id,
+                                    signal: new AbortController().signal,
+                                    progress: async () => { },
+                                });
+                                event.status = "completed";
+                            }
+                            catch (error) {
+                                event.status = "error";
+                                await after(event);
+                                throw error;
+                            }
                             await after(event);
-                            throw error;
+                            if (object(object(event.result).metadata).harness === "rejected")
+                                throw new Error(JSON.stringify(event.result));
+                            await ctx.session.synthetic?.({
+                                sessionID: input.sessionID,
+                                text: JSON.stringify(event.result),
+                            });
                         }
-                        await after(event);
-                        if (object(object(event.result).metadata).harness === "rejected")
-                            throw new Error(JSON.stringify(event.result));
-                        await ctx.session.synthetic?.({
-                            sessionID: input.sessionID,
-                            text: JSON.stringify(event.result),
-                        });
+                        finally {
+                            pendingCommands.delete(callKey(event));
+                        }
                     },
                 });
         });

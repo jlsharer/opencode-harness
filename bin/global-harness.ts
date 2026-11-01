@@ -120,14 +120,16 @@ function ownedState(root: string) {
     throw new Error("harness state must be private and current-user-owned");
 }
 
-export function globalManifest(root: string): Manifest {
+export function globalManifest(root: string, options: { installedRelease?: true } = {}): Manifest {
   const value = JSON.parse(
     read(path.join(root, ".opencode/global.manifest.json")).toString(),
   ) as Manifest;
   if (
     value.version !== 1 ||
     value.profile !== "global-native" ||
-    value.protocolVersion !== "1.0.0" ||
+    !(options.installedRelease
+      ? ["1.0.0", "2.0.0"].includes(value.protocolVersion)
+      : value.protocolVersion === "2.0.0") ||
     !Array.isArray(value.assets) ||
     !value.assets.length
   )
@@ -187,7 +189,7 @@ function project(asset: Asset, bytes: Buffer, release: string): Buffer {
     text += contractGuide(role);
   } else if (asset.discovery.startsWith("commands/")) {
     const name = path.basename(asset.discovery, ".md");
-    text = `---\ndescription: Global ${name} protocol command\n---\nThe global plugin registers this command's native executor. Supply an exact version-1 protocol action (${name === "delegate-orchestration" ? "orchestration.admit, orchestration.accept or task.cancel" : "fresh role envelope"}). Ordinary conversation does not confer managed authorization.\n`;
+    text = `---\ndescription: Global ${name} protocol command\n---\nThe global plugin registers this command's native executor. Supply ${name === "delegate-orchestration" ? "an exact version-1 or version-2 control action (orchestration.admit, orchestration.accept or task.cancel; version 2 also supports status and retire)" : "an exact version-1 fresh role envelope"}. Ordinary conversation does not confer managed authorization.\n`;
   } else if (asset.discovery.endsWith("SKILL.md")) {
     text = text.replace(
       /^(---\n[\s\S]*?\n---\n)/,
@@ -363,19 +365,41 @@ export function globalOperation(command: string, options: GlobalOptions = {}) {
           throw new Error("unexpected release leaf: " + name);
       }
     };
+    if (!expected.has(".opencode/global.manifest.json"))
+      throw new Error("installed release manifest missing from inventory");
     walk(target);
     for (const item of inventory)
       if (hash(read(path.join(target, item.path))) !== item.sha256)
         throw new Error("modified release asset: " + item.path);
+    const installed = globalManifest(target, { installedRelease: true });
+    for (const member of [
+      ".opencode/schemas/global.manifest.schema.json",
+      ".opencode/plugin-modules/global-protocol.js",
+    ])
+      if (!expected.has(member))
+        throw new Error("installed version metadata missing from inventory");
+    const schema = JSON.parse(
+      read(path.join(target, ".opencode/schemas/global.manifest.schema.json")).toString(),
+    );
+    const exported = read(path.join(target, ".opencode/plugin-modules/global-protocol.js"))
+      .toString()
+      .match(/export const GLOBAL_PROFILE_VERSION = ["']([^"']+)["']/)?.[1];
+    if (
+      schema.properties?.protocolVersion?.const !== installed.protocolVersion ||
+      exported !== installed.protocolVersion
+    )
+      throw new Error("installed profile version metadata mismatch");
+    return installed.protocolVersion;
   }
 
   if (command === "doctor") {
-    if (previous) verifyRelease(previous.release);
+    const activeProtocolVersion = previous ? verifyRelease(previous.release) : null;
     return {
       profile: "global-native",
       installed: !!previous,
       activeRelease: previous?.release ?? null,
-      protocolVersion: manifest.protocolVersion,
+      protocolVersion: activeProtocolVersion,
+      packageProtocolVersion: manifest.protocolVersion,
       nativeSourceCommit: "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
       managedCapability: "requires pinned-compatible Promise API and native fixture verification",
       foreground: true,
