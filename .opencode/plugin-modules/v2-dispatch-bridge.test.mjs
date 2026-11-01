@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
+import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, rejectV2Result, } from "./v2-dispatch-bridge.js";
 import { boundedApproval, primaryExternalApprovalRules, v2DispatchStatus, v2HarnessToolCodeMode, v2PermissionSource, transformHarnessAgents, effectiveHarnessRolesReady, watchV2SessionEvents, } from "./v2-native-plugin.js";
 test("partial native agent rebuild defers four-role transform without disabling primary restrictions", () => {
     const roles = ["researcher", "planner", "implementer", "validator"];
@@ -280,4 +280,50 @@ test("V2 accepts only an exact sole JSON display fence before typed parsing", ()
     assert.equal(v2JsonResult(`\`\`\`json\n${json}\n\`\`\`\nmore`), `\`\`\`json\n${json}\n\`\`\`\nmore`);
     assert.throws(() => v2JsonResult("\`\`\`json\n{bad}\n\`\`\`"), SyntaxError);
     assert.throws(() => v2JsonResult("x".repeat(32769)), /exceeds bound/);
+});
+test("V2 fresh launch checks actual returned JobInfo identity and type", () => {
+    const text = "Background launch";
+    const event = {
+        tool: "subagent",
+        sessionID: "parent",
+        id: "call",
+        input: {},
+        status: "completed",
+        result: {
+            output: { sessionID: "child", status: "running", output: text },
+            metadata: { sessionID: "child", status: "running" },
+            content: text,
+        },
+    };
+    const child = { id: "child", parentID: "parent", model: { providerID: "fixture", id: "worker" } };
+    const job = { id: "child", type: "subagent", status: "running", started_at: 123 };
+    assert.equal(runningV2Subagent(event, child, job).output.metadata.jobType, "subagent");
+    for (const bad of [
+        { ...job, id: "foreign" },
+        { ...job, type: "other" },
+        { ...job, started_at: "123" },
+    ])
+        assert.throws(() => runningV2Subagent(event, child, bad), /identity/);
+});
+test("V2 rejection removes every native success surface and preserves the original reason", () => {
+    for (const local of [false, true]) {
+        const event = {
+            tool: "subagent",
+            sessionID: "parent",
+            id: "call",
+            input: {},
+            status: "completed",
+            result: {
+                output: { status: "completed", output: "old-success" },
+                metadata: { status: "completed", secretSuccess: "old-success" },
+                content: "old-success",
+                structuredContent: { accepted: "old-success" },
+            },
+        };
+        rejectV2Result(event, "artifact proof digest mismatched", local);
+        const text = JSON.stringify(event.result);
+        assert.doesNotMatch(text, /old-success|completed/);
+        assert.match(text, /artifact proof digest mismatched/);
+        assert.match(text, local ? /failed locally/ : /stopped/);
+    }
 });

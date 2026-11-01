@@ -2563,3 +2563,494 @@ test("managed v2 forwards selected duration and ceiling without legacy override"
     /ceiling/,
   );
 });
+
+// Actual native JobInfo fields; the transport preserves these identities separately
+// from the lookup arguments. No generation token or globally settled hook is invented.
+async function nativeLocalFixture(
+  role: TaskThreadRole = "researcher",
+  holdLaunch = false,
+  withValidator = false,
+) {
+  const f = fixture(role, 100000);
+  if (withValidator) {
+    f.spec.roleModeTaskMapping.push({
+      workUnitId: "a",
+      role: "validator",
+      taskMode: "validation",
+      boundedTask: "Independently validate retained effects",
+    });
+    fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+  }
+  let child = "native-child";
+  let job = {
+    id: child,
+    type: "subagent",
+    status: "running",
+    started_at: 123,
+    completed_at: 124,
+    output: "",
+    error: undefined as unknown,
+  };
+  let session = { id: child, parentID: "parent" };
+  let now = 100;
+  let inspection: (() => Promise<void>) | undefined;
+  let settleLaunch: (() => void) | undefined;
+  const managed = createManagedDispatch({
+    ...f.options,
+    now: () => now,
+    delegation: backgroundPolicy,
+    backgroundTransport: {
+      enabled: true,
+      models: async () => ({ parent: "fixture/parent", worker: "fixture/worker" }),
+      inspect: async () => {
+        if (inspection) await inspection();
+        return {
+          sessionId: session.id,
+          parent: session.parentID,
+          idle: job.status !== "running",
+          messages: [],
+          job: {
+            id: job.id,
+            type: job.type,
+            status: job.status,
+            startedAt: job.started_at,
+            completedAt: job.completed_at,
+            output: job.output,
+          },
+        };
+      },
+      abort: async () => {},
+    },
+  });
+  const start = async (id = "task", call = "native-call", nextChild = child) => {
+    child = nextChild;
+    session = { id: child, parentID: "parent" };
+    job = { ...job, id: child, status: "running" };
+    const admission = f.args(f.packet(id));
+    await managed.beforeTask({ sessionID: "parent", callID: call }, admission);
+    managed.sessionCreated({ id: child, parentID: "parent" });
+    if (holdLaunch) settleLaunch = managed.beginOwnedCallback({ callID: call });
+    managed.afterTask(
+      { callID: call },
+      {
+        metadata: {
+          sessionId: child,
+          jobId: child,
+          jobType: "subagent",
+          background: true,
+          jobStartedAt: 123,
+          model: { providerID: "fixture", modelID: "worker" },
+        },
+        output: `<task id="${child}" state="running">\nBackground launch</task>`,
+      },
+    );
+    await new Promise((resolve) => setImmediate(resolve));
+    return admission;
+  };
+  await start();
+  return {
+    ...f,
+    managed,
+    start,
+    finishLaunch: () => settleLaunch?.(),
+    job: () => job,
+    session: () => session,
+    inspectWith: (fn?: () => Promise<void>) => {
+      inspection = fn;
+    },
+    expire: () => {
+      now = 100101;
+    },
+    terminal: (result: unknown) => {
+      job.status = "completed";
+      job.output = JSON.stringify(result);
+    },
+  };
+}
+
+for (const role of ["researcher", "validator"] as const) {
+  test(`fresh native initial turn rejects ${role === "validator" ? "missing command" : "artifact"} proof locally and permits fresh remediation`, async () => {
+    const f = await nativeLocalFixture(role);
+    const result = f.success();
+    if (role === "researcher") result.artifacts[0]!.sha256 = "0".repeat(64);
+    f.terminal(result);
+    const outcome = await f.managed.reconcileBackground("native-child");
+    assert.equal(f.managed.snapshot().stopped, false);
+    assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+    assert.equal(f.managed.snapshot().runs[0]!.gates["gate-a"], undefined);
+    assert.match(
+      JSON.stringify(outcome),
+      role === "validator" ? /trusted command/ : /digest mismatched/,
+    );
+    await assert.rejects(
+      () =>
+        f.managed.beforeTask(
+          { sessionID: "parent", callID: "native-call" },
+          f.args(f.packet("retry")),
+        ),
+      /replay|duplicate|used/,
+    );
+    const retryAdmission = await f.start("retry", "retry-call", "retry-child");
+    assert.match(retryAdmission.prompt, /unaccepted rejected-attempt effects/);
+    const retry = { ...f.success(), delegationTaskId: "retry" };
+    if (role === "validator") f.managed.verifyCommand("retry-child", "true");
+    f.terminal(retry);
+    await f.managed.reconcileBackground("retry-child");
+    assert.equal(f.managed.snapshot().runs[0]!.attempts[1]!.state, "success");
+    assert.throws(
+      () =>
+        f.managed.afterTask(
+          { callID: "native-call" },
+          { metadata: { sessionId: "native-child" }, output: "late" },
+        ),
+      /duplicate|uncorrelated/,
+    );
+  });
+}
+
+for (const mutation of [
+  "job-id",
+  "job-type",
+  "session-id",
+  "parent",
+  "started",
+  "completion",
+  "completion-missing",
+  "completion-reversed",
+  "cancelled",
+  "callback",
+  "callback-poison",
+  "expired",
+  "spec",
+  "scope",
+] as const) {
+  test(`local artifact rejection retains stop without ${mutation} proof`, async () => {
+    const f = await nativeLocalFixture();
+    const result = f.success();
+    result.artifacts[0]!.sha256 = "0".repeat(64);
+    f.terminal(result);
+    if (mutation === "job-id") f.job().id = "foreign";
+    if (mutation === "job-type") f.job().type = "other";
+    if (mutation === "session-id") f.session().id = "foreign";
+    if (mutation === "parent") f.session().parentID = "foreign";
+    if (mutation === "started") f.job().started_at = 122;
+    if (mutation === "completion") f.job().completed_at = NaN;
+    if (mutation === "completion-missing")
+      delete (f.job() as { completed_at?: number }).completed_at;
+    if (mutation === "completion-reversed") f.job().completed_at = 122;
+    if (mutation === "cancelled") f.job().status = "cancelled";
+    if (mutation === "callback") f.managed.beginOwnedCallback({ callID: "native-call" });
+    if (mutation === "callback-poison")
+      f.managed.beginOwnedCallback({ callID: "native-call" })(new Error("callback failed"));
+    if (mutation === "expired") f.expire();
+    if (mutation === "spec")
+      fs.writeFileSync(f.specFile, JSON.stringify({ ...f.spec, goal: "changed" }));
+    if (mutation === "scope") fs.writeFileSync(path.join(f.workspace, "outside.txt"), "unexpected");
+    await assert.rejects(f.managed.reconcileBackground("native-child"));
+    assert.equal(f.managed.snapshot().stopped, true);
+    assert.notEqual(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+  });
+}
+
+for (const poison of [false, true])
+  test(`native command ${poison ? "failed callback" : "pending callback"} cannot authorize local proof rejection`, async () => {
+    const f = await nativeLocalFixture("validator");
+    f.managed.beforeTool(
+      { sessionID: "native-child", callID: "command", tool: "bash" },
+      { command: "true" },
+    );
+    if (poison) {
+      assert.throws(
+        () =>
+          f.managed.afterTool(
+            { sessionID: "native-child", callID: "command", tool: "bash" },
+            { metadata: {} },
+          ),
+        /exit status/,
+      );
+      // A subsequent good callback must not erase the original failed callback's poison.
+      f.managed.verifyCommand("native-child", "true");
+    }
+    const result = f.success();
+    result.artifacts[0]!.sha256 = "0".repeat(64);
+    f.terminal(result);
+    await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+    assert.equal(f.managed.snapshot().stopped, true);
+  });
+
+test("ever-updated native turn stays ineligible after all acknowledgements clear", async () => {
+  const f = await nativeLocalFixture();
+  await f.managed.beforeTask(
+    { sessionID: "parent", callID: "update-call" },
+    {
+      subagent_type: "researcher",
+      task_id: "native-child",
+      prompt: formatTaskThreadEnvelope({
+        version: 1,
+        kind: "queued-update",
+        delegationTaskId: "task",
+        requestId: "update",
+        context: "New context",
+      }),
+    },
+  );
+  f.managed.afterTask(
+    { callID: "update-call" },
+    {
+      metadata: {
+        sessionId: "native-child",
+        jobId: "native-child",
+        jobType: "subagent",
+        background: true,
+        jobStartedAt: 123,
+        model: { providerID: "fixture", modelID: "worker" },
+      },
+      output: '<task id="native-child" state="running">updated</task>',
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+  assert.equal(f.managed.snapshot().stopped, true);
+});
+
+test("admission awaiting inspection cannot become empty-ledger terminal proof", async () => {
+  const f = await nativeLocalFixture();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.inspectWith(() => blocked);
+  const update = f.managed.beforeTask(
+    { sessionID: "parent", callID: "update-call" },
+    {
+      subagent_type: "researcher",
+      task_id: "native-child",
+      prompt: formatTaskThreadEnvelope({
+        version: 1,
+        kind: "queued-update",
+        delegationTaskId: "task",
+        requestId: "update",
+        context: "New context",
+      }),
+    },
+  );
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  f.inspectWith();
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+  release();
+  await assert.rejects(update, /no longer running/);
+  assert.equal(f.managed.snapshot().stopped, true);
+});
+
+test("scope changes during terminal inspection retain stop and the original artifact rejection", async () => {
+  const f = await nativeLocalFixture("implementer");
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  f.inspectWith(async () => {
+    fs.writeFileSync(path.join(f.workspace, "outside.txt"), "escape");
+  });
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /scope/);
+  assert.equal(f.managed.snapshot().stopped, true);
+});
+
+test("retained writer effects remain unaccepted after proven local artifact rejection", async () => {
+  const f = await nativeLocalFixture("implementer");
+  fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "rejected effects");
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  await f.managed.reconcileBackground("native-child");
+  assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "rejected effects");
+  assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+  assert.deepEqual(f.managed.snapshot().runs[0]!.gates, {});
+  assert.match(
+    JSON.stringify(f.telemetry.find((entry) => entry.event === "failed-locally")),
+    /unaccepted rejected-attempt effects/,
+  );
+});
+
+for (const root of ["trace", "workspace"] as const)
+  test(`replacement ${root} root cannot supply local failure identity`, async () => {
+    const f = await nativeLocalFixture();
+    const result = f.success();
+    result.artifacts[0]!.sha256 = "0".repeat(64);
+    f.terminal(result);
+    fs.renameSync(f[root], f[root] + "-previous");
+    fs.cpSync(f[root] + "-previous", f[root], { recursive: true });
+    await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+    assert.equal(f.managed.snapshot().stopped, true);
+  });
+
+test("ever-clarified native child stays ineligible after the response callback settles", async () => {
+  const f = await nativeLocalFixture();
+  f.terminal({
+    version: 1,
+    orchestrationId: "fixture",
+    delegationTaskId: "task",
+    scopeKey: "a",
+    role: "researcher",
+    taskMode: "research",
+    outcome: "clarification",
+    summary: "Need choice",
+    requestNonce: "nonce",
+    question: "Which input?",
+    evidence: [],
+    artifacts: [],
+  });
+  await f.managed.reconcileBackground("native-child");
+  await f.managed.beforeTask(
+    { sessionID: "parent", callID: "reply" },
+    {
+      subagent_type: "researcher",
+      task_id: "native-child",
+      prompt: formatTaskThreadEnvelope({
+        version: 1,
+        kind: "clarification-response",
+        delegationTaskId: "task",
+        requestNonce: "nonce",
+        answer: "fixture",
+      }),
+    },
+  );
+  f.job().status = "running";
+  f.managed.afterTask(
+    { callID: "reply" },
+    {
+      metadata: {
+        sessionId: "native-child",
+        jobId: "native-child",
+        jobType: "subagent",
+        background: true,
+        jobStartedAt: 123,
+        model: { providerID: "fixture", modelID: "worker" },
+      },
+      output: '<task id="native-child" state="running">reply</task>',
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /digest mismatched/);
+  assert.equal(f.managed.snapshot().stopped, true);
+});
+
+for (const race of ["second-inspection", "expiry", "interruption", "abort"] as const)
+  test(`native terminal inspection rejects a raced ${race}`, async () => {
+    const f = await nativeLocalFixture();
+    const result = f.success();
+    result.artifacts[0]!.sha256 = "0".repeat(64);
+    f.terminal(result);
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    f.inspectWith(() => pending);
+    const completion = f.managed.reconcileBackground("native-child");
+    if (race === "second-inspection") await f.managed.reconcileBackground("native-child");
+    if (race === "expiry") f.expire();
+    if (race === "interruption") f.managed.interrupt("raced stop");
+    const abort = race === "abort" ? f.managed.cancelBackground("parent") : undefined;
+    release();
+    await completion.catch(() => {});
+    await abort?.catch(() => {});
+    assert.notEqual(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+    assert.notEqual(f.managed.snapshot().runs[0]!.attempts[0]!.state, "success");
+    assert.equal(f.managed.snapshot().stopped, true);
+  });
+
+test("malformed fenced typed result cannot erase checked observation or create local failure proof", async () => {
+  const f = await nativeLocalFixture();
+  f.terminal({});
+  f.job().output = '```json\n{"broken":}\n```';
+  await assert.rejects(f.managed.reconcileBackground("native-child"), /JSON/);
+  assert.equal(f.managed.snapshot().stopped, true);
+});
+
+test("local failure leaves an unrelated workflow available for fresh dispatch", async () => {
+  const f = await nativeLocalFixture();
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  await f.managed.reconcileBackground("native-child");
+  const directory = path.join(f.trace, "orchestrations/unrelated");
+  fs.mkdirSync(directory);
+  fs.writeFileSync(
+    path.join(directory, "normalized-spec.json"),
+    JSON.stringify({ ...f.spec, orchestrationId: "unrelated" }),
+  );
+  await f.managed.beforeTask(
+    { sessionID: "other-parent", callID: "other-call" },
+    f.args({ ...f.packet("other-task"), orchestrationId: "unrelated" }),
+  );
+  assert.equal(f.managed.snapshot().runs[0]!.interrupted, false);
+  assert.equal(f.managed.snapshot().runs[1]!.active, 1);
+});
+
+test("owned launch callback retains pending admission until its entire callback settles", async () => {
+  const f = await nativeLocalFixture("researcher", true);
+  const result = f.success();
+  result.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(result);
+  await f.managed.reconcileBackground("native-child");
+  assert.equal(f.managed.snapshot().runs[0]!.active, 1);
+  f.finishLaunch();
+  await f.managed.reconcileBackground("native-child");
+  assert.equal(f.managed.snapshot().runs[0]!.attempts[0]!.state, "failed");
+  assert.equal(f.managed.snapshot().stopped, false);
+});
+
+test("fresh writer remediation and independent validator alone accept retained rejected effects", async () => {
+  const f = await nativeLocalFixture("implementer", false, true);
+  fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "retained rejected edit");
+  const rejected = f.success();
+  rejected.artifacts[0]!.sha256 = "0".repeat(64);
+  f.terminal(rejected);
+  await f.managed.reconcileBackground("native-child");
+  await f.start("writer-retry", "writer-retry-call", "writer-retry-child");
+  f.terminal({ ...f.success(), delegationTaskId: "writer-retry" });
+  await f.managed.reconcileBackground("writer-retry-child");
+  assert.deepEqual(f.managed.snapshot().runs[0]!.gates, {});
+  const validator = fixture("validator");
+  const args = validator.args(validator.packet("independent-validation"));
+  f.job().id = "validator-child";
+  f.job().status = "running";
+  f.session().id = "validator-child";
+  await f.managed.beforeTask({ sessionID: "parent", callID: "validator-call" }, args);
+  assert.match(args.prompt, /unaccepted rejected-attempt effects/);
+  f.managed.sessionCreated({ id: "validator-child", parentID: "parent" });
+  f.managed.afterTask(
+    { callID: "validator-call" },
+    {
+      metadata: {
+        sessionId: "validator-child",
+        jobId: "validator-child",
+        jobType: "subagent",
+        background: true,
+        jobStartedAt: 123,
+        model: { providerID: "fixture", modelID: "worker" },
+      },
+      output: '<task id="validator-child" state="running">validate</task>',
+    },
+  );
+  await new Promise((resolve) => setImmediate(resolve));
+  const accepted = { ...validator.success(), delegationTaskId: "independent-validation" };
+  const reference = accepted.artifacts[0]!.reference;
+  fs.mkdirSync(path.dirname(path.join(f.trace, reference)), { recursive: true });
+  fs.copyFileSync(path.join(validator.trace, reference), path.join(f.trace, reference));
+  f.managed.verifyCommand("validator-child", "true");
+  f.terminal(accepted);
+  await f.managed.reconcileBackground("validator-child");
+  assert.equal(typeof f.managed.snapshot().runs[0]!.gates["gate-a"], "string");
+  assert.equal(
+    fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"),
+    "retained rejected edit",
+  );
+  assert.equal(f.managed.snapshot().stopped, false);
+});

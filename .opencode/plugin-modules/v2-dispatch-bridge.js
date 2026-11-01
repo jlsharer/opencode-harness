@@ -72,7 +72,7 @@ export async function admitV2Subagent(event, beforeTask) {
     if (Object.hasOwn(args, "task_id"))
         input.sessionID = args.task_id;
 }
-export function runningV2Subagent(event, child, startedAt) {
+export function runningV2Subagent(event, child, nativeJob) {
     if (event.tool !== "subagent" || event.status !== "completed")
         throw new Error("V2 native background launch did not complete");
     const parent = identity(event.sessionID, "parent session");
@@ -82,6 +82,15 @@ export function runningV2Subagent(event, child, startedAt) {
     const metadata = record(result.metadata, "background metadata");
     const childID = identity(output.sessionID, "child session");
     const model = record(child.model, "background child model");
+    // Numeric legacy observations remain usable for existing completion handling,
+    // but only the actual checked JobInfo carries the fresh-turn local-proof type.
+    const job = typeof nativeJob === "number" ? undefined : record(nativeJob, "native JobInfo");
+    const startedAt = job ? job.started_at : nativeJob;
+    if (job &&
+        (job.id !== childID ||
+            job.type !== "subagent" ||
+            !["running", "completed"].includes(String(job.status))))
+        throw new Error("V2 native Job identity mismatch");
     if (output.status !== "running" ||
         metadata.status !== "running" ||
         metadata.sessionID !== childID ||
@@ -102,6 +111,7 @@ export function runningV2Subagent(event, child, startedAt) {
                 jobId: childID,
                 background: true,
                 jobStartedAt: startedAt,
+                ...(job ? { jobType: "subagent" } : {}),
                 model: {
                     providerID: identity(model.providerID, "worker provider"),
                     modelID: modelID(model.id),
@@ -136,5 +146,16 @@ export function completedV2Subagent(event, child) {
             metadata: { sessionId: childID },
             output: formatTaskResultWrapper(v2JsonResult(output.output), childID),
         },
+    };
+}
+export function rejectV2Result(event, reason, local) {
+    const text = `Harness V2 managed result rejected: ${reason}. ` +
+        (local
+            ? "The task failed locally; retained effects are unaccepted and require fresh remediation and independent validation."
+            : "The workflow is stopped and requires fresh reviewed evidence.");
+    event.result = {
+        content: [{ type: "text", text }],
+        output: { status: "rejected", output: text },
+        metadata: { status: "rejected", harness: "rejected", callID: event.id },
     };
 }

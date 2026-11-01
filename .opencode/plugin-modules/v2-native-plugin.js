@@ -6,7 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createManagedDispatch, parseDelegationPolicy, parseWorkflowRegistryCapacity, } from "./managed-dispatch.js";
 import { enforceRecoveryShell } from "./managed-execution.js";
-import { admitV2Subagent, completedV2Subagent, runningV2Subagent, v2JsonResult, } from "./v2-dispatch-bridge.js";
+import { admitV2Subagent, completedV2Subagent, runningV2Subagent, rejectV2Result, v2JsonResult, } from "./v2-dispatch-bridge.js";
 import { validateTaskResult } from "./task-contracts.js";
 import { appendV2CompactionContext } from "./compaction-handoff.js";
 import { appendDelegationContext } from "./context-budget.js";
@@ -485,6 +485,9 @@ function v2NativeSetup(trustedOptions) {
                     const session = data(await context.session.get({ sessionID: child }));
                     const current = await job.get({ id: child });
                     const worker = current ? data(current) : null;
+                    if (session.id !== child ||
+                        (worker && (worker.id !== child || worker.type !== "subagent")))
+                        throw new Error("V2 native inspected Job/session identity mismatch");
                     const terminal = worker && worker.status !== "running";
                     const idle = Boolean(terminal) &&
                         (worker?.status === "completed"
@@ -493,16 +496,19 @@ function v2NativeSetup(trustedOptions) {
                         Boolean(session.time && record(session.time).idle);
                     return {
                         parent: String(session.parentID ?? ""),
+                        sessionId: String(session.id),
                         idle,
                         messages: [],
                         ...(terminal
                             ? {
                                 job: {
+                                    id: worker.id,
+                                    type: worker.type,
                                     status: String(worker.status),
-                                    startedAt: Number(worker.started_at),
-                                    completedAt: Number(worker.completed_at),
+                                    startedAt: worker.started_at,
+                                    completedAt: worker.completed_at,
                                     ...(worker.status === "completed" && typeof worker.output === "string"
-                                        ? { output: v2JsonResult(worker.output) }
+                                        ? { output: worker.output }
                                         : {}),
                                 },
                             }
@@ -683,11 +689,32 @@ function v2NativeSetup(trustedOptions) {
         });
         await context.tool.hook("execute.after", async (event) => {
             if (event.tool !== "subagent") {
-                const result = event.status === "completed" ? record(event.result) : {};
-                const metadata = result.metadata && typeof result.metadata === "object" ? result.metadata : {};
-                dispatch.afterTool({ sessionID: event.sessionID, callID: event.id, tool: nativeTool(event.tool) }, { metadata });
+                const settle = dispatch.beginOwnedCallback({
+                    sessionID: event.sessionID,
+                    callID: event.id,
+                });
+                let failure;
+                try {
+                    const result = event.status === "completed" ? record(event.result) : {};
+                    const metadata = result.metadata && typeof result.metadata === "object" ? result.metadata : {};
+                    dispatch.afterTool({ sessionID: event.sessionID, callID: event.id, tool: nativeTool(event.tool) }, { metadata });
+                }
+                catch (error) {
+                    failure = error;
+                    throw error;
+                }
+                finally {
+                    settle(failure);
+                }
                 return;
             }
+            const priorLocal = dispatch.localRejection(event.id);
+            if (priorLocal) {
+                rejectV2Result(event, priorLocal.rejection, true);
+                return;
+            }
+            const settle = dispatch.beginOwnedCallback({ sessionID: event.sessionID, callID: event.id });
+            let callbackFailure;
             let view = null;
             const observe = (outcome, artifacts = [], diagnostic = null) => {
                 if (!view)
@@ -725,7 +752,7 @@ function v2NativeSetup(trustedOptions) {
                 const response = record(await context.session.get({ sessionID: output.sessionID }));
                 const child = response.data && typeof response.data === "object" ? record(response.data) : response;
                 const checked = output.status === "running"
-                    ? runningV2Subagent(event, { id: child.id, parentID: child.parentID, model: child.model }, data(await job.get({ id: output.sessionID })).started_at)
+                    ? runningV2Subagent(event, { id: child.id, parentID: child.parentID, model: child.model }, data(await job.get({ id: output.sessionID })))
                     : completedV2Subagent(event, { id: child.id, parentID: child.parentID });
                 dispatch.sessionCreated(child);
                 view = dispatch.currentTaskView(event.sessionID);
@@ -749,6 +776,11 @@ function v2NativeSetup(trustedOptions) {
                             : "invalid V2 terminal result";
                     }
                 }
+                if (completed.outcome === "rejected" || completed.outcome === "rejected-local") {
+                    rejectV2Result(event, completed.outcome === "rejected-local"
+                        ? completed.rejection
+                        : (diagnostic ?? "task result rejected"), !dispatch.snapshot().stopped);
+                }
                 observe(completed.outcome, "result" in completed ? (completed.result?.artifacts ?? []) : [], diagnostic);
                 if (completed.outcome === "running" && view) {
                     const current = view;
@@ -760,7 +792,12 @@ function v2NativeSetup(trustedOptions) {
                         pending = true;
                         void dispatch
                             .reconcileBackground(childID)
-                            .then(() => {
+                            .then((outcome) => {
+                            const local = dispatch.localRejection(event.id);
+                            if (local)
+                                rejectV2Result(event, local.rejection, true);
+                            else if (outcome?.outcome === "rejected-local")
+                                rejectV2Result(event, outcome.rejection, true);
                             const snapshot = dispatch.snapshot();
                             const run = snapshot.runs.find((candidate) => candidate.attempts.some((attempt) => attempt.id === current.delegationTaskId));
                             const attempt = run?.attempts.find((item) => item.id === current.delegationTaskId);
@@ -783,10 +820,14 @@ function v2NativeSetup(trustedOptions) {
                                 // Coordination only; no acceptance proof is inferred.
                             }
                         })
-                            .catch(() => {
+                            .catch((error) => {
                             clearInterval(timer);
                             backgroundObservers.delete(timer);
-                            dispatch.interruptIfCurrent(childID, "V2 background Job inspection rejected");
+                            const local = dispatch.localRejection(event.id);
+                            rejectV2Result(event, local?.rejection ??
+                                (error instanceof Error ? error.message : "native proof unavailable"), !!local);
+                            if (!local)
+                                dispatch.interruptIfCurrent(childID, "V2 background Job inspection rejected");
                         })
                             .finally(() => {
                             pending = false;
@@ -796,16 +837,16 @@ function v2NativeSetup(trustedOptions) {
                     backgroundObservers.add(timer);
                 }
             }
-            catch {
-                dispatch.interruptIfCurrent(event.sessionID, "V2 native subagent completion could not be proven");
+            catch (error) {
+                callbackFailure = error;
+                const local = dispatch.localRejection(event.id);
+                if (!local)
+                    dispatch.interruptIfCurrent(event.sessionID, "V2 native subagent completion could not be proven");
                 observe("result-proof-failed");
-                if (event.status === "completed" && event.result && typeof event.result === "object")
-                    record(event.result).content = [
-                        {
-                            type: "text",
-                            text: "Harness V2 managed result rejected; the workflow is stopped and requires fresh reviewed evidence.",
-                        },
-                    ];
+                rejectV2Result(event, local?.rejection ?? (error instanceof Error ? error.message : "native proof unavailable"), !!local);
+            }
+            finally {
+                settle(callbackFailure);
             }
         });
         await context.tool.transform((editor) => {
