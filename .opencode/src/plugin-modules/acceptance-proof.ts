@@ -29,6 +29,14 @@ export interface CommandObservation {
 }
 export type ArtifactSnapshot = Record<string, string>;
 
+/** Only absence during the initial artifact path scan can be a local proof failure. */
+export class MissingArtifactError extends Error {
+  constructor(cause: NodeJS.ErrnoException) {
+    super(cause.message, { cause });
+    this.name = "MissingArtifactError";
+  }
+}
+
 const hash = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 
 const SECRET =
@@ -59,14 +67,22 @@ function canonicalRoot(root: string): string {
   return root;
 }
 
-function fileHash(root: string, name: string): string {
+function fileHash(root: string, name: string, artifact = false): string {
   relative(name);
   if (SECRET.test(name) || name.split("/").some((p) => p === ".aws" || p === ".ssh"))
     throw new Error("secret candidate prevents acceptance proof");
   let current = root;
   for (const part of name.split("/")) {
     current = path.join(current, part);
-    if (lstatSync(current).isSymbolicLink()) throw new Error("symlink prevents acceptance proof");
+    let entry;
+    try {
+      entry = lstatSync(current);
+    } catch (error) {
+      if (artifact && (error as NodeJS.ErrnoException).code === "ENOENT")
+        throw new MissingArtifactError(error as NodeJS.ErrnoException);
+      throw error;
+    }
+    if (entry.isSymbolicLink()) throw new Error("symlink prevents acceptance proof");
   }
   const fd = openSync(current, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -218,7 +234,19 @@ export function captureArtifacts(root: string, paths: string[]): ArtifactSnapsho
   canonicalRoot(root);
   if (!paths.length || paths.length > 64 || new Set(paths).size !== paths.length)
     throw new Error("proof requires 1–64 distinct artifacts");
-  return Object.fromEntries([...paths].sort().map((p) => [relative(p), fileHash(root, p)]));
+  const entries: [string, string][] = [];
+  let missing: MissingArtifactError | undefined;
+  for (const name of [...paths].sort()) {
+    try {
+      entries.push([relative(name), fileHash(root, name, true)]);
+    } catch (error) {
+      if (!(error instanceof MissingArtifactError)) throw error;
+      missing ??= error;
+    }
+  }
+  // Missing proof is safe to classify only after every other artifact passed its safety checks.
+  if (missing) throw missing;
+  return Object.fromEntries(entries);
 }
 
 /** Commands MUST come from the trusted tool collector, never parsed worker output. */

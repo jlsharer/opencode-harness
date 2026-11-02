@@ -16,6 +16,22 @@ import { parseWin64RelaunchPolicy, relaunchExistingWin64Snapshot, planWin64Build
 import { loadRoutingConfigSelection } from "../routing/routing-config-loader.mjs";
 import { normalizeAndValidateRoutingConfig, resolveAllHarnessRoleAssignments, resolveRoutingDecision, } from "../routing/routing-policy.mjs";
 import { planTraceRootPermissions, TRACE_ONLY_ROLES, TRACE_PERMISSION_ROLES, } from "./trace-root-permissions.js";
+const DIRECT_INPUT_FIELDS = ["agent", "description", "prompt", "model", "sessionID", "background"];
+/** Native Struct decoding may reorder keys; field presence and values must stay exact. */
+function canonicalDirectInput(value) {
+    if (!value || typeof value !== "object" || Array.isArray(value))
+        return null;
+    const fields = Object.getOwnPropertyDescriptors(value);
+    if (Reflect.ownKeys(fields).some((key) => typeof key !== "string" || !DIRECT_INPUT_FIELDS.includes(key)) ||
+        DIRECT_INPUT_FIELDS.some((key, index) => {
+            const field = fields[key];
+            if (!field)
+                return index < 3;
+            return (!("value" in field) || typeof field.value !== (key === "background" ? "boolean" : "string"));
+        }))
+        return null;
+    return JSON.stringify(DIRECT_INPUT_FIELDS.map((key) => [key, Object.hasOwn(fields, key), fields[key]?.value]));
+}
 function exactActionRequest(raw, names) {
     if (typeof raw !== "string" || raw.length > 4096)
         throw new Error("bounded action request required");
@@ -57,6 +73,10 @@ export function primaryExternalApprovalRules(existing) {
     // Keep configured denies last so neither an ask nor a saved approval can override them.
     const denies = existing.filter((rule) => rule.effect === "deny");
     return [...existing, ...asks, ...denies];
+}
+function assertDirectSessionApis(session) {
+    if (["create", "prompt", "wait", "get", "context", "interrupt"].some((operation) => typeof session[operation] !== "function"))
+        throw new Error("V2 direct public session API unavailable");
 }
 /** A registry rebuild may see only part of the project agent source. */
 export function transformHarnessAgents(editor, permissions, assignments, variants) {
@@ -688,7 +708,7 @@ function v2NativeSetup(trustedOptions) {
                         throw new Error("reused native direct call identity");
                     }
                     directCalls.set(String(event.id), {
-                        input: JSON.stringify(event.input),
+                        input: canonicalDirectInput(event.input),
                         caller: {
                             sessionID: event.sessionID,
                             agent: event.agent,
@@ -788,7 +808,7 @@ function v2NativeSetup(trustedOptions) {
                 try {
                     if (directCall.after ||
                         event.status !== "completed" ||
-                        JSON.stringify(event.input) !== directCall.input ||
+                        canonicalDirectInput(event.input) !== directCall.input ||
                         ["sessionID", "agent", "messageID", "id"].some((key) => event[key] !==
                             directCall.caller[key]) ||
                         JSON.stringify(privateResult) !== directCall.result)
@@ -950,6 +970,8 @@ function v2NativeSetup(trustedOptions) {
                             let handle = null;
                             const call = directCalls.get(caller.id);
                             try {
+                                if (!ready || !verifyRoles || dispatch.snapshot().stopped)
+                                    throw new Error("V2 harness guard activation is incomplete or stopped");
                                 handle = dispatch.claimDirectTask(caller);
                                 if (!handle)
                                     return await original(input, caller);
@@ -958,9 +980,10 @@ function v2NativeSetup(trustedOptions) {
                                 if (!call ||
                                     !ready ||
                                     !verifyRoles ||
-                                    JSON.stringify(input) !== call.input ||
-                                    input.model !== undefined ||
-                                    input.sessionID !== undefined ||
+                                    !call.input ||
+                                    canonicalDirectInput(input) !== call.input ||
+                                    Object.hasOwn(input, "model") ||
+                                    Object.hasOwn(input, "sessionID") ||
                                     !caller.signal)
                                     throw new Error("direct input or native caller changed");
                                 await verifyRoles();
@@ -988,12 +1011,11 @@ function v2NativeSetup(trustedOptions) {
                                     resources: ["implementer"],
                                     save: ["implementer"],
                                 });
-                                if (JSON.stringify(input) !== call.input ||
+                                if (canonicalDirectInput(input) !== call.input ||
                                     ["sessionID", "agent", "messageID", "id"].some((key) => caller[key] !==
                                         call.caller[key]))
                                     throw new Error("direct invocation changed during permission assertion");
-                                if (!context.session.create || !context.session.prompt || !context.session.context)
-                                    throw new Error("V2 direct public session API unavailable");
+                                assertDirectSessionApis(context.session);
                                 const model = record(worker.model ?? parent.model);
                                 if (typeof model.id !== "string" ||
                                     typeof model.providerID !== "string" ||
@@ -1457,6 +1479,8 @@ function v2NativeSetup(trustedOptions) {
             directLease.assertClear();
             if (directImplementation && !directWrapped)
                 throw new Error("V2 direct executor registration unavailable");
+            if (directImplementation)
+                assertDirectSessionApis(context.session);
             activationMarker(plan, directImplementation);
             ready = true;
         })

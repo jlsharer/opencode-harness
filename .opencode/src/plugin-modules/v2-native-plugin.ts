@@ -61,6 +61,30 @@ import {
 
 type RecordValue = Record<string, unknown>;
 
+const DIRECT_INPUT_FIELDS = ["agent", "description", "prompt", "model", "sessionID", "background"];
+
+/** Native Struct decoding may reorder keys; field presence and values must stay exact. */
+function canonicalDirectInput(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const fields = Object.getOwnPropertyDescriptors(value);
+  if (
+    Reflect.ownKeys(fields).some(
+      (key) => typeof key !== "string" || !DIRECT_INPUT_FIELDS.includes(key),
+    ) ||
+    DIRECT_INPUT_FIELDS.some((key, index) => {
+      const field = fields[key];
+      if (!field) return index < 3;
+      return (
+        !("value" in field) || typeof field.value !== (key === "background" ? "boolean" : "string")
+      );
+    })
+  )
+    return null;
+  return JSON.stringify(
+    DIRECT_INPUT_FIELDS.map((key) => [key, Object.hasOwn(fields, key), fields[key]?.value]),
+  );
+}
+
 function exactActionRequest(raw: unknown, names: string[]): RecordValue {
   if (typeof raw !== "string" || raw.length > 4096)
     throw new Error("bounded action request required");
@@ -199,6 +223,15 @@ interface V2Context {
 }
 
 type V2AgentEditor = Parameters<Parameters<V2Context["agent"]["transform"]>[0]>[0];
+
+function assertDirectSessionApis(session: V2Context["session"]): void {
+  if (
+    (["create", "prompt", "wait", "get", "context", "interrupt"] as const).some(
+      (operation) => typeof session[operation] !== "function",
+    )
+  )
+    throw new Error("V2 direct public session API unavailable");
+}
 
 /** A registry rebuild may see only part of the project agent source. */
 export function transformHarnessAgents(
@@ -884,7 +917,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
       string,
       {
         handle?: DirectTaskHandle;
-        input: string;
+        input: string | null;
         caller: { sessionID: unknown; agent: unknown; messageID: unknown; id: unknown };
         result?: string;
         stop?: () => void;
@@ -968,7 +1001,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
             throw new Error("reused native direct call identity");
           }
           directCalls.set(String(event.id), {
-            input: JSON.stringify(event.input),
+            input: canonicalDirectInput(event.input),
             caller: {
               sessionID: event.sessionID,
               agent: event.agent,
@@ -1080,7 +1113,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
           if (
             directCall.after ||
             event.status !== "completed" ||
-            JSON.stringify(event.input) !== directCall.input ||
+            canonicalDirectInput(event.input) !== directCall.input ||
             ["sessionID", "agent", "messageID", "id"].some(
               (key) =>
                 event[key as keyof V2ToolAfter] !==
@@ -1281,6 +1314,8 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
               let handle: DirectTaskHandle | null = null;
               const call = directCalls.get(caller.id);
               try {
+                if (!ready || !verifyRoles || dispatch.snapshot().stopped)
+                  throw new Error("V2 harness guard activation is incomplete or stopped");
                 handle = dispatch.claimDirectTask(caller);
                 if (!handle) return await original(input, caller);
                 if (call) call.handle = handle;
@@ -1288,9 +1323,10 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
                   !call ||
                   !ready ||
                   !verifyRoles ||
-                  JSON.stringify(input) !== call.input ||
-                  input.model !== undefined ||
-                  input.sessionID !== undefined ||
+                  !call.input ||
+                  canonicalDirectInput(input) !== call.input ||
+                  Object.hasOwn(input, "model") ||
+                  Object.hasOwn(input, "sessionID") ||
                   !caller.signal
                 )
                   throw new Error("direct input or native caller changed");
@@ -1322,7 +1358,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
                   save: ["implementer"],
                 });
                 if (
-                  JSON.stringify(input) !== call.input ||
+                  canonicalDirectInput(input) !== call.input ||
                   ["sessionID", "agent", "messageID", "id"].some(
                     (key) =>
                       caller[key as keyof DirectToolCaller] !==
@@ -1330,8 +1366,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
                   )
                 )
                   throw new Error("direct invocation changed during permission assertion");
-                if (!context.session.create || !context.session.prompt || !context.session.context)
-                  throw new Error("V2 direct public session API unavailable");
+                assertDirectSessionApis(context.session);
                 const model = record(worker.model ?? parent.model);
                 if (
                   typeof model.id !== "string" ||
@@ -1994,6 +2029,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
         directLease.assertClear();
         if (directImplementation && !directWrapped)
           throw new Error("V2 direct executor registration unavailable");
+        if (directImplementation) assertDirectSessionApis(context.session);
         activationMarker(plan, directImplementation);
         ready = true;
       })

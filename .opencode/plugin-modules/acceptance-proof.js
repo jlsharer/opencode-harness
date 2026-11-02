@@ -3,6 +3,13 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, realpathSync, } from "node:fs";
 import path from "node:path";
+/** Only absence during the initial artifact path scan can be a local proof failure. */
+export class MissingArtifactError extends Error {
+    constructor(cause) {
+        super(cause.message, { cause });
+        this.name = "MissingArtifactError";
+    }
+}
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const SECRET = /(^|\/)(?:\.env(?:\..*)?|\.aws|\.ssh|credentials?(?:\..*)?|auth\.json|.*\.(?:pem|key|p12|pfx))$/i;
 function relative(value) {
@@ -27,14 +34,23 @@ function canonicalRoot(root) {
     }
     return root;
 }
-function fileHash(root, name) {
+function fileHash(root, name, artifact = false) {
     relative(name);
     if (SECRET.test(name) || name.split("/").some((p) => p === ".aws" || p === ".ssh"))
         throw new Error("secret candidate prevents acceptance proof");
     let current = root;
     for (const part of name.split("/")) {
         current = path.join(current, part);
-        if (lstatSync(current).isSymbolicLink())
+        let entry;
+        try {
+            entry = lstatSync(current);
+        }
+        catch (error) {
+            if (artifact && error.code === "ENOENT")
+                throw new MissingArtifactError(error);
+            throw error;
+        }
+        if (entry.isSymbolicLink())
             throw new Error("symlink prevents acceptance proof");
     }
     const fd = openSync(current, constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -162,7 +178,22 @@ export function captureArtifacts(root, paths) {
     canonicalRoot(root);
     if (!paths.length || paths.length > 64 || new Set(paths).size !== paths.length)
         throw new Error("proof requires 1–64 distinct artifacts");
-    return Object.fromEntries([...paths].sort().map((p) => [relative(p), fileHash(root, p)]));
+    const entries = [];
+    let missing;
+    for (const name of [...paths].sort()) {
+        try {
+            entries.push([relative(name), fileHash(root, name, true)]);
+        }
+        catch (error) {
+            if (!(error instanceof MissingArtifactError))
+                throw error;
+            missing ??= error;
+        }
+    }
+    // Missing proof is safe to classify only after every other artifact passed its safety checks.
+    if (missing)
+        throw missing;
+    return Object.fromEntries(entries);
 }
 /** Commands MUST come from the trusted tool collector, never parsed worker output. */
 export function verifyAcceptance(input) {

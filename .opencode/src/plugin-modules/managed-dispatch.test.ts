@@ -34,6 +34,12 @@ for (const fault of [
   "identity",
   "scope",
   "symlink",
+  "mixed-missing-symlink-first",
+  "mixed-missing-symlink-last",
+  "mixed-missing-directory-first",
+  "mixed-missing-directory-last",
+  "mixed-missing-path-first",
+  "mixed-missing-path-last",
 ] as const) {
   test(`direct managed finalization owns settlement and local proof failure: ${fault}`, async () => {
     const f = fixture("implementer", 100000);
@@ -65,6 +71,17 @@ for (const fault of [
         path.join(f.workspace, "src/a.txt"),
         path.join(f.trace, result.artifacts[0]!.reference),
       );
+    }
+    if (fault.startsWith("mixed-")) {
+      fs.unlinkSync(path.join(f.trace, result.artifacts[0]!.reference));
+      const prefix = "orchestrations/fixture/roles/implementer/";
+      const name = fault.endsWith("first") ? "a-unsafe.md" : "z-unsafe.md";
+      let reference = prefix + name;
+      if (fault.includes("symlink"))
+        fs.symlinkSync(path.join(f.workspace, "src/a.txt"), path.join(f.trace, reference));
+      else if (fault.includes("directory")) fs.mkdirSync(path.join(f.trace, reference));
+      else reference = prefix + (fault.endsWith("first") ? "a/../unsafe.md" : "z/../unsafe.md");
+      result.artifacts.push({ reference, sha256: undefined });
     }
     if (fault === "scope") fs.writeFileSync(path.join(f.workspace, "outside.txt"), "unsafe");
     if (fault === "callback")
@@ -148,6 +165,16 @@ for (const fault of [
   "expired-after",
   "malformed",
   "event-loss",
+  "permuted-input",
+  "extra-input",
+  "background-presence",
+  "undefined-override",
+  "added-continuation",
+  ...(["create", "prompt", "wait", "get", "context", "interrupt"] as const).flatMap((api) =>
+    (["absent", "nonfunction"] as const).flatMap(
+      (value) => [`api-${api}-${value}`, `runtime-api-${api}-${value}`] as const,
+    ),
+  ),
 ] as const) {
   test(`registered native before/execute/schema/after direct boundary: ${fault}`, async () => {
     const f = fixture("implementer", 100000);
@@ -164,6 +191,8 @@ for (const fault of [
       OPENCODE_HARNESS_RUNTIME_ROOT: runtime,
       OPENCODE_HARNESS_TRACE_ROOT: f.trace,
       OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION: fault === "off" ? undefined : "1",
+      OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH: path.join(f.root, "activation.json"),
+      OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE: "a".repeat(64),
     };
     const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
     for (const [key, value] of Object.entries(env)) {
@@ -366,6 +395,12 @@ for (const fault of [
         },
       },
     };
+    if (fault.startsWith("api-")) {
+      const [, api, value] = fault.split("-");
+      const session = context.session as unknown as Record<string, unknown>;
+      if (value === "absent") delete session[api!];
+      else session[api!] = {};
+    }
     let dispose: (() => void) | undefined;
     const status = async () =>
       JSON.parse(
@@ -379,6 +414,48 @@ for (const fault of [
       dispose = await createV2NativePlugin({ now: () => nativeNow }).setup(context);
       for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
         await new Promise((resolve) => setImmediate(resolve));
+      if (fault.startsWith("api-")) {
+        assert.equal((await status()).status, "stopped");
+        assert.equal(fs.existsSync(env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH), false);
+        assert.equal(typeof before, "function");
+        assert.equal(typeof after, "function");
+        const input = { agent: "implementer", description: "fixture", prompt: f.args().prompt };
+        await assert.rejects(
+          before({
+            tool: "subagent",
+            sessionID: "parent",
+            agent: "build",
+            messageID: "message",
+            id: "call",
+            input,
+          }),
+          /activation|interrupted/,
+        );
+        await assert.rejects(
+          before({
+            tool: "write",
+            sessionID: "parent",
+            agent: "build",
+            messageID: "message",
+            id: "write",
+            input: { path: "src/a.txt", content: "unsafe" },
+          }),
+          /interrupted/,
+        );
+        const execute = subagent.execute as (input: unknown, caller: unknown) => Promise<unknown>;
+        await assert.rejects(
+          execute(input, {
+            sessionID: "parent",
+            agent: "build",
+            messageID: "message",
+            id: "call",
+            signal: new AbortController().signal,
+          }),
+        );
+        assert.equal(originalCalls, 0);
+        assert.deepEqual(order, []);
+        return;
+      }
       assert.equal((await status()).status, "ready");
       const event: V2ToolAfter = {
         tool: "subagent",
@@ -394,9 +471,35 @@ for (const fault of [
           ...(fault === "override" ? { model: "fixture/worker" } : {}),
         },
       };
+      if (fault === "permuted-input")
+        event.input = {
+          prompt: f.args().prompt,
+          background: false,
+          description: "fixture",
+          agent: "implementer",
+        };
       await before(event);
-      admittedInput = event.input as Record<string, unknown>;
-      if (fault === "changed") (event.input as Record<string, unknown>).prompt += "changed";
+      // Pinned core tool runtime decodes Input Struct after before and before execute.
+      // Copy present fields in its schema order, as Effect's Struct decoder does.
+      const raw = event.input as Record<string, unknown>;
+      const decoded = Object.fromEntries(
+        ["agent", "description", "prompt", "model", "sessionID", "background"]
+          .filter((key) => Object.hasOwn(raw, key))
+          .map((key) => [key, raw[key]]),
+      );
+      if (fault === "permuted-input") assert.notEqual(JSON.stringify(raw), JSON.stringify(decoded));
+      admittedInput = decoded;
+      if (fault === "changed") decoded.prompt += "changed";
+      if (fault === "extra-input") decoded.extra = "unexpected";
+      if (fault === "background-presence") delete decoded.background;
+      if (fault === "undefined-override") decoded.model = undefined;
+      if (fault === "added-continuation") decoded.sessionID = "ses_previous";
+      if (fault.startsWith("runtime-api-")) {
+        const [, , api, value] = fault.split("-");
+        const session = context.session as unknown as Record<string, unknown>;
+        if (value === "absent") delete session[api!];
+        else session[api!] = {};
+      }
       const cancellation = new AbortController();
       const caller = {
         sessionID: "parent",
@@ -422,15 +525,21 @@ for (const fault of [
           "permission-change",
           "extra-child",
           "event-loss",
-        ].includes(fault)
+          "extra-input",
+          "background-presence",
+          "undefined-override",
+          "added-continuation",
+        ].includes(fault) ||
+        fault.startsWith("runtime-api-")
       ) {
-        await assert.rejects(execute(event.input, caller));
+        await assert.rejects(execute(decoded, caller));
         assert.equal(originalCalls, 0);
+        if (fault.startsWith("runtime-api-")) assert.equal((await status()).status, "stopped");
         if (fault !== "native-failure" && fault !== "extra-child" && fault !== "event-loss")
           assert.ok(!order.includes("create"));
         return;
       }
-      const result = await execute(event.input, caller);
+      const result = await execute(decoded, caller);
       if (fault === "off") {
         assert.equal(originalCalls, 1);
         return;
@@ -517,11 +626,19 @@ for (const fault of [
         JSON.stringify(event.result),
         /validation pending|Fixture checked|verified fixture/,
       );
-      const expected = ["none", "duplicate-after", "deferred-settled"].includes(fault)
+      const expected = ["none", "duplicate-after", "deferred-settled", "permuted-input"].includes(
+        fault,
+      )
         ? "success"
         : "rejected";
       assert.equal((event.result as { metadata: { harness: string } }).metadata.harness, expected);
-      const safe = ["none", "digest", "duplicate-after", "deferred-settled"].includes(fault);
+      const safe = [
+        "none",
+        "digest",
+        "duplicate-after",
+        "deferred-settled",
+        "permuted-input",
+      ].includes(fault);
       assert.equal(
         fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
         !safe,

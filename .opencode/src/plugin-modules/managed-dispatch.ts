@@ -16,6 +16,7 @@ import {
   captureWorkspace,
   ignoredWorkspacePaths,
   captureArtifacts,
+  MissingArtifactError,
   assertAllowedTransition,
   verifyAcceptance,
 } from "./acceptance-proof.ts";
@@ -1980,7 +1981,7 @@ export function createManagedDispatch(options: {
         try {
           artifacts = captureArtifacts(options.traceRoot, paths);
         } catch (error) {
-          if (!direct || (error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          if (!direct || !(error instanceof MissingArtifactError)) throw error;
           artifacts = {};
           localProofFailure = true;
         }

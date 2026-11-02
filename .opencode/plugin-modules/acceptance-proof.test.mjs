@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { assertAllowedTransition, captureArtifacts, captureWorkspace, verifyAcceptance, } from "./acceptance-proof.js";
+import { assertAllowedTransition, captureArtifacts, captureWorkspace, MissingArtifactError, verifyAcceptance, } from "./acceptance-proof.js";
 function fixture(run) {
     const root = mkdtempSync(path.join(os.tmpdir(), "acceptance-proof-"));
     const git = (...args) => {
@@ -69,6 +69,35 @@ test("symlinks, traversal, missing artifacts and secret candidates fail closed",
     writeFileSync(path.join(root, ".env"), "fixture-only");
     assert.throws(() => captureWorkspace(root), /secret candidate/);
 }));
+test("only initial missing artifacts receive the safe local proof classification", () => fixture((root) => {
+    assert.throws(() => captureArtifacts(root, ["missing"]), MissingArtifactError);
+    assert.throws(() => captureArtifacts(path.join(root, "missing-root"), ["missing"]), (error) => error instanceof Error &&
+        !(error instanceof MissingArtifactError) &&
+        error.code === "ENOENT");
+}));
+for (const unsafe of ["symlink", "directory", "path", "secret"])
+    for (const order of ["first", "last"])
+        test(`missing artifact cannot mask unsafe ${unsafe} sorted ${order}`, () => fixture((root) => {
+            const name = order === "first" ? "a-unsafe" : "z-unsafe";
+            let reference = name;
+            const expected = {
+                symlink: /symlink/,
+                directory: /bounded regular/,
+                path: /unsafe proof path/,
+                secret: /secret candidate/,
+            }[unsafe];
+            if (unsafe === "symlink")
+                symlinkSync("source.txt", path.join(root, name));
+            if (unsafe === "directory")
+                mkdirSync(path.join(root, name));
+            if (unsafe === "path")
+                reference = `${name}/../outside`;
+            if (unsafe === "secret") {
+                mkdirSync(path.join(root, name));
+                reference = `${name}/.env`;
+            }
+            assert.throws(() => captureArtifacts(root, ["missing", reference]), expected);
+        }));
 test("only exact explicit trace roots can be excluded; artifacts remain bound", () => fixture((root) => {
     const trace = ".memory/orchestrations/test";
     mkdirSync(path.join(root, trace), { recursive: true });

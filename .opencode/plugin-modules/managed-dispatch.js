@@ -7,7 +7,7 @@ import { spawnSync } from "node:child_process";
 import { withinScope, createDispatchController, gateObligationsFor, } from "./dispatch-controller.js";
 import { formatTaskResultWrapper, createTaskThreadPolicy } from "./task-thread-policy.js";
 import { validateTaskPacket, validateTaskResult } from "./task-contracts.js";
-import { captureWorkspace, ignoredWorkspacePaths, captureArtifacts, assertAllowedTransition, verifyAcceptance, } from "./acceptance-proof.js";
+import { captureWorkspace, ignoredWorkspacePaths, captureArtifacts, MissingArtifactError, assertAllowedTransition, verifyAcceptance, } from "./acceptance-proof.js";
 import { enforceManagedTool, enforceRecoveryShell } from "./managed-execution.js";
 import { expandIndexedReferences, validateUsageTelemetry } from "./context-budget.js";
 function record(value) {
@@ -1652,7 +1652,7 @@ export function createManagedDispatch(options) {
                     artifacts = captureArtifacts(options.traceRoot, paths);
                 }
                 catch (error) {
-                    if (!direct || error.code !== "ENOENT")
+                    if (!direct || !(error instanceof MissingArtifactError))
                         throw error;
                     artifacts = {};
                     localProofFailure = true;
