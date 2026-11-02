@@ -206,6 +206,137 @@ function fake(name: string, version = "1.18.18"): FakeOpenCode {
   return { executable, capture };
 }
 
+function directV2Fake(name: string): FakeOpenCode {
+  const capture = path.join(temp, `${name}-capture.json`);
+  const executable = path.join(temp, `${name}-opencode.mjs`);
+  fs.writeFileSync(
+    executable,
+    `#!/usr/bin/env node
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
+import { createServer } from 'node:http';
+if(process.argv[2] === '--version') process.stdout.write('opencode v2.1.4\\n');
+else if(process.argv[2] === 'serve') {
+  const workspace=process.env.OPENCODE_HARNESS_WORKSPACE_ROOT;
+  const trace=process.env.OPENCODE_HARNESS_TRACE_ROOT;
+  const roles=['implementer','planner','researcher','validator'];
+  const relative=path.relative(workspace,trace).split(path.sep).join('/');
+  const permissions=roles.map(role=>({role,externalDirectory:trace+'/orchestrations/*/roles/'+role+'/*',edit:role==='implementer'?null:relative+'/orchestrations/*/roles/'+role+'/*.md'}));
+  const plan={schemaVersion:'1.0.0',workspaceRoot:workspace,traceRoot:trace,roles,permissions};
+  const marker={...plan,nonce:process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE,permissionPlanDigest:createHash('sha256').update(JSON.stringify(plan)).digest('hex')};
+  if(process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION==='1') Object.assign(marker,{directSessionTransport:'implementation-v1',directSessionUnresolved:false});
+  const fault=process.env.HARNESS_TEST_DIRECT_MARKER;
+  if(fault==='old') { delete marker.directSessionTransport; delete marker.directSessionUnresolved; }
+  if(fault==='wrong') marker.directSessionTransport='implementation-v2';
+  if(fault==='unresolved') marker.directSessionUnresolved=true;
+  if(fault==='extra') marker.extra=true;
+  fs.writeFileSync(process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH,JSON.stringify(marker)+'\\n',{mode:0o600,flag:'wx'});
+  const server=createServer((_req,res)=>{
+    if(process.env.HARNESS_TEST_DIRECT_CHANGE) fs.appendFileSync(process.env.HARNESS_TEST_DIRECT_CHANGE,'\\n');
+    res.setHeader('content-type','application/json');res.end(JSON.stringify({data:[{id:'opencode-harness.v2',state:{status:'active'}}]}));
+  });
+  server.listen(0,'127.0.0.1',()=>process.stdout.write(JSON.stringify({url:'http://127.0.0.1:'+server.address().port})+'\\n'));
+} else fs.writeFileSync(${JSON.stringify(capture)},JSON.stringify({env:process.env,argv:process.argv.slice(2),cwd:process.cwd()}));
+`,
+    { mode: 0o700 },
+  );
+  return { capture, executable };
+}
+
+test("direct implementation launcher rejects ambient, duplicate, unsupported and V1 selection", () => {
+  const workspace = repo("direct-selection");
+  const native = fake("direct-selection");
+  const base = [
+    "run",
+    "--workspace",
+    workspace,
+    "--cache-root",
+    path.join(temp, "direct-selection-cache"),
+  ];
+  for (const [args, env, pattern] of [
+    [base, { OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION: "1" }, /refusing pre-set/],
+    [[...base, "--v2-direct-implementation", "--v2-direct-implementation"], {}, /duplicate/],
+    [["prepare", "--v2-direct-implementation"], {}, /only.*run|terminal/],
+    [["source-web", "--v2-direct-implementation"], {}, /only.*run|terminal/],
+    [[...base, "--v2-direct-implementation"], {}, /requires.*V2/],
+  ] as [string[], NodeJS.ProcessEnv, RegExp][]) {
+    const result = run(args, { OPENCODE_BIN: native.executable, ...env });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, pattern);
+    assert.equal(fs.existsSync(native.capture), false);
+  }
+});
+
+for (const profile of ["external", "portable"] as const) {
+  test(`direct implementation ${profile} launcher proves exact opt-in marker before attach`, () => {
+    const workspace = repo(`direct-${profile}`);
+    if (profile === "portable") {
+      const installed = spawnSync(
+        process.execPath,
+        [
+          path.join(ROOT, ".opencode/scripts/bootstrap-portable-harness.mjs"),
+          "--target",
+          workspace,
+        ],
+        { cwd: ROOT, encoding: "utf8" },
+      );
+      assert.equal(installed.status, 0, installed.stderr);
+    }
+    const native = directV2Fake(`direct-${profile}`);
+    const base = [
+      "run",
+      "--workspace",
+      workspace,
+      "--cache-root",
+      path.join(temp, `direct-${profile}-cache`),
+    ];
+    const off = run(base, { OPENCODE_BIN: native.executable });
+    assert.equal(off.status, 0, off.stderr);
+    assert.equal(
+      JSON.parse(fs.readFileSync(native.capture, "utf8")).env
+        .OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION,
+      undefined,
+    );
+    fs.unlinkSync(native.capture);
+    for (const fault of ["old", "wrong", "unresolved", "extra"]) {
+      const result = run([...base, "--v2-direct-implementation"], {
+        OPENCODE_BIN: native.executable,
+        HARNESS_TEST_DIRECT_MARKER: fault,
+      });
+      assert.notEqual(result.status, 0, fault);
+      assert.match(result.stderr, /activation marker mismatch/);
+      assert.equal(fs.existsSync(native.capture), false);
+    }
+    const on = run([...base, "--v2-direct-implementation"], { OPENCODE_BIN: native.executable });
+    assert.equal(on.status, 0, on.stderr);
+    const selected = JSON.parse(fs.readFileSync(native.capture, "utf8"));
+    assert.equal(selected.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION, "1");
+    fs.unlinkSync(native.capture);
+    const trace = selected.env.OPENCODE_HARNESS_TRACE_ROOT as string;
+    const marker = path.join(trace, "orchestrations/.direct-session-unresolved.json");
+    fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(marker, "{}", { mode: 0o600 });
+    for (const option of [[], ["--v2-direct-implementation"]]) {
+      const retained = run([...base, ...option], { OPENCODE_BIN: native.executable });
+      assert.notEqual(retained.status, 0);
+      assert.match(retained.stderr, /unresolved/);
+      assert.equal(fs.existsSync(native.capture), false);
+    }
+    // This is teardown of a synthetic fixture, not an operator recovery procedure.
+    fs.unlinkSync(marker);
+    if (profile === "portable") {
+      fs.unlinkSync(path.join(workspace, ".opencode/plugin-modules/direct-session-transport.js"));
+      const damaged = run([...base, "--v2-direct-implementation"], {
+        OPENCODE_BIN: native.executable,
+      });
+      assert.notEqual(damaged.status, 0);
+      assert.equal(fs.existsSync(native.capture), false);
+      assert.match(damaged.stderr, /installed portable/);
+    }
+  });
+}
+
 function repo(name: string): string {
   const root = path.join(temp, name);
   fs.mkdirSync(root);
@@ -2708,6 +2839,43 @@ test("source-web validates its own source profile without external injection and
         },
       },
     );
+  const directNative = directV2Fake("source-direct-profile");
+  const directArgs = [
+    path.join(source, "bin/opencode-harness.mjs"),
+    "source-tui",
+    "--cache-root",
+    cache,
+    "--v2-direct-implementation",
+  ];
+  const directSource = () =>
+    spawnSync(process.execPath, directArgs, {
+      cwd: temp,
+      encoding: "utf8",
+      env: { ...process.env, OPENCODE_BIN: directNative.executable },
+    });
+  const directOn = directSource();
+  assert.equal(directOn.status, 0, directOn.stderr);
+  assert.equal(
+    JSON.parse(fs.readFileSync(directNative.capture, "utf8")).env
+      .OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION,
+    "1",
+  );
+  fs.unlinkSync(directNative.capture);
+  const changing = path.join(source, ".opencode/plugin-modules/direct-session-transport.js");
+  const changingBytes = fs.readFileSync(changing);
+  const changed = spawnSync(process.execPath, directArgs, {
+    cwd: temp,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      OPENCODE_BIN: directNative.executable,
+      HARNESS_TEST_DIRECT_CHANGE: changing,
+    },
+  });
+  assert.notEqual(changed.status, 0);
+  assert.equal(fs.existsSync(directNative.capture), false);
+  assert.match(changed.stderr, /source profile changed/);
+  fs.writeFileSync(changing, changingBytes);
   for (const extra of [
     ["--workspace", temp],
     ["--provider-config", "/unused"],

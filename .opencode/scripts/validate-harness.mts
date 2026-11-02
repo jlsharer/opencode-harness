@@ -698,18 +698,20 @@ function assertRuntimeManifest(runtimeManifest: RuntimeManifest): void {
     "managed-dispatch.js",
     "v2-dispatch-bridge.js",
     "v2-native-plugin.js",
+    "direct-session-transport.js",
+    "direct-session-lease.js",
   ])
     if (!destinations.includes(`plugin-modules/${module}`))
       fail(`Missing runtime module: ${module}`);
   if (!destinations.includes("schemas/opencode-provider-projection.schema.json"))
     fail("Runtime manifest must include the provider projection schema");
   if (
-    runtimeManifest.files.length !== 54 ||
+    runtimeManifest.files.length !== 56 ||
     !destinations.includes("plugin-modules/task-thread-policy.js") ||
     !destinations.includes("plugin-modules/trace-root-permissions.js")
   )
     fail(
-      "Runtime manifest must contain the exact 54-file external runtime including compaction handoff and scoped external actions",
+      "Runtime manifest must contain the exact 56-file external runtime including compaction handoff and scoped external actions",
     );
   for (const resource of [
     ".opencode/skills/delegation-orchestrator/references/development-workflow.md",
@@ -860,6 +862,8 @@ function assertExactPackagePayload(runtimeManifest: RuntimeManifest): void {
     ".opencode/plugin-modules/managed-dispatch.js",
     ".opencode/plugin-modules/v2-dispatch-bridge.js",
     ".opencode/plugin-modules/v2-native-plugin.js",
+    ".opencode/plugin-modules/direct-session-transport.js",
+    ".opencode/plugin-modules/direct-session-lease.js",
     "README.md",
     "bin/opencode-harness.mjs",
     ".opencode/runtime.manifest.json",
@@ -1167,8 +1171,8 @@ function assertMemorySeeds() {
   }
   const portableManifest = json(".opencode/portable.manifest.json");
   const mappings = portableManifest.memorySeeds ?? [];
-  if (portableManifest.managedFiles?.length !== 67 || mappings.length !== 6)
-    fail("Portable manifest must contain exactly 67 managed files plus six memory seeds");
+  if (portableManifest.managedFiles?.length !== 69 || mappings.length !== 6)
+    fail("Portable manifest must contain exactly 69 managed files plus six memory seeds");
   const expectedTargets = [
     ".memory/INDEX.md",
     ".memory/protocols/memory-management.md",

@@ -9,6 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { mergeExternalRoutingDocuments } from "../.opencode/routing/routing-config-loader.mjs";
 import { normalizeAndValidateRoutingConfig } from "../.opencode/routing/routing-policy.mjs";
+import { createDirectSessionLease } from "../.opencode/plugin-modules/direct-session-lease.js";
 process.umask(0o077);
 const PACKAGE_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const MANIFEST_PATH = path.join(PACKAGE_ROOT, ".opencode/runtime.manifest.json");
@@ -35,6 +36,7 @@ const RESERVED_ENV = [
     "OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH",
     "OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE",
     "OPENCODE_HARNESS_NATIVE_API",
+    "OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION",
 ];
 const SEEDS = [
     ["bootstrap/memory/INDEX.md", "INDEX.md"],
@@ -1599,7 +1601,7 @@ function cleanupSnapshot(snapshot, originalProblem = null, allowTestInjections =
     if (inventoryProblem)
         fail(`${primary}; quarantined launch snapshot was safely removed`);
 }
-function expectedTracePermissionMarker(workspace, traceRoot, nonce) {
+function expectedTracePermissionMarker(workspace, traceRoot, nonce, direct = false) {
     const relativeRoot = path.relative(workspace, traceRoot).split(path.sep).join("/");
     const permissions = ROLES.map((role) => ({
         role,
@@ -1615,22 +1617,21 @@ function expectedTracePermissionMarker(workspace, traceRoot, nonce) {
         roles: ROLES,
         permissions,
     };
-    return { ...plan, nonce, permissionPlanDigest: hash(Buffer.from(JSON.stringify(plan))) };
+    return {
+        ...plan,
+        nonce,
+        permissionPlanDigest: hash(Buffer.from(JSON.stringify(plan))),
+        ...(direct
+            ? { directSessionTransport: "implementation-v1", directSessionUnresolved: false }
+            : {}),
+    };
 }
 function verifyTracePermissionMarker(filename, expected) {
     const stat = lstatOwned(filename, "trace permission activation marker", "file", 0o600);
     if (stat.nlink !== 1n)
         fail("trace permission activation marker must have one link");
     const document = parseJsonBytes(readStableFile(filename, "trace permission activation marker", { exactMode: 0o600 }).bytes, "trace permission activation marker");
-    const keys = [
-        "nonce",
-        "permissionPlanDigest",
-        "permissions",
-        "roles",
-        "schemaVersion",
-        "traceRoot",
-        "workspaceRoot",
-    ];
+    const keys = Object.keys(expected);
     if (!isJsonObject(document) || Object.keys(document).sort().join(",") !== keys.sort().join(","))
         fail("trace permission activation marker mismatch");
     const expectedValues = Object.fromEntries(Object.entries(expected));
@@ -1651,7 +1652,7 @@ function recheckExecutable(executable, identity, label) {
         hash(opened.bytes) !== identity.digest)
         fail(`OpenCode executable identity changed after ${label}`);
 }
-function activationEnv(base, runtimeRoot, workspace, traceRoot, snapshot, v2 = false, nativeSessionDb) {
+function activationEnv(base, runtimeRoot, workspace, traceRoot, snapshot, v2 = false, nativeSessionDb, direct = false) {
     const env = {
         ...base,
         OPENCODE_CONFIG_DIR: runtimeRoot,
@@ -1668,6 +1669,8 @@ function activationEnv(base, runtimeRoot, workspace, traceRoot, snapshot, v2 = f
     }
     if (v2) {
         env.OPENCODE_HARNESS_NATIVE_API = "v2";
+        if (direct)
+            env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION = "1";
         // V2's run command uses inherited PWD ahead of process.cwd() to select
         // the session Location. It must not point outside the probed workspace.
         env.PWD = workspace;
@@ -2064,7 +2067,7 @@ async function probeTracePermissions(executable, identity, workspace, runtimeRoo
         env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
         env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
         if (v2) {
-            await probeV2Activation(executable, workspace, env, marker, expectedTracePermissionMarker(workspace, traceRoot, nonce), snapshot.directory);
+            await probeV2Activation(executable, workspace, env, marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation), snapshot.directory);
         }
         else {
             const result = spawnSync(executable, ["agent", "list"], {
@@ -2078,7 +2081,7 @@ async function probeTracePermissions(executable, identity, workspace, runtimeRoo
             if (result.status !== 0)
                 fail(`OpenCode trace permission activation probe failed with status ${result.status}: ${(result.stderr || result.stdout).trim()}`);
         }
-        verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce));
+        verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation));
     }
     catch (error) {
         if (errorMessage(error).includes("V2 activation termination unconfirmed"))
@@ -2230,6 +2233,14 @@ function parse(argv) {
             options.allowProjectPlugins = true;
             continue;
         }
+        if (token === "--v2-direct-implementation") {
+            if (options.v2DirectImplementation)
+                fail("duplicate --v2-direct-implementation");
+            if (!["run", "source-tui"].includes(command))
+                fail("--v2-direct-implementation is available only for run/source-tui terminal profiles");
+            options.v2DirectImplementation = true;
+            continue;
+        }
         const key = new Map([
             ["--opencode-bin", "opencodeBin"],
             ["--v2-auth-data-home", "v2AuthDataHome"],
@@ -2289,7 +2300,7 @@ function usage() {
     return [
         "Usage:",
         "  opencode-harness source-web [--opencode-bin ABS] [--port 4096] [--cache-root ABS]",
-        "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS] [--native-session-db ABS] [-- TUI_ARGS...]",
+        "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS] [--native-session-db ABS] [--v2-direct-implementation] [-- TUI_ARGS...]",
         "  opencode-harness capabilities",
         "  opencode-harness web --workspace ABS [--port 4096] [run options; no forwarded arguments]",
         "  opencode-harness doctor [--opencode-bin ABS]",
@@ -2297,6 +2308,7 @@ function usage() {
         "  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
         "  opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]",
         "    [--v2-auth-data-home ABS] (explicit owner-only V2 OpenAI credential source)",
+        "    [--v2-direct-implementation] (V2 run only: fresh foreground implementer/implementation child sessions)",
         "    [--native-session-db ABS] (explicit existing V2 native session database)",
         "    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
         "    [--allow-project-plugins] [-- OPENCODE_ARGS...]",
@@ -2591,13 +2603,15 @@ async function runPortableProfile(options, workspace) {
         const marker = path.join(snapshot.directory, "trace-permission-probe.json");
         snapshot.paths.probeMarker = marker;
         const nonce = randomBytes(32).toString("hex");
-        const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshot, true, nativeSessionDb);
+        const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshot, true, nativeSessionDb, options.v2DirectImplementation);
         env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
         env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
-        resultStatus = await probeV2Activation(selected.executable, workspace, env, marker, expectedTracePermissionMarker(workspace, traceRoot, nonce), snapshot.directory, async (url, password) => {
+        resultStatus = await probeV2Activation(selected.executable, workspace, env, marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation), snapshot.directory, async (url, password) => {
             recheckExecutable(selected.executable, selected.identity, "installed portable guard readiness");
             if (portableProfilePreflight(workspace) !== fingerprint)
                 fail("installed portable profile changed after V2 guard readiness");
+            createDirectSessionLease({ workspaceRoot: workspace, traceRoot }).assertClear();
+            verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation));
             const clientEnv = { ...env, OPENCODE_PASSWORD: password };
             delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
             delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
@@ -2657,6 +2671,8 @@ async function runSourceProfile(options, mode) {
     }
     const selected = resolveCompatibleExecutable(options.opencodeBin);
     const v2 = nativeV2(selected.version);
+    if (options.v2DirectImplementation && !v2)
+        fail("--v2-direct-implementation requires a verified V2 native CLI contract");
     if (options.nativeSessionDb && !v2)
         fail("--native-session-db requires a verified V2 native CLI contract");
     if (mode === "source-tui")
@@ -2683,15 +2699,17 @@ async function runSourceProfile(options, mode) {
             const marker = path.join(snapshot.directory, "trace-permission-probe.json");
             snapshot.paths.probeMarker = marker;
             const nonce = randomBytes(32).toString("hex");
-            const env = activationEnv(process.env, sourceRuntime, PACKAGE_ROOT, traceRoot, snapshot, true, nativeSessionDb);
+            const env = activationEnv(process.env, sourceRuntime, PACKAGE_ROOT, traceRoot, snapshot, true, nativeSessionDb, options.v2DirectImplementation);
             if (mode === "source-web")
                 delete env.OPENCODE_SERVER_PASSWORD;
             env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
             env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
-            resultStatus = await probeV2Activation(selected.executable, PACKAGE_ROOT, env, marker, expectedTracePermissionMarker(PACKAGE_ROOT, traceRoot, nonce), snapshot.directory, async (url, password, terminated) => {
+            resultStatus = await probeV2Activation(selected.executable, PACKAGE_ROOT, env, marker, expectedTracePermissionMarker(PACKAGE_ROOT, traceRoot, nonce, options.v2DirectImplementation), snapshot.directory, async (url, password, terminated) => {
                 recheckExecutable(selected.executable, selected.identity, "V2 source guard readiness");
                 if (sourceProfilePreflight() !== fingerprint)
                     fail("source profile changed after V2 guard readiness");
+                createDirectSessionLease({ workspaceRoot: PACKAGE_ROOT, traceRoot }).assertClear();
+                verifyTracePermissionMarker(marker, expectedTracePermissionMarker(PACKAGE_ROOT, traceRoot, nonce, options.v2DirectImplementation));
                 if (mode === "source-web")
                     return serveV2WebProxy(url, password, process.env.OPENCODE_SERVER_PASSWORD, Number(options.webPort ?? "4096"), terminated);
                 const clientEnv = { ...env, OPENCODE_PASSWORD: password };
@@ -2764,6 +2782,8 @@ async function run(options, command = "run") {
     assertNodeCompatibility(value);
     const { executable, identity, version } = resolveCompatibleExecutable(options.opencodeBin);
     const v2 = nativeV2(version);
+    if (options.v2DirectImplementation && !v2)
+        fail("--v2-direct-implementation requires a verified V2 native CLI contract");
     if (v2 && providerDocument) {
         const provider = inputs.find((entry) => entry.key === "provider");
         if (!provider)
@@ -2811,12 +2831,12 @@ async function run(options, command = "run") {
             const marker = path.join(snapshots.directory, "trace-permission-probe.json");
             snapshots.paths.probeMarker = marker;
             const nonce = randomBytes(32).toString("hex");
-            const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshots, true, nativeSessionDb);
+            const env = activationEnv(process.env, runtimeRoot, workspace, traceRoot, snapshots, true, nativeSessionDb, options.v2DirectImplementation);
             if (command === "web")
                 delete env.OPENCODE_SERVER_PASSWORD;
             env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
             env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
-            resultStatus = await probeV2Activation(executable, workspace, env, marker, expectedTracePermissionMarker(workspace, traceRoot, nonce), snapshots.directory, async (url, password, terminated) => {
+            resultStatus = await probeV2Activation(executable, workspace, env, marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation), snapshots.directory, async (url, password, terminated) => {
                 recheckExecutable(executable, identity, "V2 guarded server readiness");
                 const refreshed = projectPreflight(workspace, Boolean(options.allowProjectPlugins), Boolean(options.providerConfig));
                 if (refreshed.fingerprint !== projectState.fingerprint)
@@ -2843,10 +2863,12 @@ async function run(options, command = "run") {
                             isJsonObject(entry.state) &&
                             entry.state.status === "active"))
                         fail("V2 guard changed after importing the selected OpenAI connection");
-                    verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce));
+                    verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation));
                 }
                 if (providerDocument)
                     await verifyV2ProviderProjection(url, password, providerDocument);
+                createDirectSessionLease({ workspaceRoot: workspace, traceRoot }).assertClear();
+                verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation));
                 if (command === "web")
                     return serveV2WebProxy(url, password, process.env.OPENCODE_SERVER_PASSWORD, Number(options.webPort ?? "4096"), terminated);
                 const result = spawnSync(executable, argv, {

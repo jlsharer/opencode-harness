@@ -64,7 +64,12 @@ export async function admitV2Subagent(event, beforeTask) {
         args.task_id = identity(input.sessionID, "continued child");
     if (input.background !== undefined)
         args.background = input.background;
-    await beforeTask({ sessionID: parent, callID }, args);
+    await beforeTask({
+        sessionID: parent,
+        callID,
+        ...(event.agent !== undefined ? { agent: event.agent } : {}),
+        ...(event.messageID !== undefined ? { messageID: event.messageID } : {}),
+    }, args);
     if (typeof args.background !== "boolean")
         throw new Error("V2 managed dispatch did not establish native execution mode");
     input.prompt = args.prompt;

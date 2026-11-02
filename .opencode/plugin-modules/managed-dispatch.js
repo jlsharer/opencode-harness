@@ -6,7 +6,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { withinScope, createDispatchController, gateObligationsFor, } from "./dispatch-controller.js";
 import { formatTaskResultWrapper, createTaskThreadPolicy } from "./task-thread-policy.js";
-import { validateTaskPacket } from "./task-contracts.js";
+import { validateTaskPacket, validateTaskResult } from "./task-contracts.js";
 import { captureWorkspace, ignoredWorkspacePaths, captureArtifacts, assertAllowedTransition, verifyAcceptance, } from "./acceptance-proof.js";
 import { enforceManagedTool, enforceRecoveryShell } from "./managed-execution.js";
 import { expandIndexedReferences, validateUsageTelemetry } from "./context-budget.js";
@@ -148,6 +148,177 @@ export function createManagedDispatch(options) {
     let recoveries = 0;
     let recoveryShellRoot = null;
     const report = options.telemetry ?? (() => { });
+    const directHandles = new WeakMap();
+    let directUnresolved = false;
+    function directRecord(handle) {
+        const owned = directHandles.get(handle);
+        if (!owned ||
+            owned.used ||
+            active !== owned.task ||
+            owned.task.directHandle !== handle ||
+            owned.revision !== owned.task.revision ||
+            stopped)
+            throw new Error("direct handle is not the exact active attempt");
+        verifySpec(owned.task.run);
+        if ((options.now ?? Date.now)() >= handle.deadline || owned.caller.signal.aborted)
+            throw new Error("direct attempt expired or cancelled");
+        if (owned.lease)
+            options.directSessionLease.assertClear(owned.lease);
+        else
+            options.directSessionLease?.assertClear();
+        return owned;
+    }
+    function sameDirectCaller(a, b) {
+        return (a.sessionID === b.sessionID &&
+            a.agent === b.agent &&
+            a.messageID === b.messageID &&
+            a.id === b.id);
+    }
+    function claimDirectTask(caller) {
+        const task = active;
+        if (!task?.directCaller)
+            return null;
+        if (task.directHandle ||
+            !sameDirectCaller(task.directCaller, caller) ||
+            !caller.signal ||
+            stopped) {
+            interrupt("direct caller identity or claim mismatch");
+            throw new Error("direct caller identity or duplicate claim");
+        }
+        const deadline = task.run.controller
+            .snapshot()
+            .attempts.find((a) => a.id === task.context.delegationTaskId).deadline;
+        const handle = Object.freeze({
+            context: Object.freeze({ ...task.context }),
+            prompt: task.directPrompt,
+            deadline,
+        });
+        task.directHandle = handle;
+        directHandles.set(handle, {
+            task,
+            revision: task.revision,
+            caller: Object.freeze({ ...caller }),
+            used: false,
+            eventSeen: false,
+        });
+        directRecord(handle);
+        return handle;
+    }
+    function bindDirectChild(handle, child) {
+        const owned = directRecord(handle);
+        if (owned.childID || child.parentID !== owned.task.run.parent || knownChildren.has(child.id))
+            throw new Error("direct child binding mismatch");
+        owned.childID = child.id;
+        owned.promptID = child.promptID;
+        owned.lease = options.directSessionLease.acquire({
+            orchestrationId: handle.context.orchestrationId,
+            specDigest: owned.task.run.digest,
+            delegationTaskId: handle.context.delegationTaskId,
+            parentSessionID: owned.caller.sessionID,
+            parentAgent: owned.caller.agent,
+            parentMessageID: owned.caller.messageID,
+            parentCallID: owned.caller.id,
+            childID: child.id,
+            promptID: child.promptID,
+            deadline: handle.deadline,
+        });
+        directUnresolved = true;
+        owned.task.childId = child.id;
+        knownChildren.add(child.id);
+    }
+    function stageDirectResult(handle, candidate) {
+        const owned = directRecord(handle);
+        if (owned.candidate || !owned.childID || !owned.eventSeen)
+            throw new Error("direct result correlation unavailable");
+        owned.candidate = candidate;
+    }
+    function acknowledgeDirectChild(handle, child) {
+        const owned = directRecord(handle);
+        if (!owned.eventSeen || child.id !== owned.childID || child.parentID !== owned.task.run.parent)
+            throw new Error("direct child event and acknowledgment disagree");
+    }
+    function stopDirectTask(handle, reason) {
+        const owned = directHandles.get(handle);
+        if (owned && active === owned.task)
+            interrupt(reason);
+    }
+    function finalizeDirectTask(handle, afterIdentity) {
+        const original = directHandles.get(handle);
+        if (!original || original.used)
+            throw new Error("direct completion already consumed or unknown");
+        try {
+            const owned = directRecord(handle);
+            if (!sameDirectCaller(owned.caller, afterIdentity) ||
+                !owned.candidate ||
+                !owned.eventSeen ||
+                owned.task.ownedCallbacks ||
+                owned.task.pendingCommands.size ||
+                owned.task.directCallbacks?.size)
+                throw new Error("direct completion identity or callbacks unsettled");
+            const evidence = owned.candidate();
+            owned.candidate = undefined;
+            if (evidence.childID !== owned.childID ||
+                evidence.promptID !== owned.promptID ||
+                evidence.deadline !== handle.deadline ||
+                JSON.stringify(evidence.context) !== JSON.stringify(handle.context))
+                throw new Error("direct evidence identity mismatch");
+            directRecord(handle);
+            const typed = validateTaskResult(v2JsonResult(evidence.text), handle.context);
+            if (typed.outcome !== "success")
+                throw new Error("direct transport requires successful typed implementation");
+            const result = completeTask({ callID: owned.task.callId }, {
+                output: formatTaskResultWrapper(v2JsonResult(evidence.text), evidence.childID),
+                metadata: { sessionId: evidence.childID },
+            }, true);
+            if (active || stopped || (result.outcome !== "success" && result.outcome !== "rejected"))
+                throw new Error("direct terminal bookkeeping unavailable");
+            if ((options.now ?? Date.now)() >= handle.deadline || owned.caller.signal.aborted)
+                throw new Error("direct completion expired or cancelled");
+            verifySpec(owned.task.run);
+            options.directSessionLease.release(owned.lease);
+            directUnresolved = false;
+            owned.used = true;
+            return {
+                outcome: result.outcome,
+                diagnostic: result.outcome === "success"
+                    ? "Managed implementation completed; independent validation remains required."
+                    : "Artifact proof rejected; fresh remediation and independent validation required.",
+            };
+        }
+        catch {
+            original.used = true;
+            interrupt("direct finalization could not prove safe completion", {
+                parent: original.task.run.parent,
+                orchestrationId: handle.context.orchestrationId,
+            });
+            return {
+                outcome: "stopped",
+                diagnostic: "Direct implementation stopped; unresolved evidence retained.",
+            };
+        }
+    }
+    function settleDirectChildTool(input) {
+        const task = active;
+        if (!task?.directHandle || input.sessionID !== task.childId)
+            return;
+        const id = identifier(input.callID);
+        if (task.directCallbacks?.get(id) !== input.tool) {
+            interrupt("uncorrelated direct child callback");
+            throw new Error("direct child callback mismatch");
+        }
+        task.directCallbacks.delete(id);
+    }
+    function trackDirectChildTool(input) {
+        if (!active?.directHandle)
+            return;
+        directRecord(active.directHandle);
+        const id = identifier(input.callID);
+        if (active.directCallbacks.has(id)) {
+            interrupt("duplicate direct child tool invocation");
+            throw new Error("duplicate direct child tool invocation");
+        }
+        active.directCallbacks.set(id, String(input.tool));
+    }
     function contains(a, b) {
         return a === b || b.startsWith(a + path.sep);
     }
@@ -218,7 +389,12 @@ export function createManagedDispatch(options) {
         return captureWorkspace(options.workspaceRoot, {
             validationInputs,
             ...(options.traceRoot === path.join(options.workspaceRoot, ".memory")
-                ? { excludePaths: [`.memory/orchestrations/${id}`] }
+                ? {
+                    excludePaths: [
+                        `.memory/orchestrations/${id}`,
+                        ".memory/orchestrations/.direct-session-unresolved.json",
+                    ],
+                }
                 : {}),
         });
     }
@@ -535,6 +711,8 @@ export function createManagedDispatch(options) {
         if (recoveryResolving)
             throw new Error("managed recovery termination already in progress");
         const task = active;
+        if (directUnresolved || task?.directHandle)
+            throw new Error("direct unresolved lease has no native Job recovery");
         if (!task ||
             !recoveryId ||
             task.context.orchestrationId !== recoveryId ||
@@ -602,6 +780,14 @@ export function createManagedDispatch(options) {
             recoveryShellRoot: recoveryShellRoot?.path ?? null,
             nextAction: "retain the old marker; use the same-session recovery shell for isolated writes, while the bound parent awaits callbacks or retries resolve",
         });
+        if (directUnresolved)
+            return blocked("direct unresolved lease requires later reviewed native recovery");
+        try {
+            options.directSessionLease?.assertClear();
+        }
+        catch {
+            return blocked("unresolved direct session lease");
+        }
         if (!recoveryId ||
             !recoveryReason ||
             !recoveryBefore ||
@@ -660,6 +846,9 @@ export function createManagedDispatch(options) {
     }
     async function releaseForFresh(sessionID, expectedTreeHash) {
         const parent = recoveryCaller(sessionID);
+        if (directUnresolved)
+            throw new Error("direct unresolved lease cannot use native Job release");
+        options.directSessionLease?.assertClear();
         if (typeof expectedTreeHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedTreeHash))
             throw new Error("managed recovery requires an exact reviewed tree hash");
         if (recoveryResolving)
@@ -699,7 +888,38 @@ export function createManagedDispatch(options) {
             throw new Error("managed dispatch admission already in progress");
         dispatching = true;
         try {
+            try {
+                const owned = active?.directHandle && directHandles.get(active.directHandle);
+                if (owned && active === owned.task && !owned.used && owned.lease)
+                    options.directSessionLease?.assertClear(owned.lease);
+                else
+                    options.directSessionLease?.assertClear();
+            }
+            catch (error) {
+                interrupt("unresolved direct session lease blocks admission");
+                throw error;
+            }
             await admitTask(input, args);
+            if (options.directImplementation &&
+                active &&
+                !active.background &&
+                active.context.role === "implementer" &&
+                active.context.taskMode === "implementation") {
+                if (!options.directSessionLease ||
+                    typeof input.agent !== "string" ||
+                    typeof input.messageID !== "string") {
+                    interrupt("direct native before identity unavailable");
+                    throw new Error("direct native before identity unavailable");
+                }
+                active.directCaller = Object.freeze({
+                    sessionID: String(input.sessionID),
+                    id: String(input.callID),
+                    agent: input.agent,
+                    messageID: input.messageID,
+                });
+                active.directPrompt = String(args.prompt);
+                active.directCallbacks = new Map();
+            }
         }
         finally {
             dispatching = false;
@@ -987,6 +1207,15 @@ export function createManagedDispatch(options) {
         if (!active || info.parentID !== active.run.parent)
             return;
         const childId = identifier(info.id);
+        if (active.directHandle) {
+            const owned = directRecord(active.directHandle);
+            if (owned.childID !== childId || owned.eventSeen) {
+                interrupt("direct session event identity mismatch");
+                throw new Error("direct session event identity mismatch");
+            }
+            owned.eventSeen = true;
+            return;
+        }
         if (active.childId && active.childId !== childId) {
             interrupt("ambiguous child creation");
             throw new Error("multiple children for one managed reservation");
@@ -1087,12 +1316,14 @@ export function createManagedDispatch(options) {
                 (role !== "validator" ||
                     !active.packet.commandsToRun.includes(args.command)))
                 throw new Error("managed verification requires an assigned validator command");
+            trackDirectChildTool(input);
             return args;
         }
         if (input.tool === "harness_source_edit" || input.tool === "harness_source_replace") {
             if (role !== "implementer" ||
                 !active.packet.targetPaths.includes(args.filePath))
                 throw new Error("managed source edit requires an assigned implementer target");
+            trackDirectChildTool(input);
             return args;
         }
         const commands = role === "validator"
@@ -1154,6 +1385,7 @@ export function createManagedDispatch(options) {
                 treeHash: snapshot(active.context.orchestrationId).treeHash,
                 revision: active.revision,
             });
+        trackDirectChildTool(input);
         return result;
     }
     function afterTool(input, output) {
@@ -1382,7 +1614,7 @@ export function createManagedDispatch(options) {
         }
         return completeTask(input, output);
     }
-    function completeTask(input, output) {
+    function completeTask(input, output, direct = false) {
         if (!active || identifier(input.callID) !== active.callId)
             throw new Error("duplicate or uncorrelated managed completion");
         const task = active;
@@ -1414,9 +1646,36 @@ export function createManagedDispatch(options) {
                 const prefix = `orchestrations/${task.context.orchestrationId}/roles/${task.context.role}/`;
                 if (paths.some((p) => !p.startsWith(prefix)))
                     throw new Error("artifact outside assigned trace scope");
-                const artifacts = captureArtifacts(options.traceRoot, paths);
-                if (result.result.artifacts.some((a) => a.sha256 !== undefined && a.sha256 !== artifacts[a.reference]))
-                    throw new Error("artifact proof digest mismatched");
+                let artifacts;
+                let localProofFailure = false;
+                try {
+                    artifacts = captureArtifacts(options.traceRoot, paths);
+                }
+                catch (error) {
+                    if (!direct || error.code !== "ENOENT")
+                        throw error;
+                    artifacts = {};
+                    localProofFailure = true;
+                }
+                if (result.result.artifacts.some((a) => a.sha256 !== undefined && a.sha256 !== artifacts[a.reference])) {
+                    if (!direct)
+                        throw new Error("artifact proof digest mismatched");
+                    localProofFailure = true;
+                }
+                if (localProofFailure) {
+                    if (!task.directHandle)
+                        throw new Error("direct handle missing at artifact rejection");
+                    directRecord(task.directHandle);
+                    assertAllowedTransition(task.before, snapshot(task.context.orchestrationId), unit.allowedPaths);
+                    task.run.controller.complete(task.context.delegationTaskId, "failed");
+                    active = null;
+                    report({
+                        event: "completed",
+                        delegationTaskId: task.context.delegationTaskId,
+                        outcome: "rejected",
+                    });
+                    return { outcome: "rejected" };
+                }
                 for (const artifact of result.result.artifacts)
                     artifact.sha256 = artifacts[artifact.reference];
                 if (task.context.role === "validator") {
@@ -1463,6 +1722,8 @@ export function createManagedDispatch(options) {
                         });
                 }
                 else {
+                    if (direct && task.directHandle)
+                        directRecord(task.directHandle);
                     task.run.controller.complete(task.context.delegationTaskId, "success");
                 }
             }
@@ -1533,6 +1794,13 @@ export function createManagedDispatch(options) {
             throw new Error("external action requires the bound native primary session");
     }
     return {
+        claimDirectTask,
+        bindDirectChild,
+        acknowledgeDirectChild,
+        stageDirectResult,
+        finalizeDirectTask,
+        stopDirectTask,
+        settleDirectChildTool,
         currentTaskView,
         beginOwnedCallback,
         diagnostics: () => [...runs.values()].map((r) => r.controller.diagnostics()),

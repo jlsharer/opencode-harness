@@ -30,6 +30,8 @@
     {"source": ".opencode/plugin-modules/compaction-handoff.js", "destination": "plugin-modules/compaction-handoff.js"},
     {"source": ".opencode/plugin-modules/managed-execution.js", "destination": "plugin-modules/managed-execution.js"},
     {"source": ".opencode/plugin-modules/external-win64-relaunch.js", "destination": "plugin-modules/external-win64-relaunch.js"},
+    {"source": ".opencode/plugin-modules/direct-session-transport.js", "destination": "plugin-modules/direct-session-transport.js"},
+    {"source": ".opencode/plugin-modules/direct-session-lease.js", "destination": "plugin-modules/direct-session-lease.js"},
     {"source": ".opencode/plugin-modules/managed-dispatch.js", "destination": "plugin-modules/managed-dispatch.js"},
     {"source": ".opencode/plugin-modules/v2-dispatch-bridge.js", "destination": "plugin-modules/v2-dispatch-bridge.js"},
     {"source": ".opencode/plugin-modules/v2-native-plugin.js", "destination": "plugin-modules/v2-native-plugin.js"},

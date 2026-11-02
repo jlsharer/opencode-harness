@@ -126,7 +126,7 @@ test("fresh foreign repository installs and validates without source-owned roots
   const installed = await runNode([BOOTSTRAP, "--target", repo]);
   assert.match(
     installed.stdout,
-    /created\/updated=67, memory-created=6, unchanged=0, collisions=0/,
+    /created\/updated=69, memory-created=6, unchanged=0, collisions=0/,
   );
   assert.match(
     installed.stdout,
@@ -201,7 +201,7 @@ test("development resources survive independent portable installation and invent
         "--root",
         repo,
       ]),
-      /exact portable-core contract|exactly 67 files/,
+      /exact portable-core contract|exactly 69 files/,
     );
     await writeFile(path.join(repo, removed), await readFile(path.join(SOURCE_ROOT, removed)));
   }
@@ -210,10 +210,10 @@ test("development resources survive independent portable installation and invent
 test("bootstrap is idempotent and dry-run performs no writes", async () => {
   const repo = path.join(tempParent, "fresh");
   const second = await runNode([BOOTSTRAP, "--target", repo]);
-  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=73, collisions=0/);
+  assert.match(second.stdout, /created\/updated=0, memory-created=0, unchanged=75, collisions=0/);
   const dryRepo = await makeRepo(tempParent, "dry-run");
   const dry = await runNode([BOOTSTRAP, "--target", dryRepo, "--dry-run"]);
-  assert.match(dry.stdout, /dry-run complete: created\/updated=67, memory-created=6/);
+  assert.match(dry.stdout, /dry-run complete: created\/updated=69, memory-created=6/);
   assert.deepEqual(await readdir(dryRepo), []);
 });
 
@@ -604,7 +604,7 @@ test("installed validator independently rejects removed inventory entries", asyn
   const validator = path.join(repo, ".opencode/scripts/validate-portable-harness.mjs");
   assert.match(
     await expectFailure([validator, "--root", repo]),
-    /exact portable-core contract|exactly 67 files/,
+    /exact portable-core contract|exactly 69 files/,
   );
 });
 

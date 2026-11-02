@@ -13,6 +13,7 @@ import { createV2NativePlugin } from "./v2-native-plugin.ts";
 import type { V2ToolBefore, V2ToolAfter } from "./v2-dispatch-bridge.ts";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.ts";
 import { captureArtifacts, captureWorkspace } from "./acceptance-proof.ts";
+import { createDirectSessionLease } from "./direct-session-lease.ts";
 import {
   TASK_THREAD_ROLE_PACKET_FIELDS,
   formatTaskThreadEnvelope,
@@ -24,6 +25,601 @@ const roots: string[] = [];
 test.after(() => {
   for (const root of roots) fs.rmSync(root, { recursive: true, force: true });
 });
+
+for (const fault of [
+  "none",
+  "digest",
+  "missing",
+  "callback",
+  "identity",
+  "scope",
+  "symlink",
+] as const) {
+  test(`direct managed finalization owns settlement and local proof failure: ${fault}`, async () => {
+    const f = fixture("implementer", 100000);
+    fs.chmodSync(f.trace, 0o700);
+    const lease = createDirectSessionLease({ traceRoot: f.trace, workspaceRoot: f.workspace });
+    const managed = createManagedDispatch({
+      ...f.options,
+      directImplementation: true,
+      directSessionLease: lease,
+    });
+    const caller = {
+      sessionID: "parent",
+      agent: "build",
+      messageID: "message",
+      id: "call",
+      signal: new AbortController().signal,
+    };
+    await managed.beforeTask({ ...caller, callID: caller.id }, f.args());
+    const handle = managed.claimDirectTask(caller)!;
+    assert.ok(handle);
+    managed.bindDirectChild(handle, { id: "child", parentID: "parent", promptID: "prompt" });
+    managed.sessionCreated({ id: "child", parentID: "parent" });
+    const result = f.success();
+    if (fault === "digest") result.artifacts[0]!.sha256 = "0".repeat(64);
+    if (fault === "missing") fs.unlinkSync(path.join(f.trace, result.artifacts[0]!.reference));
+    if (fault === "symlink") {
+      fs.unlinkSync(path.join(f.trace, result.artifacts[0]!.reference));
+      fs.symlinkSync(
+        path.join(f.workspace, "src/a.txt"),
+        path.join(f.trace, result.artifacts[0]!.reference),
+      );
+    }
+    if (fault === "scope") fs.writeFileSync(path.join(f.workspace, "outside.txt"), "unsafe");
+    if (fault === "callback")
+      managed.beforeTool(
+        { sessionID: "child", callID: "read", tool: "read" },
+        { filePath: "src/a.txt" },
+      );
+    managed.stageDirectResult(handle, () => ({
+      text: JSON.stringify(result),
+      childID: "child",
+      promptID: "prompt",
+      assistantID: "assistant",
+      context: handle.context,
+      deadline: handle.deadline,
+    }));
+    assert.throws(() => lease.assertClear(), /unresolved/);
+    const decision = managed.finalizeDirectTask(handle, {
+      ...caller,
+      ...(fault === "identity" ? { messageID: "other" } : {}),
+    });
+    const safe = ["none", "digest", "missing"].includes(fault);
+    assert.equal(decision.outcome, fault === "none" ? "success" : safe ? "rejected" : "stopped");
+    assert.equal(managed.snapshot().stopped, !safe);
+    assert.deepEqual(managed.snapshot().runs[0]!.gates, {});
+    if (safe) lease.assertClear();
+    else assert.throws(() => lease.assertClear(), /unresolved/);
+    assert.throws(() => managed.finalizeDirectTask(handle, caller), /direct/);
+    if (fault === "digest" || fault === "missing") {
+      await managed.beforeTask({ ...caller, callID: "fresh-call" }, f.args(f.packet("fresh-task")));
+      const retry = managed.claimDirectTask({ ...caller, id: "fresh-call" })!;
+      assert.notEqual(retry, handle);
+      assert.equal(managed.snapshot().runs[0]!.attempts.length, 2);
+    }
+  });
+}
+
+test("direct-off managed admission refuses a retained trace-wide lease", async () => {
+  const f = fixture("implementer");
+  fs.chmodSync(f.trace, 0o700);
+  const lease = createDirectSessionLease({ traceRoot: f.trace, workspaceRoot: f.workspace });
+  lease.acquire({
+    orchestrationId: "old",
+    specDigest: "a".repeat(64),
+    delegationTaskId: "old-task",
+    parentSessionID: "parent",
+    parentAgent: "build",
+    parentMessageID: "message",
+    parentCallID: "old-call",
+    childID: "old-child",
+    promptID: "old-prompt",
+    deadline: 1000,
+  });
+  const managed = createManagedDispatch({ ...f.options, directSessionLease: lease });
+  await assert.rejects(
+    managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args()),
+    /unresolved/,
+  );
+  assert.equal(managed.snapshot().stopped, true);
+});
+
+for (const fault of [
+  "none",
+  "digest",
+  "deny",
+  "changed",
+  "after-identity",
+  "callback",
+  "trace-callback",
+  "missing-after",
+  "duplicate-after",
+  "off",
+  "nonprimary",
+  "override",
+  "native-failure",
+  "caller-identity",
+  "permission-change",
+  "extra-child",
+  "deferred-settled",
+  "raw-result",
+  "cancel-after",
+  "expired-after",
+  "malformed",
+  "event-loss",
+] as const) {
+  test(`registered native before/execute/schema/after direct boundary: ${fault}`, async () => {
+    const f = fixture("implementer", 100000);
+    fs.chmodSync(f.trace, 0o700);
+    const runtime = path.join(f.root, "runtime");
+    fs.mkdirSync(path.join(runtime, "routing"), { recursive: true });
+    fs.copyFileSync(
+      path.resolve(".opencode/routing/harness-model-routing.example.json"),
+      path.join(runtime, "routing/harness-model-routing.example.json"),
+    );
+    const env = {
+      OPENCODE_HARNESS_NATIVE_API: "v2",
+      OPENCODE_HARNESS_WORKSPACE_ROOT: f.workspace,
+      OPENCODE_HARNESS_RUNTIME_ROOT: runtime,
+      OPENCODE_HARNESS_TRACE_ROOT: f.trace,
+      OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION: fault === "off" ? undefined : "1",
+    };
+    const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+    for (const [key, value] of Object.entries(env)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    type Context = Parameters<ReturnType<typeof createV2NativePlugin>["setup"]>[0];
+    type Tool = Parameters<Parameters<Parameters<Context["tool"]["transform"]>[0]>[0]["add"]>[0];
+
+    const tools = new Map<string, Tool>();
+    let before!: (event: V2ToolBefore) => Promise<void>;
+    let after!: (event: V2ToolAfter) => Promise<void>;
+    const order: string[] = [];
+    const schema = Object.freeze({ nativeOriginal: true });
+    let originalCalls = 0;
+    const subagent: Record<string, unknown> = {
+      id: "subagent",
+      options: {},
+      output: schema,
+      execute: async () => {
+        originalCalls++;
+        return { original: true };
+      },
+    };
+    const agents: Record<string, unknown>[] = [
+      "researcher",
+      "planner",
+      "implementer",
+      "validator",
+    ].map((id) => ({
+      id,
+      mode: "subagent",
+      permissions: [],
+      model: { providerID: "fixture", id: "worker" },
+    }));
+    agents.push({ id: "build", mode: "primary", permissions: [] });
+    let wake: (() => void) | undefined;
+    const events: unknown[] = [];
+    let childID = "";
+    let promptID = "";
+    let prompt = "";
+    let nativeNow = 100;
+    let admittedInput: Record<string, unknown> = {};
+    const context: Context = {
+      location: { directory: f.workspace },
+      permission: {
+        hook: async () => {},
+        assert: async (input) => {
+          order.push("permission");
+          assert.deepEqual(input, {
+            sessionID: "parent",
+            agent: "build",
+            source: { type: "tool", messageID: "message", id: "call" },
+            action: "subagent",
+            resources: ["implementer"],
+            save: ["implementer"],
+          });
+          if (fault === "deny") throw new Error("denied");
+          if (fault === "permission-change") admittedInput.prompt = "changed during approval";
+        },
+      },
+      agent: {
+        list: async () => agents,
+        reload: async () => {},
+        transform: async (cb) =>
+          cb({
+            list: () => agents,
+            get: (id) => agents.find((a) => a.id === id),
+            update: (id, change) => change(agents.find((a) => a.id === id)!),
+          }),
+      },
+      tool: {
+        reload: async () => {},
+        transform: async (cb) =>
+          cb({
+            list: () => [{ id: "subagent" }],
+            update: (_id, change) => change(subagent),
+            add: (tool) => {
+              tools.set(tool.name, tool);
+            },
+          }),
+        hook: async (name, cb) => {
+          if (name === "execute.before") before = cb as typeof before;
+          else after = cb as typeof after;
+        },
+      },
+      session: {
+        hook: async () => {},
+        get: async ({ sessionID }) =>
+          sessionID === "parent"
+            ? {
+                id: "parent",
+                ...(fault === "nonprimary" ? { parentID: "ancestor" } : {}),
+                model: { providerID: "fixture", id: "parent" },
+              }
+            : {
+                id: childID,
+                parentID: "parent",
+                agent: "implementer",
+                outcome: fault === "native-failure" ? "failed" : "succeeded",
+                time: { idle: 2 },
+              },
+        create: async (input) => {
+          order.push("create");
+          assert.equal(order[0], "permission");
+          assert.ok(
+            fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+          );
+          childID = input.id!;
+          if (fault === "extra-child")
+            events.push({
+              type: "session.created",
+              data: { sessionID: "unrelated-child", parentID: "parent" },
+            });
+          events.push({
+            type: "session.created",
+            data: { sessionID: childID, parentID: "parent" },
+          });
+          wake?.();
+          await new Promise((resolve) => setImmediate(resolve));
+          return { id: childID, parentID: "parent", agent: "implementer", time: {} };
+        },
+        prompt: async (input) => {
+          promptID = input.id!;
+          prompt = input.text;
+          if (fault === "callback" || fault === "deferred-settled")
+            await before({
+              tool: "read",
+              sessionID: childID,
+              messageID: "child-message",
+              agent: "implementer",
+              id: "child-read",
+              input: { path: "src/a.txt" },
+            });
+          if (fault === "trace-callback")
+            await before({
+              tool: "harness_trace",
+              sessionID: childID,
+              messageID: "child-message",
+              agent: "implementer",
+              id: "child-trace",
+              input: {
+                filePath: "orchestrations/fixture/roles/implementer/proof.md",
+                content: "proof",
+              },
+            });
+          return {
+            id: promptID,
+            sessionID: childID,
+            type: "user",
+            payload: { text: prompt },
+            delivery: "queue",
+            time: { created: 1 },
+          };
+        },
+        context: async () => {
+          const result = f.success();
+          if (fault === "digest") result.artifacts[0]!.sha256 = "0".repeat(64);
+          return [
+            { id: promptID, type: "user", text: prompt },
+            {
+              id: "assistant",
+              type: "assistant",
+              agent: "implementer",
+              content: [
+                { type: "text", text: fault === "malformed" ? "{}" : JSON.stringify(result) },
+              ],
+              finish: "stop",
+              time: { completed: 2 },
+            },
+            { id: "idle", type: "idle", outcome: "succeeded" },
+          ];
+        },
+        interrupt: async () => ({ interrupted: true }),
+        wait: async () => {
+          if (fault === "event-loss") {
+            events.push({ type: "fixture-stream-loss" });
+            wake?.();
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+        },
+      },
+      model: { list: async () => [] },
+      provider: { list: async () => [] },
+      plugin: { list: async () => [{ id: "opencode.config.agent", state: { status: "active" } }] },
+      event: {
+        subscribe: async function* ({ signal } = {}) {
+          signal?.addEventListener("abort", () => wake?.(), { once: true });
+          while (!signal?.aborted) {
+            if (events.length) {
+              const item = events.shift();
+              if ((item as { type: string }).type === "fixture-stream-loss")
+                throw new Error("fixture stream lost");
+              yield item;
+            } else
+              await new Promise<void>((resolve) => {
+                wake = resolve;
+              });
+          }
+        },
+      },
+    };
+    let dispose: (() => void) | undefined;
+    const status = async () =>
+      JSON.parse(
+        (
+          await tools
+            .get("harness_dispatch_status")!
+            .execute({}, { sessionID: "parent", agent: "build" })
+        ).content,
+      ) as Record<string, unknown>;
+    try {
+      dispose = await createV2NativePlugin({ now: () => nativeNow }).setup(context);
+      for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
+        await new Promise((resolve) => setImmediate(resolve));
+      assert.equal((await status()).status, "ready");
+      const event: V2ToolAfter = {
+        tool: "subagent",
+        sessionID: "parent",
+        agent: "build",
+        messageID: "message",
+        id: "call",
+        status: "completed",
+        input: {
+          agent: "implementer",
+          description: "fixture",
+          prompt: f.args().prompt,
+          ...(fault === "override" ? { model: "fixture/worker" } : {}),
+        },
+      };
+      await before(event);
+      admittedInput = event.input as Record<string, unknown>;
+      if (fault === "changed") (event.input as Record<string, unknown>).prompt += "changed";
+      const cancellation = new AbortController();
+      const caller = {
+        sessionID: "parent",
+        agent: "build",
+        messageID: "message",
+        id: "call",
+        signal: cancellation.signal,
+      };
+      if (fault === "caller-identity") caller.messageID = "other-message";
+      const execute = subagent.execute as (
+        input: unknown,
+        nativeCaller: typeof caller,
+      ) => Promise<unknown>;
+      assert.equal(subagent.output, schema);
+      if (
+        [
+          "deny",
+          "changed",
+          "nonprimary",
+          "override",
+          "native-failure",
+          "caller-identity",
+          "permission-change",
+          "extra-child",
+          "event-loss",
+        ].includes(fault)
+      ) {
+        await assert.rejects(execute(event.input, caller));
+        assert.equal(originalCalls, 0);
+        if (fault !== "native-failure" && fault !== "extra-child" && fault !== "event-loss")
+          assert.ok(!order.includes("create"));
+        return;
+      }
+      const result = await execute(event.input, caller);
+      if (fault === "off") {
+        assert.equal(originalCalls, 1);
+        return;
+      }
+      assert.equal(originalCalls, 0);
+      assert.deepEqual(result, {
+        output: {
+          sessionID: childID,
+          status: "completed",
+          output: "Native execution ended; harness validation pending.",
+        },
+        content: "",
+        metadata: {},
+      });
+      // Simulate pinned native schema validation before after; publication is later.
+      const output = (result as { output: { sessionID: string; status: string; output: string } })
+        .output;
+      assert.match(output.sessionID, /^ses_/);
+      assert.equal(output.status, "completed");
+      assert.equal(typeof output.output, "string");
+      assert.ok(
+        fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+      );
+      if (fault === "missing-after") {
+        dispose();
+        dispose = undefined;
+        assert.ok(
+          fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+        );
+        for (const direct of [false, true]) {
+          if (direct) process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION = "1";
+          else delete process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION;
+          subagent.execute = async () => {
+            originalCalls++;
+            return { original: true };
+          };
+          dispose = await createV2NativePlugin({ now: () => 100 }).setup(context);
+          for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
+            await new Promise((resolve) => setImmediate(resolve));
+          assert.equal((await status()).status, "stopped");
+          assert.equal((await status()).directSessionUnresolved, true);
+          await assert.rejects(before({ ...event, id: "fresh-call" }), /activation|interrupted/);
+          await assert.rejects(
+            before({
+              tool: "write",
+              sessionID: "parent",
+              id: "write",
+              input: { path: "src/a.txt", content: "unsafe" },
+            }),
+            /interrupted/,
+          );
+          dispose();
+          dispose = undefined;
+        }
+        return;
+      }
+      // The pinned native runtime normalizes explicit empty string content before hooks.
+      event.result = {
+        ...(result as Record<string, unknown>),
+        content: [{ type: "text", text: "" }],
+      };
+      if (fault === "deferred-settled")
+        await after({
+          tool: "read",
+          sessionID: childID,
+          messageID: "child-message",
+          agent: "implementer",
+          id: "child-read",
+          input: { path: "src/a.txt" },
+          status: "completed",
+          result: { output: "read", content: "read", metadata: {} },
+        });
+      if (fault === "raw-result")
+        event.result = {
+          output: { sessionID: childID, status: "completed", output: "untrusted child result" },
+          content: "untrusted child result",
+          metadata: { success: true },
+        };
+      if (fault === "cancel-after") cancellation.abort();
+      if (fault === "expired-after") nativeNow = 400000;
+      if (fault === "after-identity") event.messageID = "wrong";
+      await after(event);
+      assert.doesNotMatch(
+        JSON.stringify(event.result),
+        /validation pending|Fixture checked|verified fixture/,
+      );
+      const expected = ["none", "duplicate-after", "deferred-settled"].includes(fault)
+        ? "success"
+        : "rejected";
+      assert.equal((event.result as { metadata: { harness: string } }).metadata.harness, expected);
+      const safe = ["none", "digest", "duplicate-after", "deferred-settled"].includes(fault);
+      assert.equal(
+        fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+        !safe,
+      );
+      if (fault === "duplicate-after") {
+        await after(event);
+        assert.equal((await status()).status, "stopped");
+        assert.doesNotMatch(JSON.stringify(event.result), /validation pending/);
+      }
+    } finally {
+      dispose?.();
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+}
+
+for (const version of ["1.0.0", "2.0.0"])
+  for (const unbounded of [false, true]) {
+    test(`direct fresh remediation preserves ${version} ${unbounded ? "unbounded" : "bounded"} controller budgets`, async () => {
+      const f = fixture("implementer", 100000);
+      fs.chmodSync(f.trace, 0o700);
+      Object.assign(f.spec, {
+        schemaVersion: version,
+        ...(unbounded ? { budgets: { mode: "unbounded" } } : {}),
+        ...(version === "2.0.0"
+          ? {
+              roleModeTaskMapping: [
+                {
+                  workUnitId: "a",
+                  role: "implementer",
+                  taskMode: "implementation",
+                  boundedTask: "implement",
+                  gateObligations: [],
+                  taskTimeoutMs: 100000,
+                },
+                {
+                  workUnitId: "a",
+                  role: "validator",
+                  taskMode: "validation",
+                  boundedTask: "validate",
+                  gateObligations: ["gate-a"],
+                  taskTimeoutMs: 100000,
+                },
+              ],
+            }
+          : {}),
+      });
+      fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+      const lease = createDirectSessionLease({ traceRoot: f.trace, workspaceRoot: f.workspace });
+      const { timeoutMs: _legacyTimeout, ...v2Options } = f.options;
+      const managed = createManagedDispatch({
+        ...(version === "2.0.0" ? v2Options : f.options),
+        directImplementation: true,
+        directSessionLease: lease,
+      });
+      for (let index = 0; index < (unbounded ? 5 : 2); index++) {
+        const id = `fresh-${index}`;
+        const caller = {
+          sessionID: "parent",
+          agent: "build",
+          messageID: `message-${index}`,
+          id: `call-${index}`,
+          signal: new AbortController().signal,
+        };
+        await managed.beforeTask({ ...caller, callID: caller.id }, f.args(f.packet(id)));
+        const handle = managed.claimDirectTask(caller)!;
+        const childID = `child-${index}`;
+        const promptID = `prompt-${index}`;
+        managed.bindDirectChild(handle, { id: childID, parentID: "parent", promptID });
+        managed.sessionCreated({ id: childID, parentID: "parent" });
+        const result = { ...f.success(), delegationTaskId: id };
+        result.artifacts[0]!.sha256 = "0".repeat(64);
+        managed.stageDirectResult(handle, () => ({
+          text: JSON.stringify(result),
+          childID,
+          promptID,
+          assistantID: `assistant-${index}`,
+          context: handle.context,
+          deadline: handle.deadline,
+        }));
+        assert.equal(managed.finalizeDirectTask(handle, caller).outcome, "rejected");
+        assert.equal(managed.snapshot().runs[0]!.attempts.length, index + 1);
+        assert.deepEqual(managed.snapshot().runs[0]!.gates, {});
+        lease.assertClear();
+      }
+      if (!unbounded)
+        await assert.rejects(
+          managed.beforeTask(
+            { sessionID: "parent", agent: "build", messageID: "third", callID: "third" },
+            f.args(f.packet("third")),
+          ),
+          /budget|remediation|limit/,
+        );
+    });
+  }
 
 function fixture(role: TaskThreadRole = "researcher", timeoutMs = 10) {
   const root = fs.mkdtempSync("/var/tmp/harness-managed-test-");
@@ -53,7 +649,7 @@ function fixture(role: TaskThreadRole = "researcher", timeoutMs = 10) {
     0,
   );
   const trace = path.join(root, "trace");
-  fs.mkdirSync(path.join(trace, "orchestrations/fixture"), { recursive: true });
+  fs.mkdirSync(path.join(trace, "orchestrations/fixture"), { recursive: true, mode: 0o700 });
   const taskMode =
     role === "validator" ? "validation" : role === "implementer" ? "implementation" : "research";
   const spec = {

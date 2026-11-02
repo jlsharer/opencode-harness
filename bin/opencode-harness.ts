@@ -11,6 +11,7 @@ import type { BigIntStats } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { mergeExternalRoutingDocuments } from "../.opencode/src/routing/routing-config-loader.ts";
 import { normalizeAndValidateRoutingConfig } from "../.opencode/src/routing/routing-policy.ts";
+import { createDirectSessionLease } from "../.opencode/src/plugin-modules/direct-session-lease.ts";
 
 process.umask(0o077);
 
@@ -39,6 +40,7 @@ const RESERVED_ENV = [
   "OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH",
   "OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE",
   "OPENCODE_HARNESS_NATIVE_API",
+  "OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION",
 ];
 const SEEDS = [
   ["bootstrap/memory/INDEX.md", "INDEX.md"],
@@ -131,6 +133,7 @@ interface LauncherOptions {
   profile?: string;
   v2AuthDataHome?: string;
   nativeSessionDb?: string;
+  v2DirectImplementation?: boolean;
 }
 
 interface ExecutableIdentity {
@@ -2058,7 +2061,12 @@ function cleanupSnapshot(
   if (inventoryProblem) fail(`${primary}; quarantined launch snapshot was safely removed`);
 }
 
-function expectedTracePermissionMarker(workspace: string, traceRoot: string, nonce: string) {
+function expectedTracePermissionMarker(
+  workspace: string,
+  traceRoot: string,
+  nonce: string,
+  direct = false,
+) {
   const relativeRoot = path.relative(workspace, traceRoot).split(path.sep).join("/");
   const permissions = ROLES.map((role) => ({
     role,
@@ -2074,7 +2082,14 @@ function expectedTracePermissionMarker(workspace: string, traceRoot: string, non
     roles: ROLES,
     permissions,
   };
-  return { ...plan, nonce, permissionPlanDigest: hash(Buffer.from(JSON.stringify(plan))) };
+  return {
+    ...plan,
+    nonce,
+    permissionPlanDigest: hash(Buffer.from(JSON.stringify(plan))),
+    ...(direct
+      ? { directSessionTransport: "implementation-v1", directSessionUnresolved: false }
+      : {}),
+  };
 }
 
 function verifyTracePermissionMarker(
@@ -2087,15 +2102,7 @@ function verifyTracePermissionMarker(
     readStableFile(filename, "trace permission activation marker", { exactMode: 0o600 }).bytes,
     "trace permission activation marker",
   );
-  const keys = [
-    "nonce",
-    "permissionPlanDigest",
-    "permissions",
-    "roles",
-    "schemaVersion",
-    "traceRoot",
-    "workspaceRoot",
-  ];
+  const keys = Object.keys(expected);
   if (!isJsonObject(document) || Object.keys(document).sort().join(",") !== keys.sort().join(","))
     fail("trace permission activation marker mismatch");
   const expectedValues: Record<string, unknown> = Object.fromEntries(Object.entries(expected));
@@ -2128,6 +2135,7 @@ function activationEnv(
   snapshot: Snapshot,
   v2 = false,
   nativeSessionDb?: string,
+  direct = false,
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...base,
@@ -2144,6 +2152,7 @@ function activationEnv(
   }
   if (v2) {
     env.OPENCODE_HARNESS_NATIVE_API = "v2";
+    if (direct) env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION = "1";
     // V2's run command uses inherited PWD ahead of process.cwd() to select
     // the session Location. It must not point outside the probed workspace.
     env.PWD = workspace;
@@ -2592,7 +2601,7 @@ async function probeTracePermissions(
         workspace,
         env,
         marker,
-        expectedTracePermissionMarker(workspace, traceRoot, nonce),
+        expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation),
         snapshot.directory,
       );
     } else {
@@ -2608,7 +2617,10 @@ async function probeTracePermissions(
           `OpenCode trace permission activation probe failed with status ${result.status}: ${(result.stderr || result.stdout).trim()}`,
         );
     }
-    verifyTracePermissionMarker(marker, expectedTracePermissionMarker(workspace, traceRoot, nonce));
+    verifyTracePermissionMarker(
+      marker,
+      expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation),
+    );
   } catch (error) {
     if (errorMessage(error).includes("V2 activation termination unconfirmed")) throw error;
     problem = error;
@@ -2784,6 +2796,13 @@ function parse(argv: string[]): ParsedArguments {
       options.allowProjectPlugins = true;
       continue;
     }
+    if (token === "--v2-direct-implementation") {
+      if (options.v2DirectImplementation) fail("duplicate --v2-direct-implementation");
+      if (!["run", "source-tui"].includes(command))
+        fail("--v2-direct-implementation is available only for run/source-tui terminal profiles");
+      options.v2DirectImplementation = true;
+      continue;
+    }
     const key = new Map<
       string,
       keyof Pick<
@@ -2863,7 +2882,7 @@ function usage(): string {
   return [
     "Usage:",
     "  opencode-harness source-web [--opencode-bin ABS] [--port 4096] [--cache-root ABS]",
-    "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS] [--native-session-db ABS] [-- TUI_ARGS...]",
+    "  opencode-harness source-tui [--opencode-bin ABS] [--cache-root ABS] [--native-session-db ABS] [--v2-direct-implementation] [-- TUI_ARGS...]",
     "  opencode-harness capabilities",
     "  opencode-harness web --workspace ABS [--port 4096] [run options; no forwarded arguments]",
     "  opencode-harness doctor [--opencode-bin ABS]",
@@ -2871,6 +2890,7 @@ function usage(): string {
     "  opencode-harness validate-inputs [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "  opencode-harness run [--opencode-bin ABS] [--workspace ABS] [--trace-root ABS] [--cache-root ABS]",
     "    [--v2-auth-data-home ABS] (explicit owner-only V2 OpenAI credential source)",
+    "    [--v2-direct-implementation] (V2 run only: fresh foreground implementer/implementation child sessions)",
     "    [--native-session-db ABS] (explicit existing V2 native session database)",
     "    [--provider-config FILE] [--routing-catalog FILE --routing-profile FILE]",
     "    [--allow-project-plugins] [-- OPENCODE_ARGS...]",
@@ -3235,6 +3255,7 @@ async function runPortableProfile(options: LauncherOptions, workspace: string): 
       snapshot,
       true,
       nativeSessionDb,
+      options.v2DirectImplementation,
     );
     env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
     env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE = nonce;
@@ -3243,7 +3264,7 @@ async function runPortableProfile(options: LauncherOptions, workspace: string): 
       workspace,
       env,
       marker,
-      expectedTracePermissionMarker(workspace, traceRoot, nonce),
+      expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation),
       snapshot.directory,
       async (url, password) => {
         recheckExecutable(
@@ -3253,6 +3274,16 @@ async function runPortableProfile(options: LauncherOptions, workspace: string): 
         );
         if (portableProfilePreflight(workspace) !== fingerprint)
           fail("installed portable profile changed after V2 guard readiness");
+        createDirectSessionLease({ workspaceRoot: workspace, traceRoot }).assertClear();
+        verifyTracePermissionMarker(
+          marker,
+          expectedTracePermissionMarker(
+            workspace,
+            traceRoot,
+            nonce,
+            options.v2DirectImplementation,
+          ),
+        );
         const clientEnv: NodeJS.ProcessEnv = { ...env, OPENCODE_PASSWORD: password };
         delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
         delete clientEnv.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE;
@@ -3326,6 +3357,8 @@ async function runSourceProfile(
   }
   const selected = resolveCompatibleExecutable(options.opencodeBin);
   const v2 = nativeV2(selected.version);
+  if (options.v2DirectImplementation && !v2)
+    fail("--v2-direct-implementation requires a verified V2 native CLI contract");
   if (options.nativeSessionDb && !v2)
     fail("--native-session-db requires a verified V2 native CLI contract");
   if (mode === "source-tui") guardedV2ClientArguments(options.forward, "http://127.0.0.1:1");
@@ -3361,6 +3394,7 @@ async function runSourceProfile(
         snapshot,
         true,
         nativeSessionDb,
+        options.v2DirectImplementation,
       );
       if (mode === "source-web") delete env.OPENCODE_SERVER_PASSWORD;
       env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
@@ -3370,12 +3404,27 @@ async function runSourceProfile(
         PACKAGE_ROOT,
         env,
         marker,
-        expectedTracePermissionMarker(PACKAGE_ROOT, traceRoot, nonce),
+        expectedTracePermissionMarker(
+          PACKAGE_ROOT,
+          traceRoot,
+          nonce,
+          options.v2DirectImplementation,
+        ),
         snapshot.directory,
         async (url, password, terminated) => {
           recheckExecutable(selected.executable, selected.identity, "V2 source guard readiness");
           if (sourceProfilePreflight() !== fingerprint)
             fail("source profile changed after V2 guard readiness");
+          createDirectSessionLease({ workspaceRoot: PACKAGE_ROOT, traceRoot }).assertClear();
+          verifyTracePermissionMarker(
+            marker,
+            expectedTracePermissionMarker(
+              PACKAGE_ROOT,
+              traceRoot,
+              nonce,
+              options.v2DirectImplementation,
+            ),
+          );
           if (mode === "source-web")
             return serveV2WebProxy(
               url,
@@ -3464,6 +3513,8 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
   assertNodeCompatibility(value);
   const { executable, identity, version } = resolveCompatibleExecutable(options.opencodeBin);
   const v2 = nativeV2(version);
+  if (options.v2DirectImplementation && !v2)
+    fail("--v2-direct-implementation requires a verified V2 native CLI contract");
   if (v2 && providerDocument) {
     const provider = inputs.find((entry) => entry.key === "provider");
     if (!provider) fail("validated V2 provider projection is missing");
@@ -3526,6 +3577,7 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
         snapshots,
         true,
         nativeSessionDb,
+        options.v2DirectImplementation,
       );
       if (command === "web") delete env.OPENCODE_SERVER_PASSWORD;
       env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH = marker;
@@ -3535,7 +3587,7 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
         workspace,
         env,
         marker,
-        expectedTracePermissionMarker(workspace, traceRoot, nonce),
+        expectedTracePermissionMarker(workspace, traceRoot, nonce, options.v2DirectImplementation),
         snapshots.directory,
         async (url, password, terminated) => {
           recheckExecutable(executable, identity, "V2 guarded server readiness");
@@ -3578,10 +3630,25 @@ async function run(options: LauncherOptions, command: "run" | "web" = "run"): Pr
               fail("V2 guard changed after importing the selected OpenAI connection");
             verifyTracePermissionMarker(
               marker,
-              expectedTracePermissionMarker(workspace, traceRoot, nonce),
+              expectedTracePermissionMarker(
+                workspace,
+                traceRoot,
+                nonce,
+                options.v2DirectImplementation,
+              ),
             );
           }
           if (providerDocument) await verifyV2ProviderProjection(url, password, providerDocument);
+          createDirectSessionLease({ workspaceRoot: workspace, traceRoot }).assertClear();
+          verifyTracePermissionMarker(
+            marker,
+            expectedTracePermissionMarker(
+              workspace,
+              traceRoot,
+              nonce,
+              options.v2DirectImplementation,
+            ),
+          );
           if (command === "web")
             return serveV2WebProxy(
               url,

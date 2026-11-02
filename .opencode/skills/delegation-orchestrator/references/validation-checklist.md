@@ -17,3 +17,13 @@
 - [ ] Live providers, user-global state, and Git mutations occur only with explicit matching authorization.
 - [ ] Hooks remain guardrails/telemetry, not acceptance proof.
 - [ ] Focused tests, portable/source validators, runtime tests, package dry-run, and `git diff --check` pass or have honest scoped skip rationale.
+
+## V2 direct implementation opt-in
+
+Use `--v2-direct-implementation` only with Linux V2 `run` or `source-tui`, after a full OpenCode restart. It supports fresh foreground `implementer/implementation` child sessions without explicit model overrides; the parent still delegates and independent validator gates remain required. Other calls retain the guarded native route. Verify status reports `directSessionTransport: implementation-v1`; readiness metadata must also prove `directSessionUnresolved: false` before client attachment. Default-off preserves native routing.
+
+Offline acceptance checks the actual before/executor/original-output-schema/after ordering, permission before create, caller/session/event correlation, all outward result channels, callback settlement, scope and real artifact capture. A safe missing artifact or digest mismatch after verified native completion may fail locally. Fresh remediation uses a new call, task, child and prompt through existing controller budgets. Unsafe paths, symlinks, identity/scope drift, malformed results, cancellation, deadlines, event loss and uncertain work stop and retain the lease.
+
+The fixed trace-wide `orchestrations/.direct-session-unresolved.json` marker blocks startup and admission even with opt-in off. Reload/unload cannot release it; existing Job recovery cannot release direct attempts. No durable recovery is provided in this tranche, and rollback-off is allowed only with a clear lease. A process restart, trace-root change or older package is not termination evidence.
+
+The committed native API audit and offline fixtures do not establish live provider compatibility. Terminal text with `stop` is the initial supported completion. Native context allocation precedes local 256-message/1-MiB checks, there is no exclusive child lock, and native child transcripts may remain visible.

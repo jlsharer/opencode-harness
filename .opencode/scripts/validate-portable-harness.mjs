@@ -78,6 +78,8 @@ const EXPECTED_MANAGED_FILES = [
     ".opencode/plugin-modules/compaction-handoff.js",
     ".opencode/plugin-modules/compaction-handoff.test.mjs",
     ".opencode/plugin-modules/managed-execution.js",
+    ".opencode/plugin-modules/direct-session-transport.js",
+    ".opencode/plugin-modules/direct-session-lease.js",
     ".opencode/plugin-modules/managed-dispatch.js",
     ".opencode/plugin-modules/operator-approved-artifact-install.js",
     ".opencode/plugin-modules/operator-approved-archive-install.js",
@@ -231,8 +233,8 @@ function validateManifest(manifest) {
         !Array.isArray(manifest.forbiddenReferences))
         fail("manifest inventories must be arrays");
     const managed = manifest.managedFiles.map((item, index) => safeRelative(item, `managedFiles[${index}]`, ".opencode/"));
-    if (managed.length !== 67)
-        fail(`managed inventory must contain exactly 67 files; got ${managed.length}`);
+    if (managed.length !== 69)
+        fail(`managed inventory must contain exactly 69 files; got ${managed.length}`);
     if (new Set(managed).size !== managed.length ||
         !managed.includes(".opencode/portable.manifest.json"))
         fail("managed inventory must be unique and self-containing");

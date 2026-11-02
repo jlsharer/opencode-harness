@@ -65,7 +65,10 @@ export interface V2ToolAfter extends V2ToolBefore {
 /** Native V2 uses sessionID for continuation; the internal controller retains its V1 policy vocabulary. */
 export async function admitV2Subagent(
   event: V2ToolBefore,
-  beforeTask: (input: { sessionID: string; callID: string }, args: RecordValue) => Promise<void>,
+  beforeTask: (
+    input: { sessionID: string; callID: string; agent?: unknown; messageID?: unknown },
+    args: RecordValue,
+  ) => Promise<void>,
 ): Promise<void> {
   if (event.tool !== "subagent") throw new Error("V2 admission requires native subagent");
   const parent = identity(event.sessionID, "parent session");
@@ -90,7 +93,15 @@ export async function admitV2Subagent(
   };
   if (input.sessionID !== undefined) args.task_id = identity(input.sessionID, "continued child");
   if (input.background !== undefined) args.background = input.background;
-  await beforeTask({ sessionID: parent, callID }, args);
+  await beforeTask(
+    {
+      sessionID: parent,
+      callID,
+      ...(event.agent !== undefined ? { agent: event.agent } : {}),
+      ...(event.messageID !== undefined ? { messageID: event.messageID } : {}),
+    },
+    args,
+  );
   if (typeof args.background !== "boolean")
     throw new Error("V2 managed dispatch did not establish native execution mode");
   input.prompt = args.prompt;
