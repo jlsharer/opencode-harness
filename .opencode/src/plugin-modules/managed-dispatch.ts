@@ -307,6 +307,27 @@ export function createManagedDispatch(options: {
   >();
   let directUnresolved = false;
 
+  // Only this exact live attempt may exempt its privately held lease token.
+  function assertCurrentLease() {
+    try {
+      const handle = active?.directHandle;
+      const owned = handle && directHandles.get(handle);
+      const lease =
+        owned &&
+        !stopped &&
+        !owned.used &&
+        active === owned.task &&
+        owned.task.directHandle === handle &&
+        owned.revision === owned.task.revision
+          ? owned.lease
+          : undefined;
+      options.directSessionLease?.assertClear(lease);
+    } catch (error) {
+      interrupt("unresolved direct session lease blocks managed work");
+      throw error;
+    }
+  }
+
   function directRecord(handle: DirectTaskHandle) {
     const owned = directHandles.get(handle);
     if (
@@ -321,8 +342,7 @@ export function createManagedDispatch(options: {
     verifySpec(owned.task.run);
     if ((options.now ?? Date.now)() >= handle.deadline || owned.caller.signal.aborted)
       throw new Error("direct attempt expired or cancelled");
-    if (owned.lease) options.directSessionLease!.assertClear(owned.lease);
-    else options.directSessionLease?.assertClear();
+    assertCurrentLease();
     return owned;
   }
 
@@ -1098,16 +1118,9 @@ export function createManagedDispatch(options: {
     if (dispatching) throw new Error("managed dispatch admission already in progress");
     dispatching = true;
     try {
-      try {
-        const owned = active?.directHandle && directHandles.get(active.directHandle);
-        if (owned && active === owned.task && !owned.used && owned.lease)
-          options.directSessionLease?.assertClear(owned.lease);
-        else options.directSessionLease?.assertClear();
-      } catch (error) {
-        interrupt("unresolved direct session lease blocks admission");
-        throw error;
-      }
+      assertCurrentLease();
       await admitTask(input, args);
+      assertCurrentLease();
       if (
         options.directImplementation &&
         active &&
@@ -1195,6 +1208,7 @@ export function createManagedDispatch(options: {
         throw new Error("queued update exceeds configured bound");
       // Reject a terminal child rather than allowing native Task to resurrect it.
       const observed = await transport!.inspect(task.childId!);
+      assertCurrentLease();
       if (active !== task || stopped || observed.parent !== parent || observed.idle)
         throw new Error("worker is no longer running; use a fresh task");
       if (task.revision >= delegation.maxQueuedUpdates || task.updateIds.has(requestId))
@@ -1258,6 +1272,7 @@ export function createManagedDispatch(options: {
     if (terminalTasks.has(String(packet.delegationTaskId)))
       throw new Error("duplicate rejected task identity");
     const workerModel = await chooseBackground(parent, role, args.background);
+    assertCurrentLease();
     const background = workerModel !== null;
     args.background = background;
     const orchestrationId = identifier(packet.orchestrationId);
@@ -1383,6 +1398,7 @@ export function createManagedDispatch(options: {
       }
     }
     // Recheck after asynchronous context reads before atomically reserving.
+    assertCurrentLease();
     if (active || stopped) throw new Error("managed dispatch reservation lost");
     verifySpec(run);
     if (snapshot(orchestrationId).treeHash !== before.treeHash)
@@ -1407,6 +1423,7 @@ export function createManagedDispatch(options: {
         ? goal
         : null;
     run.policy.validateBeforeTask({ sessionID: parent, callID: callId, args });
+    assertCurrentLease();
     run.controller.reserve({
       id: context.delegationTaskId,
       workUnitId: context.scopeKey,
@@ -1497,10 +1514,26 @@ export function createManagedDispatch(options: {
     }
   }
 
+  // Register only real native before callbacks. Helpers reuse safety validation
+  // below without inventing callback identities or adding unsettled callbacks.
   function beforeTool(
     input: { sessionID?: unknown; callID?: unknown; tool?: unknown },
     args: RecordValue,
   ): RecordValue {
+    const checked = validateTool(input, args);
+    if (active?.directHandle && input.sessionID === active.childId) trackDirectChildTool(input);
+    return checked;
+  }
+
+  function validateTool(
+    input: { sessionID?: unknown; callID?: unknown; tool?: unknown },
+    args: RecordValue,
+  ): RecordValue {
+    try {
+      assertCurrentLease();
+    } catch {
+      // Apply the existing stopped policy, including diagnosis and isolated recovery.
+    }
     if (
       input.tool === "harness_external_artifact_download" ||
       input.tool === "harness_external_archive_install" ||
@@ -1581,6 +1614,7 @@ export function createManagedDispatch(options: {
       throw new Error("managed task is not running; termination must be reconciled");
     if (input.sessionID !== active.childId)
       throw new Error("unbound session cannot execute tools during managed dispatch");
+    if (active.directHandle) directRecord(active.directHandle);
     verifySpec(active.run);
     const unit = active.run.controller.spec.workUnits.find(
       (u) => u.id === active!.context.scopeKey,
@@ -1593,7 +1627,6 @@ export function createManagedDispatch(options: {
           !(active.packet.commandsToRun as string[]).includes(args.command as string))
       )
         throw new Error("managed verification requires an assigned validator command");
-      trackDirectChildTool(input);
       return args;
     }
     if (input.tool === "harness_source_edit" || input.tool === "harness_source_replace") {
@@ -1602,7 +1635,6 @@ export function createManagedDispatch(options: {
         !(active.packet.targetPaths as string[]).includes(args.filePath as string)
       )
         throw new Error("managed source edit requires an assigned implementer target");
-      trackDirectChildTool(input);
       return args;
     }
     const commands =
@@ -1681,7 +1713,6 @@ export function createManagedDispatch(options: {
         treeHash: snapshot(active.context.orchestrationId).treeHash,
         revision: active.revision,
       });
-    trackDirectChildTool(input);
     return result;
   }
 
@@ -1715,7 +1746,7 @@ export function createManagedDispatch(options: {
     if (!active || active.childId !== sessionID || active.context.role !== "validator")
       throw new Error("managed verification requires the bound validator child");
     const callID = randomUUID();
-    const prepared = beforeTool({ sessionID, callID, tool: "bash" }, { command });
+    const prepared = validateTool({ sessionID, callID, tool: "bash" }, { command });
     const run = spawnSync("/bin/sh", ["-c", prepared.command as string], {
       cwd: prepared.workdir as string,
       timeout: prepared.timeout as number,
@@ -1743,9 +1774,9 @@ export function createManagedDispatch(options: {
     if (typeof content !== "string" || !content.trim() || Buffer.byteLength(content) > 65536)
       throw new Error("managed trace content exceeds bound or is empty");
     const absolute = path.join(options.traceRoot, filePath);
-    const args = beforeTool({ sessionID, tool: "write" }, { filePath: absolute, content });
+    const args = validateTool({ sessionID, tool: "write" }, { filePath: absolute, content });
     fs.mkdirSync(path.dirname(args.filePath as string), { recursive: true, mode: 0o700 });
-    const checked = beforeTool({ sessionID, tool: "write" }, { filePath: absolute, content });
+    const checked = validateTool({ sessionID, tool: "write" }, { filePath: absolute, content });
     fs.writeFileSync(checked.filePath as string, content, { flag: "wx", mode: 0o600 });
     return path
       .relative(options.traceRoot, checked.filePath as string)
@@ -1773,10 +1804,10 @@ export function createManagedDispatch(options: {
       expectedContent === content
     )
       throw new Error("managed source edit requires bounded distinct UTF-8 contents");
-    let checked = beforeTool({ sessionID, tool: "write" }, { filePath, content });
+    let checked = validateTool({ sessionID, tool: "write" }, { filePath, content });
     if (expectedContent === "") {
       fs.mkdirSync(path.dirname(checked.filePath as string), { recursive: true, mode: 0o700 });
-      checked = beforeTool({ sessionID, tool: "write" }, { filePath, content });
+      checked = validateTool({ sessionID, tool: "write" }, { filePath, content });
       fs.writeFileSync(checked.filePath as string, content, { flag: "wx", mode: 0o644 });
     } else {
       const fd = fs.openSync(
@@ -1794,6 +1825,7 @@ export function createManagedDispatch(options: {
         const current = fs.lstatSync(checked.filePath as string);
         if (current.isSymbolicLink() || current.dev !== stat.dev || current.ino !== stat.ino)
           throw new Error("managed source edit target changed before write");
+        checked = validateTool({ sessionID, tool: "write" }, { filePath, content });
         fs.writeFileSync(checked.filePath as string, content);
       } finally {
         fs.closeSync(fd);
@@ -1823,7 +1855,7 @@ export function createManagedDispatch(options: {
       Buffer.byteLength(content) > 8192
     )
       throw new Error("managed source replacement requires bounded distinct UTF-8 fragments");
-    const checked = beforeTool({ sessionID, tool: "edit" }, { filePath });
+    const checked = validateTool({ sessionID, tool: "edit" }, { filePath });
     const filename = checked.filePath as string;
     const fd = fs.openSync(filename, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
     try {
@@ -1856,6 +1888,7 @@ export function createManagedDispatch(options: {
         current.ino !== before.ino
       )
         throw new Error("managed source replacement target changed before write");
+      validateTool({ sessionID, tool: "edit" }, { filePath });
       let offset = 0;
       while (offset < next.length) {
         const written = fs.writeSync(fd, next, offset, next.length - offset, offset);
@@ -2146,6 +2179,7 @@ export function createManagedDispatch(options: {
   }
 
   return {
+    assertCurrentLease,
     claimDirectTask,
     bindDirectChild,
     acknowledgeDirectChild,

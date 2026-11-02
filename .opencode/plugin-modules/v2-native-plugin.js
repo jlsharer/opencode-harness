@@ -958,7 +958,7 @@ function v2NativeSetup(trustedOptions) {
                 editor.update(tool.id, (value) => {
                     const options = value.options && typeof value.options === "object" ? record(value.options) : {};
                     value.options = { ...options, codemode: false };
-                    if (tool.id === "subagent" && directImplementation) {
+                    if (tool.id === "subagent") {
                         if (typeof value.execute !== "function")
                             throw new Error("V2 native subagent executor unavailable");
                         const original = value.execute;
@@ -972,9 +972,15 @@ function v2NativeSetup(trustedOptions) {
                             try {
                                 if (!ready || !verifyRoles || dispatch.snapshot().stopped)
                                     throw new Error("V2 harness guard activation is incomplete or stopped");
+                                dispatch.assertCurrentLease();
                                 handle = dispatch.claimDirectTask(caller);
-                                if (!handle)
+                                if (!handle) {
+                                    await verifyRoles();
+                                    dispatch.assertCurrentLease();
+                                    if (!ready || dispatch.snapshot().stopped)
+                                        throw new Error("V2 harness guard activation is incomplete or stopped");
                                     return await original(input, caller);
+                                }
                                 if (call)
                                     call.handle = handle;
                                 if (!call ||

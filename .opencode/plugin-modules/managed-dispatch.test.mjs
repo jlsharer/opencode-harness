@@ -127,6 +127,42 @@ test("direct-off managed admission refuses a retained trace-wide lease", async (
     await assert.rejects(managed.beforeTask({ sessionID: "parent", callID: "call" }, f.args()), /unresolved/);
     assert.equal(managed.snapshot().stopped, true);
 });
+function acquireForeignLease(f) {
+    const foreign = createDirectSessionLease({ traceRoot: f.trace, workspaceRoot: f.workspace });
+    foreign.acquire({
+        orchestrationId: "foreign",
+        specDigest: "a".repeat(64),
+        delegationTaskId: "foreign-task",
+        parentSessionID: "foreign-parent",
+        parentAgent: "build",
+        parentMessageID: "foreign-message",
+        parentCallID: "foreign-call",
+        childID: "foreign-child",
+        promptID: "foreign-prompt",
+        deadline: 1000,
+    });
+    return foreign;
+}
+for (const directImplementation of [false, true]) {
+    test(`foreign lease acquired across managed admission await blocks reservation: ${directImplementation}`, async () => {
+        const f = fixture("implementer", 100000);
+        fs.chmodSync(f.trace, 0o700);
+        const lease = createDirectSessionLease({ traceRoot: f.trace, workspaceRoot: f.workspace });
+        const managed = createManagedDispatch({
+            ...f.options,
+            directSessionLease: lease,
+            directImplementation,
+        });
+        const admission = managed.beforeTask({ sessionID: "parent", callID: "call", agent: "build", messageID: "message" }, f.args());
+        const foreign = acquireForeignLease(f);
+        await assert.rejects(admission, /unresolved/);
+        assert.equal(managed.snapshot().stopped, true);
+        assert.ok(managed.snapshot().runs.every((run) => run.active === 0));
+        assert.throws(() => managed.editSource("child", "src/a.txt", "initial", "unsafe"));
+        assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "initial");
+        assert.throws(() => foreign.assertClear(), /unresolved/);
+    });
+}
 for (const fault of [
     "none",
     "digest",
@@ -135,6 +171,15 @@ for (const fault of [
     "after-identity",
     "callback",
     "trace-callback",
+    "callback-missing-id",
+    "callback-duplicate-id",
+    "helper-foreign-after",
+    "helper-source-edit",
+    "helper-source-replace",
+    "helper-trace",
+    "helper-trace-deferred",
+    "native-fallback",
+    ...["before", "execute", "await-execute", "child", "helper"].flatMap((boundary) => ["off", "native"].map((route) => `lease-${boundary}-${route}`)),
     "missing-after",
     "duplicate-after",
     "off",
@@ -160,6 +205,13 @@ for (const fault of [
     test(`registered native before/execute/schema/after direct boundary: ${fault}`, async () => {
         const f = fixture("implementer", 100000);
         fs.chmodSync(f.trace, 0o700);
+        const foreignRoute = fault.startsWith("lease-");
+        const nativeFallback = fault === "native-fallback" || (foreignRoute && fault.endsWith("-native"));
+        if (nativeFallback) {
+            f.spec.roleModeTaskMapping[0].taskMode = "integration";
+            fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+        }
+        const nativePrompt = () => f.args({ ...f.packet(), ...(nativeFallback ? { taskMode: "integration" } : {}) }).prompt;
         const runtime = path.join(f.root, "runtime");
         fs.mkdirSync(path.join(runtime, "routing"), { recursive: true });
         fs.copyFileSync(path.resolve(".opencode/routing/harness-model-routing.example.json"), path.join(runtime, "routing/harness-model-routing.example.json"));
@@ -168,7 +220,7 @@ for (const fault of [
             OPENCODE_HARNESS_WORKSPACE_ROOT: f.workspace,
             OPENCODE_HARNESS_RUNTIME_ROOT: runtime,
             OPENCODE_HARNESS_TRACE_ROOT: f.trace,
-            OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION: fault === "off" ? undefined : "1",
+            OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION: fault === "off" || (foreignRoute && fault.endsWith("-off")) ? undefined : "1",
             OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH: path.join(f.root, "activation.json"),
             OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE: "a".repeat(64),
         };
@@ -213,6 +265,8 @@ for (const fault of [
         let prompt = "";
         let nativeNow = 100;
         let admittedInput = {};
+        let acquireOnAgentCheck = false;
+        let helperAfter;
         const context = {
             location: { directory: f.workspace },
             permission: {
@@ -234,7 +288,13 @@ for (const fault of [
                 },
             },
             agent: {
-                list: async () => agents,
+                list: async () => {
+                    if (acquireOnAgentCheck) {
+                        acquireOnAgentCheck = false;
+                        acquireForeignLease(f);
+                    }
+                    return agents;
+                },
                 reload: async () => { },
                 transform: async (cb) => cb({
                     list: () => agents,
@@ -315,6 +375,49 @@ for (const fault of [
                                 content: "proof",
                             },
                         });
+                    if (fault === "callback-missing-id" || fault === "callback-duplicate-id") {
+                        const callback = {
+                            tool: "read",
+                            sessionID: childID,
+                            messageID: "child-message",
+                            agent: "implementer",
+                            input: { path: "src/a.txt" },
+                            id: fault === "callback-duplicate-id" ? "duplicate-read" : undefined,
+                        };
+                        await before(callback);
+                        if (fault === "callback-duplicate-id")
+                            await before(callback);
+                    }
+                    if (fault.startsWith("helper-")) {
+                        const name = fault.startsWith("helper-source")
+                            ? fault === "helper-source-edit"
+                                ? "harness_source_edit"
+                                : "harness_source_replace"
+                            : "harness_trace";
+                        const helperInput = name === "harness_trace"
+                            ? {
+                                filePath: "orchestrations/fixture/roles/implementer/helper.md",
+                                content: "helper proof",
+                            }
+                            : { filePath: "src/a.txt", expectedContent: "initial", content: "helper changed" };
+                        helperAfter = {
+                            tool: name,
+                            sessionID: childID,
+                            messageID: "child-message",
+                            agent: "implementer",
+                            id: "child-helper",
+                            input: helperInput,
+                            status: "completed",
+                        };
+                        await before(helperAfter);
+                        helperAfter.result = await tools
+                            .get(name)
+                            .execute(helperInput, { sessionID: childID, agent: "implementer" });
+                        const absolute = name === "harness_trace"
+                            ? path.join(f.trace, helperInput.filePath)
+                            : path.join(f.workspace, helperInput.filePath);
+                        assert.equal(fs.readFileSync(absolute, "utf8"), helperInput.content);
+                    }
                     return {
                         id: promptID,
                         sessionID: childID,
@@ -434,7 +537,7 @@ for (const fault of [
                 input: {
                     agent: "implementer",
                     description: "fixture",
-                    prompt: f.args().prompt,
+                    prompt: nativePrompt(),
                     ...(fault === "override" ? { model: "fixture/worker" } : {}),
                 },
             };
@@ -445,6 +548,21 @@ for (const fault of [
                     description: "fixture",
                     agent: "implementer",
                 };
+            if (fault.startsWith("lease-before-")) {
+                const pending = before(event);
+                // Let role verification settle and native admission reach chooseBackground's await.
+                await Promise.resolve();
+                await Promise.resolve();
+                acquireForeignLease(f);
+                await assert.rejects(pending, /unresolved/);
+                assert.equal(originalCalls, 0);
+                assert.equal((await status()).status, "stopped");
+                assert.throws(() => createDirectSessionLease({
+                    traceRoot: f.trace,
+                    workspaceRoot: f.workspace,
+                }).assertClear(), /unresolved/);
+                return;
+            }
             await before(event);
             // Pinned core tool runtime decodes Input Struct after before and before execute.
             // Copy present fields in its schema order, as Effect's Struct decoder does.
@@ -485,6 +603,59 @@ for (const fault of [
                 caller.messageID = "other-message";
             const execute = subagent.execute;
             assert.equal(subagent.output, schema);
+            if (fault.startsWith("lease-execute-") || fault.startsWith("lease-await-execute-")) {
+                if (fault.startsWith("lease-await-execute-"))
+                    acquireOnAgentCheck = true;
+                else
+                    acquireForeignLease(f);
+                await assert.rejects(execute(decoded, caller), /unresolved|stopped/);
+                assert.equal(originalCalls, 0);
+                assert.equal((await status()).status, "stopped");
+                assert.throws(() => createDirectSessionLease({
+                    traceRoot: f.trace,
+                    workspaceRoot: f.workspace,
+                }).assertClear(), /unresolved/);
+                return;
+            }
+            if (fault.startsWith("lease-child-") || fault.startsWith("lease-helper-")) {
+                await execute(decoded, caller);
+                assert.equal(originalCalls, 1);
+                childID = "native-child";
+                events.push({ type: "session.created", data: { sessionID: childID, parentID: "parent" } });
+                wake?.();
+                await new Promise((resolve) => setImmediate(resolve));
+                const input = { filePath: "src/a.txt", expectedContent: "initial", content: "unsafe" };
+                const childEvent = {
+                    tool: "harness_source_edit",
+                    sessionID: childID,
+                    agent: "implementer",
+                    messageID: "child-message",
+                    id: "child-edit",
+                    input,
+                };
+                if (fault.startsWith("lease-helper-"))
+                    await before(childEvent);
+                acquireForeignLease(f);
+                if (fault.startsWith("lease-helper-"))
+                    await assert.rejects(tools
+                        .get("harness_source_edit")
+                        .execute(input, { sessionID: childID, agent: "implementer" }), /interrupted|unresolved/);
+                else
+                    await assert.rejects(before(childEvent), /interrupted|unresolved/);
+                assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "initial");
+                assert.equal((await status()).status, "stopped");
+                await before({
+                    tool: "read",
+                    sessionID: "parent",
+                    id: "diagnose",
+                    input: { path: "src/a.txt" },
+                });
+                assert.throws(() => createDirectSessionLease({
+                    traceRoot: f.trace,
+                    workspaceRoot: f.workspace,
+                }).assertClear(), /unresolved/);
+                return;
+            }
             if ([
                 "deny",
                 "changed",
@@ -499,18 +670,24 @@ for (const fault of [
                 "background-presence",
                 "undefined-override",
                 "added-continuation",
+                "callback-missing-id",
+                "callback-duplicate-id",
             ].includes(fault) ||
                 fault.startsWith("runtime-api-")) {
                 await assert.rejects(execute(decoded, caller));
                 assert.equal(originalCalls, 0);
                 if (fault.startsWith("runtime-api-"))
                     assert.equal((await status()).status, "stopped");
-                if (fault !== "native-failure" && fault !== "extra-child" && fault !== "event-loss")
+                if (fault !== "native-failure" &&
+                    fault !== "extra-child" &&
+                    fault !== "event-loss" &&
+                    fault !== "callback-missing-id" &&
+                    fault !== "callback-duplicate-id")
                     assert.ok(!order.includes("create"));
                 return;
             }
             const result = await execute(decoded, caller);
-            if (fault === "off") {
+            if (fault === "off" || fault === "native-fallback") {
                 assert.equal(originalCalls, 1);
                 return;
             }
@@ -566,6 +743,11 @@ for (const fault of [
                 ...result,
                 content: [{ type: "text", text: "" }],
             };
+            if (helperAfter && fault !== "helper-trace-deferred")
+                await after({
+                    ...helperAfter,
+                    ...(fault === "helper-foreign-after" ? { id: "foreign-call" } : {}),
+                });
             if (fault === "deferred-settled")
                 await after({
                     tool: "read",
@@ -591,7 +773,15 @@ for (const fault of [
                 event.messageID = "wrong";
             await after(event);
             assert.doesNotMatch(JSON.stringify(event.result), /validation pending|Fixture checked|verified fixture/);
-            const expected = ["none", "duplicate-after", "deferred-settled", "permuted-input"].includes(fault)
+            const expected = [
+                "none",
+                "duplicate-after",
+                "deferred-settled",
+                "permuted-input",
+                "helper-source-edit",
+                "helper-source-replace",
+                "helper-trace",
+            ].includes(fault)
                 ? "success"
                 : "rejected";
             assert.equal(event.result.metadata.harness, expected);
@@ -601,6 +791,9 @@ for (const fault of [
                 "duplicate-after",
                 "deferred-settled",
                 "permuted-input",
+                "helper-source-edit",
+                "helper-source-replace",
+                "helper-trace",
             ].includes(fault);
             assert.equal(fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")), !safe);
             if (fault === "duplicate-after") {
