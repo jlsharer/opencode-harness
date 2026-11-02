@@ -6,7 +6,11 @@ import path from "node:path";
 import test from "node:test";
 import { buildTaskContractExamples } from "./render-task-contract-examples.mts";
 import { captureArtifacts, captureWorkspace } from "../src/plugin-modules/acceptance-proof.ts";
-import { createPrototype, auditNativeSource } from "./direct-session-retry-prototype.mts";
+import {
+  createPrototype,
+  auditNativeSource,
+  auditNativeToolContract,
+} from "./direct-session-retry-prototype.mts";
 import type {
   DirectSessionApi,
   NativeMessage,
@@ -539,3 +543,102 @@ for (const [label, declaration] of [
       );
     },
   );
+
+test(
+  "actual production projection agrees with committed public APIs",
+  { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+  () => {
+    const source = readFileSync(
+      new URL("../src/plugin-modules/direct-session-transport.ts", import.meta.url),
+      "utf8",
+    );
+    const result = auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!, source);
+    assert.equal(result.commit, "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824");
+    assert.throws(
+      () =>
+        auditNativeSource(
+          process.env.DIRECT_SESSION_NATIVE_SOURCE!,
+          source.replace("id?: string | undefined;", "id: string;"),
+        ),
+      /public API projection/,
+    );
+    assert.throws(
+      () =>
+        auditNativeSource(
+          process.env.DIRECT_SESSION_NATIVE_SOURCE!,
+          source.replace(
+            "wait(input: { sessionID: string }): Promise<void>",
+            "wait(input: { sessionID: string }): Promise<SessionInfo>",
+          ),
+        ),
+      /public API projection/,
+    );
+    assert.throws(
+      () =>
+        auditNativeSource(
+          process.env.DIRECT_SESSION_NATIVE_SOURCE!,
+          source.replace("readonly messageID: string;", "readonly messageID?: string;"),
+        ),
+      /caller projection/,
+    );
+  },
+);
+test(
+  "committed ToolEditor and return ordering audit rejects structural mutations",
+  { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+  () => {
+    const read = (file: string) =>
+      execFileSync(
+        "git",
+        [
+          "-C",
+          process.env.DIRECT_SESSION_NATIVE_SOURCE!,
+          "show",
+          `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824:${file}`,
+        ],
+        { encoding: "utf8" },
+      );
+    const source = {
+      tool: read("packages/plugin/src/promise/tool.ts"),
+      adapter: read("packages/plugin/src/promise/adapter.ts"),
+      core: read("packages/core/src/tool.ts"),
+      sessionID: read("packages/schema/src/session-id.ts"),
+      message: read("packages/schema/src/session-message.ts"),
+    };
+    auditNativeToolContract(source);
+    for (const [key, before, after, error] of [
+      ["tool", "Types.Mutable<Info>", "Readonly<Info>", /ToolEditor/],
+      [
+        "adapter",
+        "executePromiseTool(value, input, context)",
+        "executePromiseTool(tool, input, context)",
+        /ToolEditor/,
+      ],
+      [
+        "adapter",
+        "...context,\n        signal,",
+        "...context,\n        wrongSignal: signal,",
+        /signal/,
+      ],
+      [
+        "core",
+        "{ output: afterEvent.result.output }",
+        "{ output: execution.value.output }",
+        /ordering/,
+      ],
+      [
+        "core",
+        "{ metadata: afterEvent.result.metadata }",
+        "{ metadata: execution.value.metadata }",
+        /ordering/,
+      ],
+      ["sessionID", 'Schema.isStartingWith("ses")', 'Schema.isStartingWith("other")', /codec/],
+    ] as const) {
+      assert.notEqual(source[key].replace(before, after), source[key]);
+      assert.throws(
+        () => auditNativeToolContract({ ...source, [key]: source[key].replace(before, after) }),
+        error,
+      );
+    }
+  },
+);

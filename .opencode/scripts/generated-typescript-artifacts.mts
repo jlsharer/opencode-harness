@@ -7,6 +7,26 @@ export type GeneratedArtifact = Readonly<{
 
 export const GENERATED_TYPESCRIPT_ARTIFACTS: readonly GeneratedArtifact[] = [
   {
+    source: ".opencode/src/plugin-modules/direct-session-transport.js",
+    output: ".opencode/plugin-modules/direct-session-transport.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/direct-session-transport.test.js",
+    output: ".opencode/plugin-modules/direct-session-transport.test.mjs",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/direct-session-lease.js",
+    output: ".opencode/plugin-modules/direct-session-lease.js",
+    mode: 0o644,
+  },
+  {
+    source: ".opencode/src/plugin-modules/direct-session-lease.test.js",
+    output: ".opencode/plugin-modules/direct-session-lease.test.mjs",
+    mode: 0o644,
+  },
+  {
     source: ".opencode/src/scripts/validate-global-harness.js",
     output: ".opencode/scripts/validate-global-harness.mjs",
     mode: 0o644,

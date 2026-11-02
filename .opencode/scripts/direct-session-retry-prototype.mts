@@ -487,6 +487,97 @@ export function auditNativeSource(
     ts.ScriptTarget.Latest,
     true,
   );
+  // Production is audited as authored, including optionality of the public input projection.
+  const directApi = projectionAst.statements.find(
+    (s): s is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(s) && s.name.text === "DirectSessionApi",
+  );
+  const production = projectionAst.statements.some(
+    (s) => ts.isInterfaceDeclaration(s) && s.name.text === "DirectAdmission",
+  );
+  if (production) {
+    const apiAst = ts.createSourceFile("api.ts", api, ts.ScriptTarget.Latest, true);
+    const names = {
+      create: "SessionCreateInput",
+      prompt: "SessionPromptInput",
+      wait: "SessionWaitInput",
+      get: "SessionGetInput",
+      context: "SessionContextInput",
+      interrupt: "SessionInterruptInput",
+    };
+    if (!directApi) throw new Error("public API projection missing");
+    for (const method of directApi.members) {
+      if (
+        !ts.isMethodSignature(method) ||
+        !ts.isIdentifier(method.name) ||
+        !(method.name.text in names)
+      )
+        throw new Error("public API projection method");
+      const key = method.name.text as keyof typeof names;
+      const native = apiAst.statements.find(
+        (s): s is ts.TypeAliasDeclaration =>
+          ts.isTypeAliasDeclaration(s) && s.name.text === names[key],
+      );
+      const input = method.parameters[0]?.type;
+      if (!native || !ts.isTypeLiteralNode(native.type) || !input || !ts.isTypeLiteralNode(input))
+        throw new Error("public API projection input");
+      for (const member of input.members) {
+        if (!ts.isPropertySignature(member) || !ts.isIdentifier(member.name))
+          throw new Error("public API projection field");
+        const sourceField = native.type.members.find(
+          (m): m is ts.PropertySignature =>
+            ts.isPropertySignature(m) &&
+            m.name.getText(apiAst) === member.name.getText(projectionAst),
+        );
+        if (!sourceField || Boolean(sourceField.questionToken) !== Boolean(member.questionToken))
+          throw new Error("public API projection optionality");
+      }
+      if (
+        key === "wait" &&
+        method.type?.getText(projectionAst).replace(/\s/g, "") !== "Promise<void>"
+      )
+        throw new Error("public API projection wait return");
+    }
+    const identity = projectionAst.statements.find(
+      (s): s is ts.InterfaceDeclaration =>
+        ts.isInterfaceDeclaration(s) && s.name.text === "DirectCallIdentity",
+    );
+    const caller = projectionAst.statements.find(
+      (s): s is ts.InterfaceDeclaration =>
+        ts.isInterfaceDeclaration(s) && s.name.text === "DirectToolCaller",
+    );
+    if (
+      !identity ||
+      !caller ||
+      identity.members.length !== 4 ||
+      caller.members.length !== 1 ||
+      caller.heritageClauses?.[0]?.types[0]?.expression.getText(projectionAst) !==
+        "DirectCallIdentity"
+    )
+      throw new Error("caller projection shape");
+    for (const [node, expected] of [
+      [identity, ["sessionID", "agent", "messageID", "id"]],
+      [caller, ["signal"]],
+    ] as const) {
+      if (
+        node.members.some(
+          (m) =>
+            !ts.isPropertySignature(m) ||
+            !ts.isIdentifier(m.name) ||
+            !expected.includes(m.name.text as never) ||
+            Boolean(m.questionToken),
+        )
+      )
+        throw new Error("caller projection fields");
+    }
+    auditNativeToolContract({
+      tool: read("packages/plugin/src/promise/tool.ts"),
+      adapter,
+      core: read("packages/core/src/tool.ts"),
+      sessionID: read("packages/schema/src/session-id.ts"),
+      message,
+    });
+  }
   const declarations = new Map<string, ts.Expression>();
   for (const statement of nativeAst.statements)
     if (ts.isVariableStatement(statement))
@@ -599,4 +690,47 @@ export function auditNativeSource(
       "public shapes, context projection fields, promise forwarding and coordinator finalizer ordering",
     limits: "static audit only; no live activation or exclusive session lock",
   };
+}
+
+/** Pure source-only check also permits structural negative mutations in tests. */
+export function auditNativeToolContract(source: {
+  tool: string;
+  adapter: string;
+  core: string;
+  sessionID: string;
+  message: string;
+}) {
+  const compact = (text: string) => text.replace(/\s+/g, " ");
+  const tool = compact(source.tool);
+  const adapter = compact(source.adapter);
+  if (
+    !tool.includes("get(id: string): (Info & { readonly id: string }) | undefined") ||
+    !tool.includes("update(id: string, update: (tool: Types.Mutable<Info>) => void): void") ||
+    !tool.includes("readonly execute:")
+  )
+    throw new Error("ToolEditor replacement contract mismatch");
+  if (
+    !adapter.includes("const tool = editor.get(id)") ||
+    !adapter.includes("update(value) Object.assign(tool, value,") ||
+    !adapter.includes("executePromiseTool(value, input, context)") ||
+    !adapter.includes("try: (signal) => tool.execute(input, { ...context, signal,")
+  )
+    throw new Error("ToolEditor promise signal forwarding mismatch");
+  const core = compact(source.core);
+  const start = core.indexOf('status: "completed", result:');
+  const hook = core.indexOf('yield* hooks.trigger("tool", "execute.after", afterEvent)', start);
+  const content = core.indexOf(
+    "normalizeContent(afterEvent.result.content, afterEvent.result.output)",
+    hook,
+  );
+  const output = core.indexOf("{ output: afterEvent.result.output }", content);
+  const metadata = core.indexOf("{ metadata: afterEvent.result.metadata }", content);
+  if (start < 0 || hook < start || content < hook || output < content || metadata < content)
+    throw new Error("after-hook return-copy ordering mismatch");
+  if (
+    !source.sessionID.includes('Schema.String.check(Schema.isStartingWith("ses"))') ||
+    !source.sessionID.includes('schema.make("ses_" + descending())') ||
+    !source.message.includes('Schema.String.check(Schema.isStartingWith("msg_"))')
+  )
+    throw new Error("public prefix codec mismatch");
 }
