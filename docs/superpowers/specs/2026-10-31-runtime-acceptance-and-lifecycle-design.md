@@ -11,6 +11,8 @@ The four proposals address mapping-specific gate duties, immutable admitted dead
 
 Implementation disposition, November 1: mapping gate duties, admitted deadlines and global accepted retirement are implemented, with integrated verification and independent review tracked in the implementation plan. Section 3's new native local-failure transition is deferred because the actual host cannot provide all-surface terminal replacement; only supported identity/output/callback hardening ships. Sections 5 and 6 remain feasibility deferrals. Descriptions of baseline behavior below refer to the characterized v1 baseline, not to newly admitted v2 workflows.
 
+November 2 prototype follow-up: the [direct-session experiment](../plans/2026-11-02-direct-session-retry-prototype.md) bypasses the native Job delivery path using public session primitives. Its source-only implementation-task tests, pinned-schema audit and independent review pass after correcting an invented message identity field. It is an injectable offline prototype, with no registered tool, production guard integration or native activation. This does not change Section 3's deferral for the existing Job transport. The linked record states the supported slice, evidence and remaining lifecycle/API gaps.
+
 ## Evidence and architecture
 
 The source research inspected these existing seams; the baseline tests below characterize them without changing them:

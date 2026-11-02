@@ -34,6 +34,10 @@ The owner subsequently authorized implementation and validation through the exis
 
 Native V2 local retry remains deferred: the supported host API cannot replace every independently delivered terminal success surface. Keep conservative stop, capacity reservation and verified recovery. Actual Job/session identity checks, bounded raw-output handling and owned launch-callback hardening are retained. Active-profile ownership and complete-input evidence reuse also remain deferred. No installation, activation or native managed acceptance follows from this bootstrap implementation.
 
+### Direct-session prototype: November 2
+
+An owner-authorized [source-only prototype](../plans/2026-11-02-direct-session-retry-prototype.md) explores a different execution path using public session create/prompt/wait/get/context/interrupt methods without starting a native subagent Job. The implementation-task slice demonstrates safe settled proof rejection followed by fresh task/child retry in offline fixtures. Corrected native-shaped tests and pinned-source audit pass, and independent review accepted the correction. The prototype is excluded from runtime/package projections and registers no native tool. Existing native Job local retry remains deferred. Production integration, validator command-proof retry, durable recovery and live native acceptance require further work; unbounded native context allocation and absence of an exclusive child lock remain limitations.
+
 ## Current foundations
 
 | Foundation | Existing strength | Refactor implication |
