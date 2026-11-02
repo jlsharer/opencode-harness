@@ -6,6 +6,7 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
+import * as ts from "typescript";
 import {
   assertAllowedTransition,
   captureWorkspace,
@@ -26,14 +27,13 @@ export interface SessionInfo {
 }
 export interface NativeMessage {
   id: string;
-  sessionID: string;
   type: string;
   text?: string;
   agent?: string;
   content?: { type: string; text?: string }[];
   finish?: string;
   error?: unknown;
-  time?: { completed?: unknown };
+  time?: { created?: unknown; completed?: unknown };
   outcome?: string;
 }
 export interface DirectSessionApi {
@@ -283,6 +283,7 @@ export function createPrototype(options: PrototypeOptions) {
           if (expired()) throw new Error("cancelled");
           await stage(api.wait({ sessionID: child! }));
           const final = await stage(api.get({ sessionID: child! }));
+          // Context provenance is the checked child and this exact request; native messages have no sessionID.
           const messages = await stage(api.context({ sessionID: child! }));
           if (
             cancelled ||
@@ -302,8 +303,7 @@ export function createPrototype(options: PrototypeOptions) {
             throw new Error("local context limit");
           const ids = new Set<string>();
           for (const message of messages) {
-            if (!message.id || ids.has(message.id) || message.sessionID !== child)
-              throw new Error("message identity");
+            if (!message.id || ids.has(message.id)) throw new Error("message identity");
             ids.add(message.id);
           }
           const users = messages.filter((m) => m.type === "user");
@@ -411,7 +411,10 @@ export function createPrototype(options: PrototypeOptions) {
 }
 
 /** Optional read-only source check: source evidence, never live execution/provider evidence. */
-export function auditNativeSource(root: string) {
+export function auditNativeSource(
+  root: string,
+  projectionSource = readFileSync(new URL(import.meta.url), "utf8"),
+) {
   let commit: string;
   try {
     commit = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
@@ -470,6 +473,91 @@ export function auditNativeSource(root: string) {
     "error: SessionError.Error.pipe(optional)",
   ])
     if (!message.includes(shape)) throw new Error("native message shape mismatch");
+  // Parse declarations and Schema.Struct fields, including Base spreads. Whole-file tokens
+  // cannot prove that a projected property exists on the context variants that we accept.
+  const nativeAst = ts.createSourceFile(
+    "session-message.ts",
+    message,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const projectionAst = ts.createSourceFile(
+    "prototype.mts",
+    projectionSource,
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const declarations = new Map<string, ts.Expression>();
+  for (const statement of nativeAst.statements)
+    if (ts.isVariableStatement(statement))
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name) && declaration.initializer)
+          declarations.set(declaration.name.text, declaration.initializer);
+  const mismatch = () => new Error("native message projection field mismatch");
+  const object = (expression: ts.Expression): ts.ObjectLiteralExpression => {
+    if (ts.isObjectLiteralExpression(expression)) return expression;
+    if (ts.isCallExpression(expression) && ts.isPropertyAccessExpression(expression.expression)) {
+      const method = expression.expression;
+      if (
+        ts.isIdentifier(method.expression) &&
+        method.expression.text === "Schema" &&
+        method.name.text === "Struct" &&
+        expression.arguments.length === 1 &&
+        ts.isObjectLiteralExpression(expression.arguments[0]!)
+      )
+        return expression.arguments[0]!;
+      if (["annotate", "pipe"].includes(method.name.text)) return object(method.expression);
+    }
+    throw mismatch();
+  };
+  const fields = (name: string, seen = new Set<string>()): Map<string, ts.Expression> => {
+    const expression = declarations.get(name);
+    if (!expression || seen.has(name)) throw mismatch();
+    seen.add(name);
+    const result = new Map<string, ts.Expression>();
+    for (const property of object(expression).properties) {
+      if (ts.isSpreadAssignment(property) && ts.isIdentifier(property.expression)) {
+        for (const [key, value] of fields(property.expression.text, new Set(seen)))
+          result.set(key, value);
+      } else if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
+        result.set(property.name.text, property.initializer);
+      } else throw mismatch();
+    }
+    return result;
+  };
+  const optional = (expression: ts.Expression): boolean =>
+    ts.isCallExpression(expression) &&
+    ts.isPropertyAccessExpression(expression.expression) &&
+    expression.expression.name.text === "pipe" &&
+    expression.arguments.some(
+      (argument) => ts.isIdentifier(argument) && argument.text === "optional",
+    );
+  const variants = [
+    "AgentSelected",
+    "ModelSelected",
+    "LocationSwitched",
+    "User",
+    "Assistant",
+    "Idle",
+  ].map((name) => fields(name));
+  const projection = projectionAst.statements.find(
+    (statement): statement is ts.InterfaceDeclaration =>
+      ts.isInterfaceDeclaration(statement) && statement.name.text === "NativeMessage",
+  );
+  if (!projection || projection.heritageClauses?.length) throw mismatch();
+  const projectedFields = new Set<string>();
+  for (const member of projection.members) {
+    if (!ts.isPropertySignature(member) || !ts.isIdentifier(member.name)) throw mismatch();
+    const key = member.name.text;
+    if (projectedFields.has(key) || !variants.some((variant) => variant.has(key))) throw mismatch();
+    projectedFields.add(key);
+    if (
+      !member.questionToken &&
+      variants.some((variant) => !variant.has(key) || optional(variant.get(key)!))
+    )
+      throw mismatch();
+  }
+  if (!["id", "type"].every((key) => projectedFields.has(key))) throw mismatch();
   const session = read("packages/schema/src/session.ts");
   if (
     !session.includes("idle: DateTimeUtcFromMillis.pipe(optional)") ||
@@ -506,7 +594,9 @@ export function auditNativeSource(root: string) {
     commit,
     source: "committed Git blobs at exact pin",
     workingTreeDifferences,
-    evidence: "public shapes, promise forwarding and coordinator finalizer ordering",
+    messageProjectionFields: [...projectedFields].sort(),
+    evidence:
+      "public shapes, context projection fields, promise forwarding and coordinator finalizer ordering",
     limits: "static audit only; no live activation or exclusive session lock",
   };
 }

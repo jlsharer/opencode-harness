@@ -163,17 +163,16 @@ function setup(root: string) {
         summary: "UNTRUSTED CHILD TEXT",
       };
       return mutate([
-        { id: r.promptID, sessionID, type: "user", text: r.text },
+        { id: r.promptID, type: "user", text: r.text, time: { created: 1 } },
         {
           id: "assistant-" + sessionID,
-          sessionID,
           type: "assistant",
           agent: "implementer",
           content: [{ type: "text", text: JSON.stringify(result) }],
           finish: "stop",
-          time: { completed: 2 },
+          time: { created: 1, completed: 2 },
         },
-        { id: "idle-" + sessionID, sessionID, type: "idle", outcome: "succeeded" },
+        { id: "idle-" + sessionID, type: "idle", outcome: "succeeded", time: { created: 2 } },
       ]);
     },
     async interrupt({ sessionID }) {
@@ -256,7 +255,7 @@ function setup(root: string) {
   };
 }
 
-test("validated wrapper accepts only after settled wait, finalizer, workspace and real acceptance proof", () =>
+test("native context without per-message sessionID accepts after settled wait and real proof", () =>
   fixture(async (f) => {
     const result = await f.wrapper.run(f.trusted, f.packet);
     assert.equal(result.status, "accepted");
@@ -288,7 +287,9 @@ test("ordinary proof rejection releases only safe settled attempt then creates f
 
 for (const variant of [
   "stale-task",
-  "cross-session",
+  "cross-context-prompt-id",
+  "cross-context-prompt-text",
+  "absent-own-prompt",
   "extra-user",
   "duplicate",
   "failed-idle",
@@ -304,11 +305,12 @@ for (const variant of [
         const a = m[1]!;
         if (variant === "stale-task")
           a.content![0]!.text = a.content![0]!.text!.replace(/prototype-task-1/g, "old-task");
-        if (variant === "cross-session") a.sessionID = "other-child";
+        if (variant === "cross-context-prompt-id") m[0]!.id = "msg_other_child_prompt";
+        if (variant === "cross-context-prompt-text") m[0]!.text = "UNTRUSTED other prompt";
+        if (variant === "absent-own-prompt") m.shift();
         if (variant === "extra-user")
           m.splice(1, 0, {
             id: "steer",
-            sessionID: "child-1",
             type: "user",
             text: "UNTRUSTED STEER",
           });
@@ -326,6 +328,7 @@ for (const variant of [
       assert.equal(result.status, "stopped");
       assert.equal(f.wrapper.snapshot().active, 1);
       assert.ok(!JSON.stringify(result).includes("UNTRUSTED"));
+      assert.ok(!f.events.some((event) => event.startsWith("proof:")));
       assert.equal(f.records.size, 1);
     }),
   );
@@ -508,3 +511,31 @@ test("elapsed deadline cannot accept while timer callback is delayed", () =>
     assert.equal((await f.wrapper.run(f.trusted, f.packet)).status, "stopped");
     assert.equal(f.wrapper.snapshot().active, 1);
   }));
+
+for (const [label, declaration] of [
+  ["invented required session identity", "sessionID: string;"],
+  ["invented optional field", "fabricated?: string;"],
+  ["variant-only required field", "agent: string;"],
+  ["optional native field made required", "metadata: Record<string, unknown>;"],
+])
+  test(
+    "pinned field audit rejects " + label,
+    { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+    () => {
+      const source = readFileSync(
+        new URL("./direct-session-retry-prototype.mts", import.meta.url),
+        "utf8",
+      );
+      const changed =
+        declaration === "agent: string;"
+          ? source.replace("  agent?: string;", "  agent: string;")
+          : source.replace(
+              "export interface NativeMessage {",
+              "export interface NativeMessage {\n" + declaration,
+            );
+      assert.throws(
+        () => auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!, changed),
+        /native message projection/,
+      );
+    },
+  );
