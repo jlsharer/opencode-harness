@@ -410,6 +410,114 @@ export function createPrototype(options: PrototypeOptions) {
   return { run, snapshot: () => controller.snapshot() };
 }
 
+const definedType = (type: ts.TypeNode): ts.TypeNode => {
+  if (!ts.isUnionTypeNode(type)) return type;
+  const defined = type.types.filter((part) => part.kind !== ts.SyntaxKind.UndefinedKeyword);
+  return defined.length === 1 ? defined[0]! : ts.factory.createUnionTypeNode(defined);
+};
+
+function projectedLiterals(type: ts.TypeNode): string[] | undefined {
+  const parts = ts.isUnionTypeNode(type) ? type.types : [type];
+  if (!parts.every((part) => ts.isLiteralTypeNode(part) && ts.isStringLiteral(part.literal)))
+    return undefined;
+  return parts
+    .map((part) => (part as ts.LiteralTypeNode).literal as ts.StringLiteral)
+    .map((literal) => literal.text)
+    .sort();
+}
+
+/** Bounded Struct/Base/fields resolver shared by message and production projection checks. */
+function nativeSchema(
+  source: string,
+  label: string,
+  importedFields: Record<string, Map<string, ts.Expression>> = {},
+) {
+  const ast = ts.createSourceFile("native.ts", source, ts.ScriptTarget.Latest, true);
+  const declarations = new Map<string, ts.Expression>();
+  for (const statement of ast.statements)
+    if (ts.isVariableStatement(statement))
+      for (const declaration of statement.declarationList.declarations)
+        if (ts.isIdentifier(declaration.name) && declaration.initializer)
+          declarations.set(declaration.name.text, declaration.initializer);
+  const mismatch = () => new Error(label + " field mismatch");
+  const unwrap = (input: string | ts.Expression, seen = new Set<string>()): ts.Expression => {
+    const expression = typeof input === "string" ? declarations.get(input) : input;
+    if (!expression) throw mismatch();
+    if (typeof input === "string") {
+      if (seen.has(input)) throw mismatch();
+      seen.add(input);
+    }
+    if (ts.isIdentifier(expression)) return unwrap(expression.text, seen);
+    if (
+      ts.isCallExpression(expression) &&
+      ts.isPropertyAccessExpression(expression.expression) &&
+      ["annotate", "pipe"].includes(expression.expression.name.text)
+    )
+      return unwrap(expression.expression.expression, seen);
+    return expression;
+  };
+  const fields = (
+    input: string | ts.Expression,
+    seen = new Set<ts.Expression>(),
+  ): Map<string, ts.Expression> => {
+    let expression = unwrap(input);
+    if (ts.isPropertyAccessExpression(expression) && expression.name.text === "fields") {
+      const target = expression.expression;
+      if (ts.isIdentifier(target) && importedFields[target.text])
+        return importedFields[target.text]!;
+      expression = unwrap(target);
+    }
+    if (seen.has(expression)) throw mismatch();
+    seen.add(expression);
+    if (
+      ts.isCallExpression(expression) &&
+      ts.isPropertyAccessExpression(expression.expression) &&
+      expression.expression.expression.getText(ast) === "Schema" &&
+      expression.expression.name.text === "Struct" &&
+      expression.arguments.length === 1
+    )
+      expression = expression.arguments[0]!;
+    if (!ts.isObjectLiteralExpression(expression)) throw mismatch();
+    const result = new Map<string, ts.Expression>();
+    for (const property of expression.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        for (const [key, value] of fields(property.expression, new Set(seen)))
+          result.set(key, value);
+      } else if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
+        result.set(property.name.text, property.initializer);
+      } else throw mismatch();
+    }
+    return result;
+  };
+  const optional = (expression: ts.Expression): boolean => {
+    if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression))
+      return false;
+    const method = expression.expression;
+    return (
+      (method.name.text === "pipe" &&
+        expression.arguments.some((arg) => ts.isIdentifier(arg) && arg.text === "optional")) ||
+      (["pipe", "annotate"].includes(method.name.text) && optional(method.expression))
+    );
+  };
+  const literals = (input: string | ts.Expression): string[] => {
+    const expression = unwrap(input);
+    if (!ts.isCallExpression(expression) || !ts.isPropertyAccessExpression(expression.expression))
+      throw mismatch();
+    const method = expression.expression;
+    if (method.expression.getText(ast) !== "Schema") throw mismatch();
+    const first = expression.arguments[0];
+    const values =
+      method.name.text === "Literals" && first && ts.isArrayLiteralExpression(first)
+        ? first.elements
+        : ["tag", "Literal"].includes(method.name.text) && first
+          ? [first]
+          : [];
+    if (!values.length || !values.every(ts.isStringLiteral)) throw mismatch();
+    return values.map((value) => (value as ts.StringLiteral).text).sort();
+  };
+  return { fields, optional, literals };
+}
+
 /** Optional read-only source check: source evidence, never live execution/provider evidence. */
 export function auditNativeSource(
   root: string,
@@ -475,12 +583,7 @@ export function auditNativeSource(
     if (!message.includes(shape)) throw new Error("native message shape mismatch");
   // Parse declarations and Schema.Struct fields, including Base spreads. Whole-file tokens
   // cannot prove that a projected property exists on the context variants that we accept.
-  const nativeAst = ts.createSourceFile(
-    "session-message.ts",
-    message,
-    ts.ScriptTarget.Latest,
-    true,
-  );
+  const messageSchema = nativeSchema(message, "native message projection");
   const projectionAst = ts.createSourceFile(
     "prototype.mts",
     projectionSource,
@@ -496,6 +599,58 @@ export function auditNativeSource(
     (s) => ts.isInterfaceDeclaration(s) && s.name.text === "DirectAdmission",
   );
   if (production) {
+    const promptSchema = nativeSchema(read("packages/schema/src/prompt.ts"), "prompt projection");
+    const inboxSchema = nativeSchema(
+      read("packages/schema/src/session-inbox.ts"),
+      "prompt result projection",
+      { Prompt: promptSchema.fields("Prompt") },
+    );
+    const sessionSchema = nativeSchema(
+      read("packages/schema/src/session.ts"),
+      "session projection",
+    );
+    const modelSchema = nativeSchema(read("packages/schema/src/model.ts"), "model projection");
+    const interfaceFields = (name: string) => {
+      const node = projectionAst.statements.find(
+        (s): s is ts.InterfaceDeclaration => ts.isInterfaceDeclaration(s) && s.name.text === name,
+      );
+      if (!node || node.heritageClauses?.length) throw new Error(name + " projection missing");
+      return node.members;
+    };
+    // This checks the consumed structural subset, not arbitrary TypeScript/native codec equivalence.
+    const members = (
+      projected: ts.NodeArray<ts.TypeElement>,
+      native: Map<string, ts.Expression>,
+      schema: ReturnType<typeof nativeSchema>,
+      literalFields: readonly string[] = [],
+    ) => {
+      const seen = new Set<string>();
+      for (const member of projected) {
+        if (!ts.isPropertySignature(member) || !ts.isIdentifier(member.name) || !member.type)
+          throw new Error("native projection member mismatch");
+        const key = member.name.text;
+        const expression = native.get(key);
+        if (
+          seen.has(key) ||
+          !expression ||
+          Boolean(member.questionToken) !== schema.optional(expression)
+        )
+          throw new Error("native projection field/optionality mismatch: " + key);
+        seen.add(key);
+        const type = definedType(member.type);
+        if (ts.isTypeLiteralNode(type)) members(type.members, schema.fields(expression), schema);
+        else {
+          const literals = projectedLiterals(type);
+          if (literals || literalFields.includes(key)) {
+            const expected = schema.literals(expression);
+            if (literals?.join() !== expected.join())
+              throw new Error("native projection literal variants mismatch: " + key);
+          }
+        }
+      }
+    };
+    members(interfaceFields("SessionInfo"), sessionSchema.fields("Info"), sessionSchema);
+    members(interfaceFields("DirectModelRef"), modelSchema.fields("Ref"), modelSchema);
     const apiAst = ts.createSourceFile("api.ts", api, ts.ScriptTarget.Latest, true);
     const names = {
       create: "SessionCreateInput",
@@ -531,6 +686,36 @@ export function auditNativeSource(
         );
         if (!sourceField || Boolean(sourceField.questionToken) !== Boolean(member.questionToken))
           throw new Error("public API projection optionality");
+        if (!member.type || !sourceField.type) throw new Error("public API projection field type");
+        const projected = definedType(member.type);
+        const declared = definedType(sourceField.type);
+        if (ts.isTypeReferenceNode(declared) && declared.typeName.getText(apiAst) === "Model.Ref") {
+          if (
+            !ts.isTypeReferenceNode(projected) ||
+            projected.typeName.getText(projectionAst) !== "DirectModelRef"
+          )
+            throw new Error("public API model projection reference");
+        } else if (
+          ts.isTypeReferenceNode(declared) &&
+          declared.typeName.getText(apiAst) === "SessionInbox.Delivery"
+        ) {
+          if (projectedLiterals(projected)?.join() !== inboxSchema.literals("Delivery").join())
+            throw new Error("public API projection delivery variants");
+        }
+      }
+      if (key === "create" || key === "get") {
+        if (method.type?.getText(projectionAst).replace(/\s/g, "") !== "Promise<SessionInfo>")
+          throw new Error("public API projection session return");
+      }
+      if (key === "prompt") {
+        const result = method.type;
+        const value =
+          result &&
+          ts.isTypeReferenceNode(result) &&
+          result.typeName.getText(projectionAst) === "Promise" &&
+          result.typeArguments?.[0];
+        if (!value || !ts.isTypeLiteralNode(value)) throw new Error("prompt result projection");
+        members(value.members, inboxSchema.fields("User"), inboxSchema, ["type", "delivery"]);
       }
       if (
         key === "wait" &&
@@ -578,51 +763,7 @@ export function auditNativeSource(
       message,
     });
   }
-  const declarations = new Map<string, ts.Expression>();
-  for (const statement of nativeAst.statements)
-    if (ts.isVariableStatement(statement))
-      for (const declaration of statement.declarationList.declarations)
-        if (ts.isIdentifier(declaration.name) && declaration.initializer)
-          declarations.set(declaration.name.text, declaration.initializer);
   const mismatch = () => new Error("native message projection field mismatch");
-  const object = (expression: ts.Expression): ts.ObjectLiteralExpression => {
-    if (ts.isObjectLiteralExpression(expression)) return expression;
-    if (ts.isCallExpression(expression) && ts.isPropertyAccessExpression(expression.expression)) {
-      const method = expression.expression;
-      if (
-        ts.isIdentifier(method.expression) &&
-        method.expression.text === "Schema" &&
-        method.name.text === "Struct" &&
-        expression.arguments.length === 1 &&
-        ts.isObjectLiteralExpression(expression.arguments[0]!)
-      )
-        return expression.arguments[0]!;
-      if (["annotate", "pipe"].includes(method.name.text)) return object(method.expression);
-    }
-    throw mismatch();
-  };
-  const fields = (name: string, seen = new Set<string>()): Map<string, ts.Expression> => {
-    const expression = declarations.get(name);
-    if (!expression || seen.has(name)) throw mismatch();
-    seen.add(name);
-    const result = new Map<string, ts.Expression>();
-    for (const property of object(expression).properties) {
-      if (ts.isSpreadAssignment(property) && ts.isIdentifier(property.expression)) {
-        for (const [key, value] of fields(property.expression.text, new Set(seen)))
-          result.set(key, value);
-      } else if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
-        result.set(property.name.text, property.initializer);
-      } else throw mismatch();
-    }
-    return result;
-  };
-  const optional = (expression: ts.Expression): boolean =>
-    ts.isCallExpression(expression) &&
-    ts.isPropertyAccessExpression(expression.expression) &&
-    expression.expression.name.text === "pipe" &&
-    expression.arguments.some(
-      (argument) => ts.isIdentifier(argument) && argument.text === "optional",
-    );
   const variants = [
     "AgentSelected",
     "ModelSelected",
@@ -630,7 +771,7 @@ export function auditNativeSource(
     "User",
     "Assistant",
     "Idle",
-  ].map((name) => fields(name));
+  ].map((name) => messageSchema.fields(name));
   const projection = projectionAst.statements.find(
     (statement): statement is ts.InterfaceDeclaration =>
       ts.isInterfaceDeclaration(statement) && statement.name.text === "NativeMessage",
@@ -644,7 +785,7 @@ export function auditNativeSource(
     projectedFields.add(key);
     if (
       !member.questionToken &&
-      variants.some((variant) => !variant.has(key) || optional(variant.get(key)!))
+      variants.some((variant) => !variant.has(key) || messageSchema.optional(variant.get(key)!))
     )
       throw mismatch();
   }
@@ -687,8 +828,9 @@ export function auditNativeSource(
     workingTreeDifferences,
     messageProjectionFields: [...projectedFields].sort(),
     evidence:
-      "public shapes, context projection fields, promise forwarding and coordinator finalizer ordering",
-    limits: "static audit only; no live activation or exclusive session lock",
+      "public shapes, consumed model/session/prompt/context projection fields, requiredness and literal variants, promise forwarding and coordinator finalizer ordering",
+    limits:
+      "bounded static projection audit, not full codec/type equivalence; no live activation or exclusive session lock",
   };
 }
 

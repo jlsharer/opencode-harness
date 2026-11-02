@@ -537,6 +537,7 @@ for (const [label, declaration] of [
               "export interface NativeMessage {",
               "export interface NativeMessage {\n" + declaration,
             );
+      assert.notEqual(changed, source, "mutation must apply: " + label);
       assert.throws(
         () => auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!, changed),
         /native message projection/,
@@ -583,6 +584,80 @@ test(
     );
   },
 );
+
+for (const [label, before, after] of [
+  [
+    "context invented session identity",
+    "export interface NativeMessage {",
+    "export interface NativeMessage {\n  sessionID: string;",
+  ],
+  [
+    "context invented optional field",
+    "export interface NativeMessage {",
+    "export interface NativeMessage {\n  fabricated?: string;",
+  ],
+  ["context variant-only field made required", "  agent?: string;", "  agent: string;"],
+  [
+    "context native optional field made required",
+    "export interface NativeMessage {",
+    "export interface NativeMessage {\n  metadata: Record<string, unknown>;",
+  ],
+  ["model variant made required", "variant?: string | undefined;", "variant: string;"],
+  [
+    "unsupported prompt delivery variant",
+    'delivery?: "queue" | "steer" | undefined;',
+    'delivery?: "unsupported" | undefined;',
+  ],
+  [
+    "create result adds nonexistent required field",
+    "export interface SessionInfo {",
+    "export interface SessionInfo {\n  nonexistentRequiredField: string;",
+  ],
+  ["session optional field made required", "parentID?: string | undefined;", "parentID: string;"],
+  ["session nested idle made required", "time: { idle?: unknown };", "time: { idle: unknown };"],
+  [
+    "model adds nonexistent optional field",
+    "export interface DirectModelRef {",
+    "export interface DirectModelRef {\n  fabricated?: string;",
+  ],
+  ["model required identity made optional", "  providerID: string;", "  providerID?: string;"],
+  ["prompt result adds field", 'type: "user";', 'type: "user"; fabricated?: string;'],
+  [
+    "prompt result required identity made optional",
+    "    sessionID: string;\n    type:",
+    "    sessionID?: string;\n    type:",
+  ],
+  ["prompt result wrong tag", 'type: "user";', 'type: "synthetic";'],
+  ["prompt result widens tag", 'type: "user";', "type: string;"],
+  ["prompt result wrong delivery", 'delivery: "queue" | "steer";', 'delivery: "queue";'],
+  ["prompt result widens delivery", 'delivery: "queue" | "steer";', "delivery: string;"],
+  [
+    "prompt payload adds field",
+    "payload: { text: string };",
+    "payload: { text: string; fabricated: string };",
+  ],
+  [
+    "prompt time adds field",
+    "time: { created: unknown };",
+    "time: { created: unknown; idle?: unknown };",
+  ],
+] as const)
+  test(
+    "pinned production field audit rejects " + label,
+    { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+    () => {
+      const source = readFileSync(
+        new URL("../src/plugin-modules/direct-session-transport.ts", import.meta.url),
+        "utf8",
+      );
+      const changed = source.replace(before, after);
+      assert.notEqual(changed, source, "mutation must apply: " + label);
+      assert.throws(
+        () => auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!, changed),
+        /projection/,
+      );
+    },
+  );
 test(
   "committed ToolEditor and return ordering audit rejects structural mutations",
   { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
