@@ -328,7 +328,10 @@ export function createGlobalProtocol(options = {}) {
             throw new Error("terminal task");
         owner.controller.cancel(context.delegationTaskId);
         task.state = "cancelled";
-        return { childID: task.childID, termination: "unconfirmed" };
+        return {
+            ...(task.childID === undefined ? {} : { childID: task.childID }),
+            termination: "unconfirmed",
+        };
     }
     function result(parentID, context, input, proof = {}) {
         const { owner, task } = taskFor(parentID, context);

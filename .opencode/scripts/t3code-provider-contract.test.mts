@@ -268,6 +268,18 @@ test("current declared-file proof misses an undeclared input that changes actual
   assert.notEqual((await declaredFileEvidence(cwd, ["a.txt"])).sha256, before.sha256);
 });
 
+// Model native Tool.runtime's plain JSON boundary before content serialization can hide undefined.
+function assertNativeJson(value: unknown, location = "output"): void {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return;
+  if (typeof value === "number" && Number.isFinite(value)) return;
+  assert.ok(typeof value === "object" && value !== null, `${location}: Expected JSON`);
+  assert.ok(
+    Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype,
+    `${location}: Expected a JSON object or array`,
+  );
+  for (const [key, entry] of Object.entries(value)) assertNativeJson(entry, `${location}.${key}`);
+}
+
 function fixture(
   t: { after(fn: () => void): void },
   options: Parameters<typeof createGlobalNativeAdapter>[1] = {},
@@ -313,7 +325,14 @@ function fixture(
       transform: async (fn) => {
         fn({
           add: (definition) => {
-            modelTools.set(definition.name, definition);
+            modelTools.set(definition.name, {
+              ...definition,
+              execute: async (input, context) => {
+                const result = await definition.execute(input, context);
+                assertNativeJson(result.output);
+                return result;
+              },
+            });
           },
         });
       },
@@ -868,6 +887,75 @@ test("teardown rejects only its own managed actions and late results while ordin
   const independent = fixture(t);
   await assert.doesNotReject(admit(independent.adapter));
 });
+
+for (const version of [1, 2] as const)
+  for (const state of ["admitted", "running", "awaiting-guidance"] as const)
+    test(`registered cancellation returns native JSON for v${version} ${state} task`, async (t) => {
+      const f = fixture(t);
+      await f.adapter.register();
+      const tool = f.modelTools.get("harness_orchestration")!;
+      const parent = { sessionID: "parent" };
+      await tool.execute({ version, action: "orchestration.admit", spec: workflow() }, parent);
+      const call = event();
+      await f.adapter.before(call);
+      const context = {
+        orchestrationId: "run",
+        delegationTaskId: "task",
+        scopeKey: "unit",
+        role: "researcher" as const,
+        taskMode: "research" as const,
+      };
+      if (state === "running")
+        f.adapter.protocol.started("parent", context, {
+          id: "child",
+          parentID: "parent",
+          agent: "researcher",
+        });
+      if (state === "awaiting-guidance") {
+        call.status = "completed";
+        call.result = nativeResult({
+          version: 1,
+          ...context,
+          outcome: "clarification",
+          summary: "Need one decision",
+          evidence: [],
+          artifacts: [],
+          requestNonce: "fresh-nonce",
+          question: "Which file?",
+        });
+        await f.adapter.after(call);
+        assert.equal((call.result as any).metadata.status, "completed");
+      }
+      const before = (await tool.execute({ version: 2, action: "status" }, parent)).output as any;
+      const cancelled = await tool.execute({ version, action: "task.cancel", context }, parent);
+      assert.deepEqual(
+        cancelled.output,
+        state === "admitted"
+          ? { termination: "unconfirmed" }
+          : { childID: "child", termination: "unconfirmed" },
+      );
+      assert.deepEqual(JSON.parse(cancelled.content), cancelled.output);
+      const after = (await tool.execute({ version: 2, action: "status" }, parent)).output as any;
+      for (const key of ["generation", "residentRuns", "residentCalls", "replay"])
+        assert.deepEqual(after[key], before[key], key);
+      assert.match(after.runs[0].retirementRefusal, /cancelled task: termination uncertain/);
+      assert.equal(after.runs[0].accepted, false);
+      if (state === "admitted") {
+        assert.equal(after.residentRuns.used, 1);
+        assert.equal(after.residentCalls.used, 1);
+        assert.equal(after.replay.reservedRecords, 1);
+      }
+      await assert.rejects(
+        tool.execute({ version, action: "orchestration.accept", orchestrationId: "run" }, parent),
+        /incomplete/,
+      );
+      call.status = "completed";
+      call.result = nativeResult(structured());
+      await f.adapter.after(call);
+      assert.equal((call.result as any).metadata.harness, "rejected");
+      assert.deepEqual(f.adapter.protocol.snapshot("parent", "run").gates, {});
+      await ordinary(f.adapter);
+    });
 
 test("parent model tool admits, validates native children and accepts without invoking a slash executor", async (t) => {
   const f = fixture(t);
