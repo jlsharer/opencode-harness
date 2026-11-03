@@ -138,3 +138,5 @@ The first full-QA attempt lacked the clone's local plugin dependency; existing l
 Corrected global installation applied: package `0.1.20`, profile `2.0.0`, immutable release suffix `fc523d34ba84d4fc316d`. The previous release suffix `45bbc7c677178a545d21` is retained for rollback. Independent installed-asset verification passed: all 56 release inventory hashes and 20 owned discovery files match; doctor reports profile 2.0.0 and the prior release is available for rollback. A fresh live cancellation retest remains pending.
 
 Patched live cancellation retest remains pending after updated installation, a full provider restart and fresh orchestration/task/child identities. The retest must distinguish a JSON-valid cancellation response, conservative acceptance refusal and ordinary-tool availability from native termination proof; it cannot resolve or retire the old cancelled run.
+
+The chronological prompts, case statuses and rerun records are in the [global-native regression evaluation runbook](global-native-regression-evals.md).
