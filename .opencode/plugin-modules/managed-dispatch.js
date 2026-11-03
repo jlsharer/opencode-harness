@@ -836,6 +836,31 @@ export function createManagedDispatch(options) {
         try {
             const receipt = await owned.binding.transport.reconcileStopped(owned.binding.attempt, check);
             check();
+            // Native authority can change during interrupt/wait/get/context. Refresh it
+            // before publishing proof, within this same observation's remaining budget.
+            let timer;
+            try {
+                const remaining = observation.deadline - performance.now();
+                if (remaining <= 0)
+                    throw new Error("direct authority refresh observation expired");
+                await Promise.race([
+                    owned.binding.refreshAuthority(),
+                    new Promise((_resolve, reject) => {
+                        timer = setTimeout(() => reject(new Error("direct authority refresh observation expired")), remaining);
+                    }),
+                ]);
+                directRecoveryAssertion(owned.task.directHandle)();
+                check();
+            }
+            catch (error) {
+                // A late refresh cannot regain authority or enter a successor observation.
+                disqualifyDirect(owned, "direct final authority refresh failed");
+                throw error;
+            }
+            finally {
+                if (timer !== undefined)
+                    clearTimeout(timer);
+            }
             owned.binding.transport.assertTermination(receipt, owned.binding.attempt);
             owned.receipt = receipt;
             owned.proofGeneration = generation;

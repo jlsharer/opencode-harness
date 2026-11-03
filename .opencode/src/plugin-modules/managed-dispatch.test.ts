@@ -264,6 +264,9 @@ for (const mode of ["controller", "cleanup", "parent-before"] as const)
           admission,
           caller,
           assertAuthority: () => {},
+          // This manager/controller double has no native authority domain.
+          // The native integration fixture below exercises the real refresh.
+          refreshAuthority: async () => {},
           callbacks: {
             inspect: () => ({
               generation,
@@ -420,6 +423,13 @@ for (const fault of [
   "direct recovery error after before executor settlement remains blocked",
   "direct recovery parent after terminal reaction permits resolve",
   "direct recovery expired authority refresh has no late interrupt",
+  ...(["resolve", "release"] as const).flatMap((phase) =>
+    (["verify", "primary", "roles", "permission"] as const).flatMap((api) =>
+      (["reject", "pending", "timeout", "callback", "deadline"] as const).map(
+        (mode) => `direct recovery final refresh ${phase} ${api} ${mode}` as const,
+      ),
+    ),
+  ),
   "direct recovery exact native error identity",
   ...(["interrupt", "wait", "get", "context"] as const).flatMap((api) =>
     (
@@ -427,6 +437,12 @@ for (const fault of [
         "resolve-late-callback",
         "release-late-callback",
         "release-tree",
+        "resolve-role",
+        "release-role",
+        "resolve-permission",
+        "release-permission",
+        "resolve-primary",
+        "release-primary",
         "reject",
         "pending",
         "timeout",
@@ -450,6 +466,7 @@ for (const fault of [
   "direct recovery lost permission remains blocked",
   "direct recovery lost primary remains blocked",
   "direct recovery lost activation remains blocked",
+  "direct recovery replaced activation ancestor remains blocked",
   "direct recovery error wrong status remains blocked",
   "direct recovery error wrong input remains blocked",
   "direct recovery late event after resolve remains blocked",
@@ -538,6 +555,8 @@ for (const fault of [
         path.resolve(".opencode/routing/harness-model-routing.example.json"),
         path.join(runtime, "routing/harness-model-routing.example.json"),
       );
+      const activationRoot = path.join(f.root, "activation-only");
+      fs.mkdirSync(activationRoot, { mode: 0o700 });
       const env = {
         OPENCODE_HARNESS_NATIVE_API: "v2",
         OPENCODE_HARNESS_WORKSPACE_ROOT: f.workspace,
@@ -545,7 +564,7 @@ for (const fault of [
         OPENCODE_HARNESS_TRACE_ROOT: f.trace,
         OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION:
           fault === "off" || (foreignRoute && fault.endsWith("-off")) ? undefined : "1",
-        OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH: path.join(f.root, "activation.json"),
+        OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH: path.join(activationRoot, "activation.json"),
         OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE: "a".repeat(64),
       };
       const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
@@ -596,8 +615,22 @@ for (const fault of [
       let helperAfter: V2ToolAfter | undefined;
       let nativeCancel: (() => void) | undefined;
       let observing = false;
+      let lostPermission = false;
+      let lostPrimary = false;
       let releasing = false;
       let observationHooked = false;
+      let finalRefresh = false;
+      let monotonicAdvance = 0;
+      const originalMonotonic = performance.now.bind(performance);
+      const monotonicDescriptor = Object.getOwnPropertyDescriptor(performance, "now");
+      if (fault.endsWith(" deadline"))
+        Object.defineProperty(performance, "now", {
+          configurable: true,
+          value: () => originalMonotonic() + monotonicAdvance,
+        });
+      let refreshAgentCalls = 0;
+      let refreshHooked = false;
+      const refreshCalls: string[] = [];
       let releaseHeld: (() => void) | undefined;
       let lateAfterEvent: V2ToolAfter | undefined;
       let nativeWaitEntered = false;
@@ -605,7 +638,23 @@ for (const fault of [
       let terminalReaction: Promise<unknown> | undefined;
       const observationCalls: string[] = [];
       const observationStep = async (api: string) => {
-        if (observing) observationCalls.push(api);
+        if (observing) {
+          observationCalls.push(api);
+          if (api === "interrupt") {
+            finalRefresh = false;
+            refreshAgentCalls = 0;
+          }
+          if (api === "context") {
+            finalRefresh = true;
+            if (
+              fault.startsWith(
+                `direct recovery final refresh ${releasing ? "release" : "resolve"} `,
+              ) &&
+              fault.endsWith("deadline")
+            )
+              monotonicAdvance += 1500;
+          }
+        }
         if (
           !observing ||
           observationHooked ||
@@ -620,8 +669,31 @@ for (const fault of [
             releaseHeld = resolve;
           });
         if (fault.endsWith("late-callback")) await after(lateAfterEvent!);
+        if (fault.endsWith("-role")) agents.find((a) => a.id === "implementer")!.mode = "primary";
+        if (fault.endsWith("-permission")) lostPermission = true;
+        if (fault.endsWith("-primary")) lostPrimary = true;
         if (fault.endsWith("release-tree"))
           fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "changed during release");
+      };
+
+      const refreshStep = async (api: string) => {
+        if (!observing || !finalRefresh) return;
+        refreshCalls.push(api);
+        if (
+          refreshHooked ||
+          !fault.startsWith(
+            `direct recovery final refresh ${releasing ? "release" : "resolve"} ${api} `,
+          )
+        )
+          return;
+        refreshHooked = true;
+        if (fault.endsWith("deadline")) monotonicAdvance += 501;
+        if (fault.endsWith("reject")) throw new Error("final authority refused");
+        if (fault.endsWith("pending") || fault.endsWith("timeout"))
+          await new Promise<void>((resolve) => {
+            releaseHeld = resolve;
+          });
+        if (fault.endsWith("callback")) await after(lateAfterEvent!);
       };
 
       let changedContext = false;
@@ -655,6 +727,7 @@ for (const fault of [
         permission: {
           hook: async () => {},
           assert: async (input) => {
+            await refreshStep("permission");
             order.push("permission");
             assert.deepEqual(input, {
               sessionID: "parent",
@@ -669,6 +742,7 @@ for (const fault of [
             });
             if (
               fault === "deny" ||
+              lostPermission ||
               (observing && fault === "direct recovery lost permission remains blocked")
             )
               throw new Error("denied");
@@ -696,6 +770,8 @@ for (const fault of [
         },
         agent: {
           list: async () => {
+            if (observing && finalRefresh)
+              await refreshStep(++refreshAgentCalls === 1 ? "verify" : "roles");
             if (acquireOnAgentCheck) {
               acquireOnAgentCheck = false;
               acquireForeignLease(f);
@@ -729,10 +805,12 @@ for (const fault of [
           hook: async () => {},
           get: async ({ sessionID }) => {
             if (sessionID !== "parent") await observationStep("get");
+            else await refreshStep("primary");
             return sessionID === "parent"
               ? {
                   id: "parent",
                   ...(fault === "nonprimary" ||
+                  lostPrimary ||
                   (observing && fault === "direct recovery lost primary remains blocked")
                     ? { parentID: "ancestor" }
                     : {}),
@@ -1357,6 +1435,16 @@ for (const fault of [
           }
           if (fault === "direct recovery lost role remains blocked")
             agents.find((a) => a.id === "implementer")!.mode = "primary";
+          if (fault === "direct recovery replaced activation ancestor remains blocked") {
+            const marker = env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
+            const original = fs.statSync(marker);
+            const bytes = fs.readFileSync(marker);
+            fs.renameSync(activationRoot, activationRoot + ".old");
+            fs.mkdirSync(activationRoot, { mode: 0o700 });
+            fs.renameSync(path.join(activationRoot + ".old", "activation.json"), marker);
+            assert.equal(fs.statSync(marker).ino, original.ino);
+            assert.deepEqual(fs.readFileSync(marker), bytes);
+          }
           if (fault === "direct recovery lost activation remains blocked")
             fs.appendFileSync(env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH, " ");
           if (fault === "direct recovery event loss after after remains blocked") {
@@ -1368,7 +1456,61 @@ for (const fault of [
             dispose?.();
             dispose = undefined;
           }
+          const verifyFinalRefresh = async (operation: Promise<{ state: string }>) => {
+            // Attach rejection observation immediately while awaiting the deferred boundary.
+            const outcome = operation.then(
+              (value) => ({ value, error: undefined }),
+              (error) => ({ value: undefined, error }),
+            );
+            if (fault.endsWith("pending")) {
+              for (let i = 0; i < 100 && !releaseHeld; i++)
+                await new Promise((resolve) => setImmediate(resolve));
+              assert.ok(releaseHeld, "final authority refresh must enter");
+              assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+              await assert.rejects(recovery("harness_recovery_resolve"), /progress/);
+              await assert.rejects(
+                recovery("harness_recovery_release", { expectedTreeHash: "a".repeat(64) }),
+                /progress/,
+              );
+              releaseHeld();
+            }
+            const result = await outcome;
+            assert.ok(refreshHooked, "final authority refresh must enter");
+            assert.deepEqual(observationCalls.slice(-4), ["interrupt", "wait", "get", "context"]);
+            if (fault.endsWith("pending")) {
+              assert.equal(result.error, undefined);
+              assert.equal(result.value!.state, releasing ? "fresh-only" : "terminated");
+              return;
+            }
+            const boundary = fault.split(" ").at(-2)!;
+            assert.deepEqual(
+              refreshCalls,
+              ["verify", "primary", "roles", "permission"].slice(
+                0,
+                ["verify", "primary", "roles", "permission"].indexOf(boundary) + 1,
+              ),
+              "failed refresh must issue no successor",
+            );
+            if (releasing) assert.ok(result.error);
+            else assert.equal(result.value!.state, "blocked");
+            if (fault.endsWith("timeout")) {
+              assert.ok(releaseHeld);
+              const calls = [...refreshCalls];
+              assert.equal((await recovery("harness_recovery_resolve")).state, "blocked");
+              releaseHeld();
+              await new Promise((resolve) => setImmediate(resolve));
+              assert.deepEqual(refreshCalls, calls, "expired refresh must issue no successor");
+            }
+            assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            assert.ok(
+              fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+            );
+          };
           const resolving = recovery("harness_recovery_resolve");
+          if (fault.startsWith("direct recovery final refresh resolve ")) {
+            await verifyFinalRefresh(resolving);
+            return;
+          }
           if (fault === "direct recovery expired authority refresh has no late interrupt") {
             assert.equal((await resolving).state, "blocked");
             assert.ok(releaseHeld);
@@ -1453,7 +1595,7 @@ for (const fault of [
           const status = await recovery("harness_recovery_status");
           if (
             (fault.startsWith("direct recovery observation") &&
-              (fault.endsWith("reject") || fault.endsWith("resolve-late-callback"))) ||
+              (fault.endsWith("reject") || fault.includes("resolve-"))) ||
             (fault.includes("blocked") &&
               !fault.includes("reviewed tree") &&
               !fault.includes("terminal context")) ||
@@ -1464,6 +1606,16 @@ for (const fault of [
           }
           assert.equal(resolved.state, "terminated");
           assert.equal(status.state, "ready");
+          if (fault.startsWith("direct recovery final refresh release ")) {
+            releasing = true;
+            finalRefresh = false;
+            refreshAgentCalls = 0;
+            refreshCalls.length = 0;
+            await verifyFinalRefresh(
+              recovery("harness_recovery_release", { expectedTreeHash: status.treeHash }),
+            );
+            return;
+          }
           if (fault.startsWith("direct recovery observation") && fault.includes("release-")) {
             releasing = true;
             await assert.rejects(
@@ -1780,6 +1932,10 @@ for (const fault of [
         }
       } finally {
         dispose?.();
+        if (fault.endsWith(" deadline")) {
+          if (monotonicDescriptor) Object.defineProperty(performance, "now", monotonicDescriptor);
+          else Reflect.deleteProperty(performance, "now");
+        }
         for (const [key, value] of Object.entries(saved)) {
           if (value === undefined) delete process.env[key];
           else process.env[key] = value;

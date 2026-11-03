@@ -1238,6 +1238,7 @@ function v2NativeSetup(trustedOptions) {
                                             canonicalDirectInput(input) !== call.input ||
                                             call.disqualifiers.length)
                                             throw new Error("direct plugin authority lost");
+                                        assertActivationParents();
                                         const current = readActivation();
                                         if (current.stat.dev !== activationIdentity.stat.dev ||
                                             current.stat.ino !== activationIdentity.stat.ino ||
@@ -1304,6 +1305,7 @@ function v2NativeSetup(trustedOptions) {
                                             },
                                         },
                                         assertAuthority: call.assertAuthority,
+                                        refreshAuthority: call.refreshAuthority,
                                     });
                                     const candidate = await directTransport.execute(attempt);
                                     dispatch.stageDirectResult(handle, () => directTransport.consumeCandidate(candidate, admission, caller));

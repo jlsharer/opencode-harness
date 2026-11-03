@@ -1650,6 +1650,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
                       call.disqualifiers.length
                     )
                       throw new Error("direct plugin authority lost");
+                    assertActivationParents();
                     const current = readActivation();
                     if (
                       current.stat.dev !== activationIdentity.stat.dev ||
@@ -1727,6 +1728,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
                       },
                     },
                     assertAuthority: call.assertAuthority,
+                    refreshAuthority: call.refreshAuthority,
                   });
                   const candidate = await directTransport.execute(attempt);
                   dispatch.stageDirectResult(handle, () =>
