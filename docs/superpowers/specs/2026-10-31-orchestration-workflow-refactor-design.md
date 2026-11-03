@@ -44,6 +44,10 @@ The [production design](2026-11-02-direct-session-production-design.md) and [exe
 
 Implementation through `8b53009` includes independently reviewed corrections for mixed missing/unsafe artifacts, native input decode ordering, setup capability proof, competing-lease admission races and real helper callback settlement. Whole-branch review and its scoped correction review are complete with no open findings. The complete final `npm test` and package dry run pass; the package contains 73 files and excludes the prototype, source audit, TypeScript sources and tests. The execution record retains exact checks, platform skips and ruling costs. This offline evidence does not establish live provider/native managed acceptance. Validator direct transport, durable release/recovery and separately authorized live-host validation remain later work; existing native Job local retry remains deferred.
 
+### Proposed next increment: in-process direct recovery
+
+The [next recovery design](2026-11-02-direct-session-in-process-recovery-design.md) recommends proof-qualified release for deadline expiry or exact caller cancellation only while the original plugin instance retains its operation and callback evidence. A fresh independent builder check found no important design questions. Resolve would prove termination; release would separately require unchanged authority, scoped effects and the exact reviewed tree before permitting only a new orchestration. Pending operations, missing callbacks, unknown reload, event loss and generic errors remain blocked. Durable settled certificates, validator transport and payload compaction remain later increments. This is a reviewed design proposal awaiting owner approval, not implemented recovery or live acceptance.
+
 ## Current foundations
 
 | Foundation | Existing strength | Refactor implication |
