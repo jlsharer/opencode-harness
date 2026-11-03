@@ -2,7 +2,7 @@
 
 Date: 2026-11-02. Design-only follow-on to the completed [production design](2026-11-02-direct-session-production-design.md) and [execution record](../plans/2026-11-02-direct-session-production.md). Baseline: `76b9f24`, branch `codex/shared-workflow-refactor`.
 
-The owner requested continuation of the existing implement/review/commit-and-push work in this checkout using fresh agents. The recommendation, narrow reason allowlist, observation bound and interfaces below are author choices under that continuation, not separately expressed owner requirements. A fresh independent builder consistency check found nothing important left to resolve. Owner design approval and an implementation plan are the next gates; this document records no implementation or live acceptance.
+The owner requested continuation of the existing implement/review/commit-and-push work in this checkout using fresh agents. The recommendation, narrow reason allowlist, observation bound and interfaces below are author choices under that continuation, not separately expressed owner requirements. A fresh independent builder consistency check found nothing important left to resolve. The owner then explicitly approved this bounded design for implementation; this document records no implementation or live acceptance.
 
 ## Intent and approaches
 
