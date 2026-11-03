@@ -1,8 +1,8 @@
 # Direct session in-process recovery design
 
-Date: 2026-11-02. Design-only follow-on to the completed [production design](2026-11-02-direct-session-production-design.md) and [execution record](../plans/2026-11-02-direct-session-production.md). Baseline: `76b9f24`, branch `codex/shared-workflow-refactor`.
+Date: 2026-11-02. Implemented follow-on to the completed [production design](2026-11-02-direct-session-production-design.md) and [execution record](../plans/2026-11-02-direct-session-production.md). Baseline: `76b9f24`, branch `codex/shared-workflow-refactor`.
 
-The owner requested continuation of the existing implement/review/commit-and-push work in this checkout using fresh agents. The recommendation, narrow reason allowlist, observation bound and interfaces below are author choices under that continuation, not separately expressed owner requirements. A fresh independent builder consistency check found nothing important left to resolve. The owner then explicitly approved this bounded design for implementation; this document records no implementation or live acceptance.
+The owner requested continuation of the existing implement/review/commit-and-push work in this checkout using fresh agents. The recommendation, narrow reason allowlist, observation bound and interfaces below are author choices under that continuation, not separately expressed owner requirements. A fresh independent builder consistency check found nothing important left to resolve. The owner explicitly approved the design and implementation; code is implemented through `9e88a04`, with corrected scoped reviews and full offline QA. Final documentation/evidence addendum review passed with no findings. Authorized integration commit/push remains pending. No live acceptance is claimed.
 
 ## Intent and approaches
 
@@ -16,9 +16,9 @@ Three approaches were considered:
 
 The parent selected the first approach as the bounded next increment. This design keeps default-off Linux V2 fresh foreground `implementer/implementation` as the only direct route. It adds no validator route, durable journal, payload compaction, new lifetime limit, package dependency, native core patch, generic release endpoint, or live activation. The existing Job recovery path retains its behavior and evidence requirements.
 
-## Existing facts and native authority
+## Baseline facts and native authority
 
-The production transport owns a pending-Promise set, but invokes API functions before registering their returned Promises, reconciles a snapshot for at most 2,000 ms, and erases error provenance in a generic catch. Its late-create interrupt is useful but insufficient. Adapter `directCalls.after` means a branch was entered, including correlation failure; it does not prove a correlated callback finished. Managed `directRecord` correctly rejects stopped/deadline-expired handles and must continue doing so for acceptance. `interrupt()` moves live controller attempts to `cancel-requested`; repeated generic interruption currently sets `recoveryFault`. Direct finalization also sets `used` on failure. None of those acceptance-oriented flags is a recovery receipt.
+At the baseline before this increment, the production transport owns a pending-Promise set, but invokes API functions before registering their returned Promises, reconciles a snapshot for at most 2,000 ms, and erases error provenance in a generic catch. Its late-create interrupt is useful but insufficient. Adapter `directCalls.after` means a branch was entered, including correlation failure; it does not prove a correlated callback finished. Managed `directRecord` correctly rejects stopped/deadline-expired handles and must continue doing so for acceptance. `interrupt()` moves live controller attempts to `cancel-requested`; repeated generic interruption sets `recoveryFault`. Direct finalization also sets `used` on failure. None of those acceptance-oriented flags is a recovery receipt.
 
 Native assumptions are grounded in committed blobs at `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824` in `/home/joshl/.cache/opencode-harness/v2-native-api-src`. Its dirty working tree is not evidence. Relevant seams are `packages/plugin/src/promise/{adapter,tool,session}.ts`, `packages/core/src/tool.ts`, `packages/core/src/session/{session,execution,run-coordinator}.ts`, `packages/core/src/session/execution/restart.ts` and the consumed session/message schemas.
 
@@ -45,7 +45,7 @@ For the smallest supported tranche, require create and prompt to have been invok
 
 ## Private transport contract
 
-Keep the implementation in `direct-session-transport.ts`. The following names are proposed concrete interfaces, not claims that they already exist. They are available only to trusted local code, never tools or packet JSON:
+The implementation is in `direct-session-transport.ts`. These concrete interfaces are implemented and available only to trusted local code, never tools or packet JSON:
 
 - `DirectAttemptHandle`: frozen opaque object backed by a transport-owned WeakMap. Created/registered before the first create invocation; bound to the branded admission, exact caller tuple and signal reference, child/prompt IDs, immutable original deadline and plugin-instance identity. A prepared handle lets the adapter register managed recovery before native reentrancy. `execute(handle)` continues to produce only `DirectCandidate` on normal success.
 - `inspectSettlement(handle)`: bounded diagnostic projection containing stop phase, pending counts by operation name, create/prompt acknowledgment presence, and bounded disqualifier codes. It never exports the actual ledger, receipt, raw prompt/result, or a release/acceptance boolean.
@@ -70,6 +70,8 @@ Record child invocation identities at before entry and keep them until the match
 Every owned callback entry/exit, command settlement, relevant event and disqualifier increments a managed recovery generation. Bind old callbacks to their retained task even after termination is proved; do not rely solely on `active` for their accounting. Unknown/mismatched late parent/child callbacks must still invalidate that retained attempt. Event loss/unload must disqualify *all unresolved direct records*, including ones with a prior after-event; the existing `if (!call.after)` filter is insufficient.
 
 ## Native reconciliation and deadlines
+
+The private managed `DirectRecoveryBinding` additionally requires `refreshAuthority(): Promise<void>`, always supplied by the native adapter. After the complete transport interrupt/wait/get/context sequence it refreshes effective roles, exact primary, role inventory and permission using the remaining original manager observation deadline. Every native await rechecks captured authority, reservation/deadline and callback generations; the manager rechecks its original generations on return. Refusal or expiry is sticky, and expired continuations cannot issue successor authority APIs. There is no public argument/proof field, optional fallback or renewed deadline. Final lease cleanup remains synchronous. Captured activation ancestry is also checked inside retained synchronous `assertAuthority()`, including status and release.
 
 The author-selected recovery observation budget is 2,000 ms for the entire fresh sequence, using a separate monotonic deadline per explicit resolve/release observation. Production cannot receive this budget from model input. Test clocks may be injected through trusted test options. The original task deadline, budgets, gates and stopped status remain unchanged, even when reconciliation runs later.
 
@@ -119,14 +121,14 @@ No public tool names/arguments, launcher flag, activation marker shape, role nam
 | `.opencode/scripts/direct-session-retry-prototype.mts` and `.test.mts` | Extend committed-blob audit for Promise error wrapping, interruption-after semantics, prompt wake/finalizer ordering and restart claims; no prototype import in runtime |
 | `.opencode/scripts/generated-typescript-artifacts.mts` and established generated mirrors | Regenerate touched production/test JavaScript through build; add inventory entries only if an actually necessary file is introduced |
 | `.memory/protocols/memory-management.md`, `.opencode/bootstrap/memory/protocols/memory-management.md`, `.opencode/skills/delegation-orchestrator/SKILL.md`, `references/trust-and-restart-guide.md`, `references/validation-checklist.md` | Coherent exact in-process direct recovery boundary, fresh-only rules and refusal after reload. References are relative to delegation-orchestrator skill |
-| `AGENTS.md`, `README.md`, `docs/external-runtime.md`, production design/execution record and this increment's plan | Update applicable user-facing statements without rewriting historical evidence as if prior releases supported recovery; final plan records real validation |
+| `AGENTS.md`, maintained external-runtime guidance in `README.md`, production design/execution record and this increment's plan | Update applicable user-facing statements without rewriting historical evidence as if prior releases supported recovery; final plan records real validation |
 | Source/portable/runtime manifests, package files and validators | Preserve existing dependency-free closure. Existing files should avoid new production inventory. Test exact packaged/generated inclusion and portable source independence |
 
 The shared memory protocol's bootstrap projection appears in the global manifest. Updating generic legacy-profile documentation may therefore change that documentation payload; explicitly retain its existing global-native exclusion. It grants no global runtime capability. Global adapter source, generated executable code, manifest membership and import closure remain unchanged. No global authority/import of direct recovery modules is introduced. Portable installations must continue to depend only on their portable manifest and seeded memory, never repository docs/AGENTS/source history. Regenerate only established mirrors; do not hand-edit generated executable output.
 
 ## Command-backed acceptance matrix
 
-These are required future checks, not results claimed by this design. All fixtures use fake APIs/binaries and private owner-controlled temporary roots. Fresh independent validation reviews the final implementation and commands; external QA is not managed validator gate evidence.
+These are the required checks; observed final-code results are recorded below and in the [execution record](../plans/2026-11-02-direct-session-in-process-recovery.md#execution-record). All fixtures use fake APIs/binaries and private owner-controlled temporary roots. External QA is not managed validator gate evidence.
 
 | Command / suite | Required behavioral evidence |
 | --- | --- |
@@ -146,3 +148,11 @@ At minimum, deterministic regressions must fail before the relevant fix and pass
 ## Builder decisions and outstanding boundary
 
 The builder may choose private type names and ledger storage details while preserving the interfaces' trust and lifecycle requirements. Error-object correlation, callback-Promise settlement ordering, all stop-origin propagation and lease cleanup ordering require independent review; if pinned native fixtures contradict any premise, reduce recoverability and retain refusal rather than substituting message equality or model confirmation. No owner product choice is currently unanswered. The explicit costs are narrow recovery eligibility, blocked cancellation without after, unchanged post-unlink/crash and same-UID limits, retained payload growth and no provider/live-host claim. Durable recovery, validator transport and compaction remain separately scoped later work.
+
+## Implemented outcome and evidence — November 2, 2026
+
+Code `9e88a04` implements retained operation/callback settlement, private stop provenance and exact Error correlation, original authority, bounded reconciliation and synchronous reviewed fresh-only release. Task 1 review passed. Task 2 review found activation-only ancestor replacement and native role/permission/primary drift gaps; correction `9e88a04` addresses both, independently marked ADDRESSED with no new Critical/Important breakage. Final whole-branch code/spec assessment reports PASS with no findings. Final documentation/evidence addendum review passed with no findings. Authorized integration commit/push remains pending.
+
+Frozen-code `npm test` exited 0: **875 registered, 832 passed, 43 explicit skips, 0 failures**, including source/portable validators, both runtime scripts, portable installation, global validation/tests, format/lint, type, generated and policy checks. Separate pinned prototype tests passed **57/57**, no skips, using committed blobs at `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824`; dirty cache adapter/plugin files were diagnostic only. Package dry run remains **73 files**, with direct lease/transport production files present and source/audit/tests/TypeScript dependency excluded. The execution record preserves RED/GREEN, constituent results, skipped proof and all eight ruling costs.
+
+Global manifest membership and executable/import/capability closure remain unchanged in this increment; generic bootstrap protocol content retains its exclusion. This is offline evidence outside native managed acceptance. Missing after, unknown/reloaded leases, event loss, generic faults and pending work remain blocked. Existing same-UID, post-read context, no child lock/all-plugin fence and post-unlink crash limits remain; durable recovery, additional direct roles/validator transport, compaction and native Job retry remain separately scoped or deferred.
