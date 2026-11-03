@@ -701,3 +701,31 @@ test(
     fs.rmSync(profilePath);
   },
 );
+
+test("direct recovery foreign runtime remains default-off and production-only", () => {
+  const repo = makeRepo("direct-recovery-default-off");
+  fs.mkdirSync(path.join(repo, "nested"));
+  const { result, capture } = invoke(repo, ["--", "run", "hello"]);
+  assert.equal(result.status, 0, result.stderr);
+  const observed = parseObserved(capture);
+  assert.equal(observed.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION, undefined);
+  const runtime = observed.env.OPENCODE_HARNESS_RUNTIME_ROOT;
+  assert.equal(typeof runtime, "string");
+  for (const name of [
+    "direct-session-transport.js",
+    "direct-session-lease.js",
+    "managed-dispatch.js",
+    "v2-native-plugin.js",
+  ])
+    assert.ok(fs.statSync(path.join(runtime!, "plugin-modules", name)).isFile());
+  const files = fs.readdirSync(path.join(runtime!, "plugin-modules"));
+  assert.ok(
+    !files.some(
+      (name) =>
+        name.endsWith(".ts") ||
+        name.includes("retry-prototype") ||
+        name.includes("direct-session-transport.test"),
+    ),
+  );
+  assert.equal(fs.existsSync(path.join(repo, ".opencode")), false);
+});

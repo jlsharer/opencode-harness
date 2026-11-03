@@ -188,3 +188,33 @@ for (const kind of ["bytes", "mode", "inode", "parent", "parent-mode", "root"])
         if (kind === "root")
             chmodSync(traceRoot, 0o700);
     }));
+for (const stage of ["before unlink", "after unlink", "after replacement"])
+    test(`recovery cleanup failure ${stage}`, () => fixture((root, traceRoot) => {
+        const manager = createDirectSessionLease({ traceRoot, workspaceRoot: root });
+        const lease = manager.acquire(identity);
+        const marker = path.join(traceRoot, "orchestrations/.direct-session-unresolved.json");
+        const original = fs.unlinkSync;
+        fs.unlinkSync = ((filename) => {
+            if (String(filename) !== marker)
+                return original(filename);
+            if (stage !== "before unlink")
+                original(filename);
+            if (stage === "after replacement")
+                writeFileSync(marker, "replacement", { mode: 0o600 });
+            throw new Error("injected cleanup failure");
+        });
+        syncBuiltinESMExports();
+        try {
+            assert.throws(() => manager.release(lease), (error) => {
+                const diagnostic = error;
+                assert.equal(diagnostic.name, "DirectLeaseCleanupError");
+                assert.equal(diagnostic.markerPath, marker);
+                assert.equal(diagnostic.markerState, stage === "after unlink" ? "missing" : "present");
+                return true;
+            });
+        }
+        finally {
+            fs.unlinkSync = original;
+            syncBuiltinESMExports();
+        }
+    }));

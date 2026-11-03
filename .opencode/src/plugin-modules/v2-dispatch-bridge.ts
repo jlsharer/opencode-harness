@@ -60,6 +60,7 @@ export interface V2ToolBefore {
 export interface V2ToolAfter extends V2ToolBefore {
   status: unknown;
   result?: unknown;
+  error?: unknown;
 }
 
 /** Native V2 uses sessionID for continuation; the internal controller retains its V1 policy vocabulary. */

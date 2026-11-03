@@ -149,6 +149,9 @@ export function createManagedDispatch(options) {
     let recoveryShellRoot = null;
     const report = options.telemetry ?? (() => { });
     const directHandles = new WeakMap();
+    const retainedDirect = new Set();
+    let directRecovery;
+    let directObservation;
     let directUnresolved = false;
     // Only this exact live attempt may exempt its privately held lease token.
     function assertCurrentLease() {
@@ -174,14 +177,21 @@ export function createManagedDispatch(options) {
         const owned = directHandles.get(handle);
         if (!owned ||
             owned.used ||
+            owned.disqualifiers.length ||
             active !== owned.task ||
             owned.task.directHandle !== handle ||
             owned.revision !== owned.task.revision ||
             stopped)
             throw new Error("direct handle is not the exact active attempt");
         verifySpec(owned.task.run);
-        if ((options.now ?? Date.now)() >= handle.deadline || owned.caller.signal.aborted)
+        if ((options.now ?? Date.now)() >= handle.deadline || owned.caller.signal.aborted) {
+            const cause = owned.binding?.transport.observeStopCause(owned.binding.attempt);
+            if (cause && owned.binding) {
+                stopDirectRecovery(handle, cause);
+                throw owned.binding.transport.stoppedError(owned.binding.attempt);
+            }
             throw new Error("direct attempt expired or cancelled");
+        }
         assertCurrentLease();
         return owned;
     }
@@ -217,7 +227,10 @@ export function createManagedDispatch(options) {
             caller: Object.freeze({ ...caller }),
             used: false,
             eventSeen: false,
+            generation: 0,
+            disqualifiers: [],
         });
+        retainedDirect.add(directHandles.get(handle));
         directRecord(handle);
         return handle;
     }
@@ -254,10 +267,167 @@ export function createManagedDispatch(options) {
         if (!owned.eventSeen || child.id !== owned.childID || child.parentID !== owned.task.run.parent)
             throw new Error("direct child event and acknowledgment disagree");
     }
+    function stoppedDirectRecord(handle) {
+        const owned = directHandles.get(handle);
+        if (!owned || owned.task.directHandle !== handle || owned.state === "released-fresh-only")
+            throw new Error("unknown or retired direct recovery identity");
+        return owned;
+    }
+    function authorityEntry(filename) {
+        const before = fs.lstatSync(filename);
+        if (before.isSymbolicLink() || ![0, process.getuid()].includes(before.uid))
+            throw new Error("unsafe direct authority path");
+        if (before.mode & 0o022) {
+            if (!before.isDirectory() || before.uid !== 0 || !(before.mode & 0o1000))
+                throw new Error("writable direct authority path");
+        }
+        if (before.isDirectory())
+            return { stat: before };
+        if (!before.isFile() ||
+            before.uid !== process.getuid() ||
+            before.nlink !== 1 ||
+            before.size > 1048576)
+            throw new Error("unsafe direct authority document");
+        const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+        try {
+            const opened = fs.fstatSync(fd);
+            const bytes = fs.readFileSync(fd);
+            const after = fs.fstatSync(fd);
+            const current = fs.lstatSync(filename);
+            if ([opened, after, current].some((st) => st.dev !== before.dev ||
+                st.ino !== before.ino ||
+                st.uid !== before.uid ||
+                st.mode !== before.mode ||
+                st.size !== before.size ||
+                st.ctimeMs !== before.ctimeMs ||
+                st.mtimeMs !== before.mtimeMs))
+                throw new Error("direct authority changed during read");
+            return { stat: after, digest: createHash("sha256").update(bytes).digest("hex") };
+        }
+        finally {
+            fs.closeSync(fd);
+        }
+    }
+    function captureDirectAuthority(task) {
+        const entries = new Map();
+        const capture = (filename) => {
+            if (!path.isAbsolute(filename) ||
+                path.resolve(filename) !== filename ||
+                fs.realpathSync(filename) !== filename)
+                throw new Error("noncanonical direct authority");
+            let current = filename;
+            while (true) {
+                if (!entries.has(current))
+                    entries.set(current, authorityEntry(current));
+                const parent = path.dirname(current);
+                if (parent === current)
+                    break;
+                current = parent;
+            }
+        };
+        capture(options.workspaceRoot);
+        capture(options.traceRoot);
+        for (const run of runs.values()) {
+            verifySpec(run);
+            capture(path.join(options.traceRoot, run.marker));
+            capture(path.join(options.traceRoot, run.source));
+        }
+        for (const run of runs.values()) {
+            if (!run.directAuthority)
+                continue;
+            for (const [filename, original] of run.directAuthority) {
+                const current = entries.get(filename);
+                if (!current ||
+                    current.stat.dev !== original.stat.dev ||
+                    current.stat.ino !== original.stat.ino ||
+                    current.stat.uid !== original.stat.uid ||
+                    current.stat.mode !== original.stat.mode ||
+                    current.digest !== original.digest)
+                    throw new Error("original direct authority changed before create");
+            }
+        }
+        if (task && !runs.has(task.context.orchestrationId))
+            throw new Error("direct run unavailable");
+        return entries;
+    }
+    function assertDirectAuthority(owned) {
+        try {
+            const binding = owned.binding;
+            if (!binding || !owned.authority || !owned.lease)
+                throw new Error("direct authority unavailable");
+            binding.transport.assertBinding(binding.attempt, binding.admission, binding.caller);
+            if (!sameDirectCaller(owned.caller, binding.caller) ||
+                owned.caller.signal !== binding.caller.signal ||
+                owned.task.revision !== owned.revision ||
+                owned.task.directHandle.deadline !== binding.admission.deadline)
+                throw new Error("direct caller authority changed");
+            for (const [filename, before] of owned.authority) {
+                const current = authorityEntry(filename);
+                if (current.stat.dev !== before.stat.dev ||
+                    current.stat.ino !== before.stat.ino ||
+                    current.stat.uid !== before.stat.uid ||
+                    current.stat.mode !== before.stat.mode ||
+                    current.digest !== before.digest)
+                    throw new Error("direct authority identity or bytes changed");
+            }
+            for (const run of runs.values())
+                verifySpec(run);
+            options.directSessionLease.assertClear(owned.lease);
+            binding.assertAuthority();
+        }
+        catch (error) {
+            disqualifyDirect(owned, "direct authority proof failed");
+            throw error;
+        }
+    }
+    function registerDirectRecovery(handle, binding) {
+        const owned = directRecord(handle);
+        binding.transport.assertBinding(binding.attempt, binding.admission, binding.caller);
+        if (owned.binding ||
+            !owned.lease ||
+            !sameDirectCaller(owned.caller, binding.caller) ||
+            owned.caller.signal !== binding.caller.signal ||
+            binding.admission.childID !== owned.childID ||
+            binding.admission.promptID !== owned.promptID ||
+            binding.admission.prompt !== handle.prompt ||
+            binding.admission.deadline !== handle.deadline ||
+            JSON.stringify(binding.admission.context) !== JSON.stringify(handle.context))
+            throw new Error("direct recovery binding mismatch");
+        owned.authority = captureDirectAuthority(owned.task);
+        owned.binding = binding;
+        assertDirectAuthority(owned);
+    }
+    function disqualifyDirect(owned, reason) {
+        owned.disqualifiers.push(reason);
+        owned.generation++;
+        owned.state = "ineligible";
+        owned.binding?.transport.stop(reason);
+    }
+    function stopDirectRecovery(handle, cause) {
+        const owned = stoppedDirectRecord(handle);
+        const binding = owned.binding;
+        if (!binding || !binding.transport.isStopCause(binding.attempt, cause))
+            throw new Error("unverified direct stop cause");
+        if (owned.cause === cause)
+            return;
+        if (owned.cause || owned.disqualifiers.length || (stopped && directRecovery !== owned)) {
+            stopDirectTask(handle, "conflicting direct stop");
+            return;
+        }
+        owned.cause = cause;
+        owned.state = "stopped-awaiting-settlement";
+        owned.generation++;
+        directRecovery = owned;
+        // Publish manager stop before reentering the transport's private notification.
+        interrupt("verified direct deadline or caller cancellation", undefined, owned);
+        binding.transport.stop(binding.attempt, cause);
+    }
     function stopDirectTask(handle, reason) {
         const owned = directHandles.get(handle);
-        if (owned && active === owned.task)
-            interrupt(reason);
+        if (!owned)
+            return;
+        disqualifyDirect(owned, reason);
+        interrupt(reason);
     }
     function finalizeDirectTask(handle, afterIdentity) {
         const original = directHandles.get(handle);
@@ -315,15 +485,15 @@ export function createManagedDispatch(options) {
         }
     }
     function settleDirectChildTool(input) {
-        const task = active;
-        if (!task?.directHandle || input.sessionID !== task.childId)
+        const task = [...retainedDirect].find((owned) => owned.childID === input.sessionID)?.task;
+        if (!task?.directHandle)
             return;
         const id = identifier(input.callID);
         if (task.directCallbacks?.get(id) !== input.tool) {
             interrupt("uncorrelated direct child callback");
             throw new Error("direct child callback mismatch");
         }
-        task.directCallbacks.delete(id);
+        task.directCallbacks.set(id, `settled:${String(input.tool)}`);
     }
     function trackDirectChildTool(input) {
         if (!active?.directHandle)
@@ -421,8 +591,16 @@ export function createManagedDispatch(options) {
         if (readDocument(options.traceRoot, run.source).digest !== run.digest)
             throw new Error("workflow changed after registration; restart requires a fresh orchestration ID");
     }
-    function interrupt(reason, terminal) {
-        if (stopped && active && !terminal)
+    function interrupt(reason, terminal, verifiedDirect) {
+        if (!verifiedDirect)
+            for (const owned of retainedDirect) {
+                if (owned.lease &&
+                    owned.state !== "released-fresh-only" &&
+                    !owned.used &&
+                    !owned.disqualifiers.length)
+                    disqualifyDirect(owned, reason);
+            }
+        if (stopped && active && !terminal && !verifiedDirect)
             recoveryFault = true;
         if (!stopped) {
             recoveryOwner = active?.run.parent ?? terminal?.parent ?? null;
@@ -581,6 +759,127 @@ export function createManagedDispatch(options) {
             }
         };
     }
+    function observeOwnedCallback(input, invoke) {
+        const owned = [...retainedDirect].find((entry) => entry.childID === input.sessionID);
+        if (!owned) {
+            const settle = beginOwnedCallback(input);
+            let promise;
+            try {
+                promise = Promise.resolve(invoke());
+            }
+            catch (error) {
+                promise = Promise.reject(error);
+            }
+            void promise.then(settle, settle);
+            return promise;
+        }
+        owned.generation++;
+        owned.task.ownedCallbacks++;
+        let promise;
+        try {
+            promise = Promise.resolve(invoke());
+        }
+        catch (error) {
+            promise = Promise.reject(error);
+        }
+        const settle = (failed) => {
+            owned.task.ownedCallbacks--;
+            owned.generation++;
+            const id = String(input.callID);
+            if (owned.task.directCallbacks?.get(id)?.startsWith("settled:"))
+                owned.task.directCallbacks.delete(id);
+            if (failed) {
+                owned.disqualifiers.push("owned direct callback rejected");
+                owned.state = "ineligible";
+            }
+        };
+        void promise.then(() => settle(false), () => settle(true));
+        return promise;
+    }
+    function assertDirectDrained(owned, generation, callbackGeneration) {
+        if (!stopped ||
+            directRecovery !== owned ||
+            !owned.cause ||
+            owned.disqualifiers.length ||
+            recoveryFault ||
+            !owned.eventSeen ||
+            owned.task.ownedCallbacks ||
+            owned.task.pendingCommands.size ||
+            owned.task.directCallbacks?.size ||
+            (generation !== undefined && generation !== owned.generation))
+            throw new Error("direct callbacks, events or stop authority remain unsettled");
+        assertDirectAuthority(owned);
+        const callbacks = owned.binding.callbacks.inspect();
+        owned.binding.callbacks.assertSettled(callbackGeneration ?? callbacks.generation);
+    }
+    function directRecoveryAssertion(handle) {
+        const owned = stoppedDirectRecord(handle);
+        const generation = owned.generation;
+        const callbackGeneration = owned.binding.callbacks.inspect().generation;
+        const observation = directObservation;
+        if (!observation || observation.owned !== owned)
+            throw new Error("direct observation not reserved");
+        return () => {
+            if (directObservation !== observation || performance.now() >= observation.deadline)
+                throw new Error("direct authority refresh observation expired");
+            assertDirectDrained(owned, generation, callbackGeneration);
+        };
+    }
+    async function reconcileDirect(owned) {
+        assertDirectDrained(owned);
+        const generation = owned.generation;
+        const callbackGeneration = owned.binding.callbacks.inspect().generation;
+        const check = () => assertDirectDrained(owned, generation, callbackGeneration);
+        owned.state = "reconciling";
+        const observation = { owned, deadline: performance.now() + 2000 };
+        directObservation = observation;
+        try {
+            const receipt = await owned.binding.transport.reconcileStopped(owned.binding.attempt, check);
+            check();
+            owned.binding.transport.assertTermination(receipt, owned.binding.attempt);
+            owned.receipt = receipt;
+            owned.proofGeneration = generation;
+            owned.callbackGeneration = callbackGeneration;
+            owned.state = "termination-proved";
+            return receipt;
+        }
+        finally {
+            if (directObservation === observation)
+                directObservation = undefined;
+        }
+    }
+    function directReady(owned) {
+        assertDirectDrained(owned, owned.proofGeneration, owned.callbackGeneration);
+        if (!owned.receipt || !terminationReconciled || recoveries >= 4)
+            throw new Error("direct termination proof unavailable");
+        owned.binding.transport.assertTermination(owned.receipt, owned.binding.attempt);
+        let current;
+        try {
+            current = snapshot(owned.task.context.orchestrationId);
+            assertAllowedTransition(owned.task.before, current, recoveryAllowedPaths);
+        }
+        catch (error) {
+            disqualifyDirect(owned, "direct scope or inventory proof failed");
+            throw error;
+        }
+        const changedFiles = [
+            ...new Set([...Object.keys(owned.task.before.files), ...Object.keys(current.files)]),
+        ]
+            .filter((name) => owned.task.before.files[name] !== current.files[name])
+            .sort();
+        if (changedFiles.length > 32)
+            throw new Error("workspace effects exceed review bound");
+        owned.state = "ready-for-reviewed-release";
+        return {
+            state: "ready",
+            orchestrationId: recoveryId,
+            treeHash: current.treeHash,
+            changedFiles,
+            reason: recoveryReason,
+            recoveryShellRoot: recoveryShellRoot?.path ?? null,
+            nextAction: "review workspace effects; only the bound parent may request fresh-only release",
+        };
+    }
     async function reconcileBackground(child) {
         const task = active;
         if (!task?.background || !task.acknowledged || !task.childId || !transport || stopped)
@@ -728,8 +1027,34 @@ export function createManagedDispatch(options) {
         if (recoveryResolving)
             throw new Error("managed recovery termination already in progress");
         const task = active;
-        if (directUnresolved || task?.directHandle)
-            throw new Error("direct unresolved lease has no native Job recovery");
+        if (directUnresolved || task?.directHandle) {
+            recoveryResolving = true;
+            try {
+                const owned = directRecovery;
+                if (!owned || owned.task.run.parent !== parent)
+                    throw new Error("unowned direct recovery");
+                await reconcileDirect(owned);
+                const state = owned.task.run.controller
+                    .snapshot()
+                    .attempts.find((a) => a.id === owned.task.context.delegationTaskId)?.state;
+                if (state === "cancel-requested")
+                    owned.task.run.controller.reconcileCancelled(owned.task.context.delegationTaskId);
+                else if (state !== "cancelled")
+                    throw new Error("direct controller not cancelled");
+                active = null;
+                terminationReconciled = true;
+                return { state: "terminated", orchestrationId: recoveryId };
+            }
+            catch {
+                return {
+                    state: "blocked",
+                    reason: "direct settlement or authority proof unavailable",
+                };
+            }
+            finally {
+                recoveryResolving = false;
+            }
+        }
         if (!task ||
             !recoveryId ||
             task.context.orchestrationId !== recoveryId ||
@@ -797,8 +1122,16 @@ export function createManagedDispatch(options) {
             recoveryShellRoot: recoveryShellRoot?.path ?? null,
             nextAction: "retain the old marker; use the same-session recovery shell for isolated writes, while the bound parent awaits callbacks or retries resolve",
         });
-        if (directUnresolved)
-            return blocked("direct unresolved lease requires later reviewed native recovery");
+        if (directUnresolved) {
+            if (!directRecovery || recoveryResolving)
+                return blocked("direct recovery unavailable or in progress");
+            try {
+                return directReady(directRecovery);
+            }
+            catch {
+                return blocked("direct callback, termination, authority or scoped tree proof unavailable");
+            }
+        }
         try {
             options.directSessionLease?.assertClear();
         }
@@ -863,8 +1196,60 @@ export function createManagedDispatch(options) {
     }
     async function releaseForFresh(sessionID, expectedTreeHash) {
         const parent = recoveryCaller(sessionID);
-        if (directUnresolved)
-            throw new Error("direct unresolved lease cannot use native Job release");
+        if (directUnresolved) {
+            if (recoveryResolving)
+                throw new Error("direct recovery already in progress");
+            recoveryResolving = true;
+            try {
+                const owned = directRecovery;
+                if (!owned || owned.task.run.parent !== parent)
+                    throw new Error("unowned direct recovery");
+                const proof = directReady(owned);
+                if (proof.treeHash !== expectedTreeHash)
+                    throw new Error("direct reviewed tree changed");
+                const previous = owned.receipt;
+                const refreshed = await reconcileDirect(owned);
+                try {
+                    owned.binding.transport.assertSameTermination(previous, refreshed, owned.binding.attempt);
+                    if (directReady(owned).treeHash !== expectedTreeHash)
+                        throw new Error("direct reviewed tree changed");
+                    // No await, telemetry or public callback between final checks and exact cleanup/retirement.
+                    options.directSessionLease.release(owned.lease);
+                    owned.binding.transport.consumeTermination(refreshed, owned.binding.attempt);
+                }
+                catch (error) {
+                    disqualifyDirect(owned, "direct release proof or cleanup failed");
+                    throw error;
+                }
+                terminalTasks.add(owned.task.context.delegationTaskId);
+                owned.candidate = undefined;
+                owned.used = true;
+                owned.state = "released-fresh-only";
+                const prior = recoveryId;
+                directUnresolved = false;
+                directRecovery = undefined;
+                active = null;
+                stopped = false;
+                recoveryOwner = null;
+                recoveryId = null;
+                recoveryReason = null;
+                recoveryBefore = null;
+                recoveryShellRoot = null;
+                recoveryAllowedPaths = [];
+                recoveryFault = false;
+                terminationReconciled = false;
+                recoveries++;
+                report({ event: "fresh-recovery-enabled", priorOrchestrationId: prior, resumable: false });
+                return {
+                    state: "fresh-only",
+                    priorOrchestrationId: prior,
+                    treeHash: proof.treeHash,
+                };
+            }
+            finally {
+                recoveryResolving = false;
+            }
+        }
         options.directSessionLease?.assertClear();
         if (typeof expectedTreeHash !== "string" || !/^[a-f0-9]{64}$/.test(expectedTreeHash))
             throw new Error("managed recovery requires an exact reviewed tree hash");
@@ -1082,6 +1467,8 @@ export function createManagedDispatch(options) {
                 accepted: new Map(),
             };
             runs.set(orchestrationId, run);
+            if (options.directImplementation)
+                run.directAuthority = captureDirectAuthority();
         }
         if (run.parent !== parent || run.digest !== doc.digest)
             throw new Error("workflow owner or content changed");
@@ -1216,6 +1603,13 @@ export function createManagedDispatch(options) {
         });
     }
     function sessionCreated(info) {
+        const retained = [...retainedDirect].find((o) => o.cause &&
+            (o.childID === info.id ||
+                (!active && o.state !== "released-fresh-only" && o.task.run.parent === info.parentID)));
+        if (retained) {
+            stopDirectTask(retained.task.directHandle, "late direct child event");
+            return;
+        }
         if (!active || info.parentID !== active.run.parent)
             return;
         const childId = identifier(info.id);
@@ -1226,6 +1620,7 @@ export function createManagedDispatch(options) {
                 throw new Error("direct session event identity mismatch");
             }
             owned.eventSeen = true;
+            owned.generation++;
             return;
         }
         if (active.childId && active.childId !== childId) {
@@ -1263,7 +1658,10 @@ export function createManagedDispatch(options) {
     }
     function validateTool(input, args) {
         try {
-            assertCurrentLease();
+            // Stopped tool policy below grants only diagnosis/recovery; checking an unowned
+            // admission lease here would incorrectly convert the retained typed stop to a fault.
+            if (!stopped)
+                assertCurrentLease();
         }
         catch {
             // Apply the existing stopped policy, including diagnosis and isolated recovery.
@@ -1423,14 +1821,14 @@ export function createManagedDispatch(options) {
         if (!observation)
             throw new Error("uncorrelated command result");
         const task = active;
-        active.pendingCommands.delete(callId);
         const metadata = record(output.metadata);
         const exitCode = metadata.exit;
         if (!Number.isInteger(exitCode))
             throw new Error("native command exit status unavailable; cannot accept evidence");
         if (snapshot(active.context.orchestrationId).treeHash !== observation.treeHash)
             throw new Error("command changed the validation tree");
-        if (observation.revision !== active.revision)
+        active.pendingCommands.delete(callId);
+        if (stopped || observation.revision !== active.revision)
             return;
         active.commands.push({
             command: observation.command,
@@ -1822,6 +2220,10 @@ export function createManagedDispatch(options) {
     }
     return {
         assertCurrentLease,
+        registerDirectRecovery,
+        stopDirectRecovery,
+        observeOwnedCallback,
+        directRecoveryAssertion,
         claimDirectTask,
         bindDirectChild,
         acknowledgeDirectChild,

@@ -12,7 +12,12 @@ import {
 import fs from "node:fs";
 import path from "node:path";
 import { createDirectAdmission, createDirectSessionTransport } from "./direct-session-transport.ts";
-import type { DirectSessionApi, DirectToolCaller } from "./direct-session-transport.ts";
+import type {
+  DirectSessionApi,
+  DirectToolCaller,
+  DirectAttemptHandle,
+  DirectSessionTransport,
+} from "./direct-session-transport.ts";
 import { createDirectSessionLease } from "./direct-session-lease.ts";
 import type { DirectTaskHandle } from "./managed-dispatch.ts";
 import {
@@ -922,8 +927,66 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
         result?: string;
         stop?: () => void;
         after: boolean;
+        generation: number;
+        pending: number;
+        beforeSettled: boolean;
+        executorSettled: boolean;
+        executorError?: unknown;
+        parentAfterSettled: boolean;
+        disqualifiers: string[];
+        attempt?: DirectAttemptHandle;
+        transport?: DirectSessionTransport;
+        assertAuthority?: () => void;
+        refreshAuthority?: () => Promise<void>;
+        retired?: boolean;
       }
     >();
+
+    type DirectCall = NonNullable<ReturnType<typeof directCalls.get>>;
+
+    function observeDirectPromise<T>(
+      call: DirectCall,
+      kind: "before" | "executor" | "after",
+      invoke: () => Promise<T>,
+    ): Promise<T> {
+      call.pending++;
+      call.generation++;
+      let promise: Promise<T>;
+      try {
+        promise = Promise.resolve(invoke());
+      } catch (error) {
+        promise = Promise.reject(error);
+      }
+      const settle = (failed: boolean, error?: unknown) => {
+        call.pending--;
+        call.generation++;
+        if (kind === "before") call.beforeSettled = true;
+        if (kind === "executor") {
+          call.executorSettled = true;
+          if (failed) call.executorError = error;
+        }
+        if (kind === "after") call.parentAfterSettled = true;
+        if (failed && kind !== "executor") {
+          call.disqualifiers.push("native hook rejected");
+        }
+      };
+      void promise.then(
+        () => settle(false),
+        (error) => settle(true, error),
+      );
+      return promise;
+    }
+
+    function invalidateDirectCalls(reason: string) {
+      for (const call of directCalls.values()) {
+        if (!call.handle || call.retired) continue;
+        call.generation++;
+        call.disqualifiers.push(reason);
+        dispatch.stopDirectTask(call.handle, reason);
+        call.stop?.();
+      }
+    }
+
     let directWrapped = false;
     const wrappedExecutors = new WeakSet<object>();
     let ready = false;
@@ -986,31 +1049,18 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
         eventStreamConnected = false;
         eventStreamLost = true;
         ready = false;
-        for (const call of directCalls.values()) if (!call.after) call.stop?.();
+        invalidateDirectCalls("native event stream disconnected");
         dispatch.interruptIfCurrent(undefined, "V2 native session event stream unavailable");
       },
     );
-    await context.tool.hook("execute.before", async (event) => {
+    const beforeBody = async (event: V2ToolBefore) => {
       if (event.tool === "subagent") {
-        if (!ready || !verifyRoles) throw new Error("V2 harness guard activation is incomplete");
+        if (!ready || !verifyRoles || dispatch.snapshot().stopped)
+          throw new Error("V2 harness guard activation is incomplete or stopped");
         await verifyRoles();
         await admitV2Subagent(event, (input, args) => dispatch.beforeTask(input, args));
-        if (directImplementation) {
-          if (directCalls.has(String(event.id))) {
-            dispatch.interrupt("reused native direct call identity");
-            throw new Error("reused native direct call identity");
-          }
-          directCalls.set(String(event.id), {
-            input: canonicalDirectInput(event.input),
-            caller: {
-              sessionID: event.sessionID,
-              agent: event.agent,
-              messageID: event.messageID,
-              id: event.id,
-            },
-            after: false,
-          });
-        }
+        const call = directCalls.get(String(event.id));
+        if (call) call.input = canonicalDirectInput(event.input);
         return;
       }
       const { input, tool, args } = beforeInput(event);
@@ -1075,13 +1125,38 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
       if ("command" in checked && "command" in input) input.command = checked.command;
       if ("workdir" in checked && "workdir" in input) input.workdir = checked.workdir;
       if ("timeout" in checked && "timeout" in input) input.timeout = checked.timeout;
+    };
+    await context.tool.hook("execute.before", (event) => {
+      if (event.tool === "subagent" && directImplementation) {
+        if (directCalls.has(String(event.id))) {
+          invalidateDirectCalls("reused native direct call identity");
+          return Promise.reject(new Error("reused native direct call identity"));
+        }
+        const call: DirectCall = {
+          input: canonicalDirectInput(event.input),
+          caller: {
+            sessionID: event.sessionID,
+            agent: event.agent,
+            messageID: event.messageID,
+            id: event.id,
+          },
+          after: false,
+          generation: 0,
+          pending: 0,
+          beforeSettled: false,
+          executorSettled: false,
+          parentAfterSettled: false,
+          disqualifiers: [],
+        };
+        directCalls.set(String(event.id), call);
+        return observeDirectPromise(call, "before", () => beforeBody(event));
+      }
+      return dispatch.observeOwnedCallback({ sessionID: event.sessionID, callID: event.id }, () =>
+        beforeBody(event),
+      );
     });
-    await context.tool.hook("execute.after", async (event) => {
+    const afterBody = async (event: V2ToolAfter) => {
       if (event.tool !== "subagent") {
-        const settle = dispatch.beginOwnedCallback({
-          sessionID: event.sessionID,
-          callID: event.id,
-        });
         try {
           const result = event.status === "completed" ? record(event.result) : {};
           const metadata =
@@ -1098,36 +1173,66 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
         } catch {
           dispatch.interruptIfCurrent(event.sessionID, "V2 owned child callback failed");
           rejectV2Result(event, "owned child callback could not be settled", false);
-        } finally {
-          settle();
         }
         return;
       }
-      const directCall =
-        directCalls.get(String(event.id)) ??
-        [...directCalls.values()].find((call) => call.handle && !call.after);
+      const directCall = directCalls.get(String(event.id));
+      if (
+        !directCall &&
+        [...directCalls.values()].some(
+          (call) => call.handle && call.caller.sessionID === event.sessionID,
+        )
+      ) {
+        invalidateDirectCalls("unmatched late native direct callback");
+        if (event.status === "completed") rejectV2Result(event, "unmatched direct callback", false);
+        return;
+      }
       if (directCall?.handle) {
         const privateResult = event.result;
-        rejectV2Result(event, "direct validation not established", false);
+        if (event.status === "completed")
+          rejectV2Result(event, "direct validation not established", false);
         try {
           if (
             directCall.after ||
-            event.status !== "completed" ||
             canonicalDirectInput(event.input) !== directCall.input ||
             ["sessionID", "agent", "messageID", "id"].some(
               (key) =>
                 event[key as keyof V2ToolAfter] !==
                 directCall.caller[key as keyof typeof directCall.caller],
-            ) ||
-            JSON.stringify(privateResult) !== directCall.result
+            )
           )
             throw new Error("direct after correlation mismatch");
           directCall.after = true;
+          const transport = directCall.transport;
+          const attempt = directCall.attempt;
+          const cause = transport && attempt ? transport.observeStopCause(attempt) : undefined;
+          if (cause && attempt && transport) {
+            dispatch.stopDirectRecovery(directCall.handle, cause);
+            if (!directCall.executorSettled) throw new Error("direct executor Promise not settled");
+            if (event.status === "error") {
+              if (
+                directCall.executorError !== transport.stoppedError(attempt) ||
+                !event.error ||
+                record(event.error).error !== transport.stoppedError(attempt)
+              )
+                throw new Error("stopped direct error after identity unavailable");
+            } else if (
+              event.status !== "completed" ||
+              directCall.executorError !== undefined ||
+              !directCall.result ||
+              JSON.stringify(privateResult) !== directCall.result
+            )
+              throw new Error("stopped direct completed after identity unavailable");
+            return;
+          }
+          if (event.status !== "completed" || JSON.stringify(privateResult) !== directCall.result)
+            throw new Error("direct result correlation mismatch");
           const decision = dispatch.finalizeDirectTask(
             directCall.handle,
             directCall.caller as DirectToolCaller,
           );
           if (decision.outcome === "stopped") directCall.stop?.();
+          else directCall.retired = true;
           if (decision.outcome === "success")
             event.result = {
               output: { status: "completed", output: decision.diagnostic },
@@ -1136,12 +1241,11 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
             };
           else rejectV2Result(event, decision.diagnostic, decision.outcome === "rejected");
         } catch {
-          directCall.after = true;
+          directCall.disqualifiers.push("native after correlation failed");
           dispatch.stopDirectTask(
             directCall.handle,
             "direct native after callback could not be correlated",
           );
-          dispatch.interrupt("direct native after callback could not be correlated");
           directCall.stop?.();
         }
         return;
@@ -1281,6 +1385,13 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
       } finally {
         settle();
       }
+    };
+    await context.tool.hook("execute.after", (event) => {
+      const call = event.tool === "subagent" ? directCalls.get(String(event.id)) : undefined;
+      if (call) return observeDirectPromise(call, "after", () => afterBody(event));
+      return dispatch.observeOwnedCallback({ sessionID: event.sessionID, callID: event.id }, () =>
+        afterBody(event),
+      );
     });
     await context.tool.transform((editor) => {
       const direct = new Set([
@@ -1310,150 +1421,351 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
               directWrapped = true;
               return;
             }
-            const wrapped = async (input: RecordValue, caller: DirectToolCaller) => {
+            const wrapped = (input: RecordValue, caller: DirectToolCaller) => {
               let handle: DirectTaskHandle | null = null;
               const call = directCalls.get(caller.id);
-              try {
-                if (!ready || !verifyRoles || dispatch.snapshot().stopped)
-                  throw new Error("V2 harness guard activation is incomplete or stopped");
-                dispatch.assertCurrentLease();
-                handle = dispatch.claimDirectTask(caller);
-                if (!handle) {
-                  await verifyRoles();
-                  dispatch.assertCurrentLease();
-                  if (!ready || dispatch.snapshot().stopped)
+              const body = async () => {
+                try {
+                  if (!ready || !verifyRoles || dispatch.snapshot().stopped)
                     throw new Error("V2 harness guard activation is incomplete or stopped");
-                  return await original(input, caller);
-                }
-                if (call) call.handle = handle;
-                if (
-                  !call ||
-                  !ready ||
-                  !verifyRoles ||
-                  !call.input ||
-                  canonicalDirectInput(input) !== call.input ||
-                  Object.hasOwn(input, "model") ||
-                  Object.hasOwn(input, "sessionID") ||
-                  !caller.signal
-                )
-                  throw new Error("direct input or native caller changed");
-                await verifyRoles();
-                const parent = data(await context.session.get({ sessionID: caller.sessionID }));
-                const response = await context.agent.list();
-                const agents = Array.isArray(response) ? response : record(response).data;
-                const parentAgent = Array.isArray(agents)
-                  ? agents.find((a) => a.id === caller.agent)
-                  : undefined;
-                const worker = Array.isArray(agents)
-                  ? agents.find((a) => a.id === "implementer")
-                  : undefined;
-                if (
-                  parent.id !== caller.sessionID ||
-                  parent.parentID !== undefined ||
-                  !parentAgent ||
-                  !["primary", "all"].includes(String(parentAgent.mode)) ||
-                  !worker ||
-                  worker.mode !== "subagent"
-                )
-                  throw new Error("direct native primary or role identity unavailable");
-                await context.permission.assert({
-                  sessionID: caller.sessionID,
-                  agent: caller.agent,
-                  source: { type: "tool", messageID: caller.messageID, id: caller.id },
-                  action: "subagent",
-                  resources: ["implementer"],
-                  save: ["implementer"],
-                });
-                if (
-                  canonicalDirectInput(input) !== call.input ||
-                  ["sessionID", "agent", "messageID", "id"].some(
-                    (key) =>
-                      caller[key as keyof DirectToolCaller] !==
-                      call.caller[key as keyof typeof call.caller],
+                  dispatch.assertCurrentLease();
+                  handle = dispatch.claimDirectTask(caller);
+                  if (!handle) {
+                    await verifyRoles();
+                    dispatch.assertCurrentLease();
+                    if (!ready || dispatch.snapshot().stopped)
+                      throw new Error("V2 harness guard activation is incomplete or stopped");
+                    return await original(input, caller);
+                  }
+                  if (call) call.handle = handle;
+                  if (
+                    !call ||
+                    !ready ||
+                    !verifyRoles ||
+                    !call.input ||
+                    canonicalDirectInput(input) !== call.input ||
+                    Object.hasOwn(input, "model") ||
+                    Object.hasOwn(input, "sessionID") ||
+                    !caller.signal
                   )
-                )
-                  throw new Error("direct invocation changed during permission assertion");
-                assertDirectSessionApis(context.session);
-                const model = record(worker.model ?? parent.model);
-                if (
-                  typeof model.id !== "string" ||
-                  typeof model.providerID !== "string" ||
-                  (model.variant !== undefined && typeof model.variant !== "string")
-                )
-                  throw new Error("direct trusted model unavailable");
-                const admission = createDirectAdmission({
-                  context: handle.context,
-                  caller,
-                  model: {
-                    id: model.id,
-                    providerID: model.providerID,
-                    ...(model.variant !== undefined ? { variant: String(model.variant) } : {}),
-                  },
-                  prompt: handle.prompt,
-                  title: String(input.description),
-                  deadline: handle.deadline,
-                });
-                dispatch.bindDirectChild(handle, {
-                  id: admission.childID,
-                  parentID: caller.sessionID,
-                  promptID: admission.promptID,
-                });
-                const directTransport = createDirectSessionTransport({
-                  api: {
-                    create: (value) => context.session.create!(value),
-                    prompt: (value) => context.session.prompt!(value),
-                    context: (value) => context.session.context!(value),
-                    wait: async (value) => {
-                      await context.session.wait(value);
+                    throw new Error("direct input or native caller changed");
+                  await verifyRoles();
+                  const parent = data(await context.session.get({ sessionID: caller.sessionID }));
+                  const response = await context.agent.list();
+                  const agents = Array.isArray(response) ? response : record(response).data;
+                  const parentAgent = Array.isArray(agents)
+                    ? agents.find((a) => a.id === caller.agent)
+                    : undefined;
+                  const worker = Array.isArray(agents)
+                    ? agents.find((a) => a.id === "implementer")
+                    : undefined;
+                  if (
+                    parent.id !== caller.sessionID ||
+                    parent.parentID !== undefined ||
+                    !parentAgent ||
+                    !["primary", "all"].includes(String(parentAgent.mode)) ||
+                    !worker ||
+                    worker.mode !== "subagent"
+                  )
+                    throw new Error("direct native primary or role identity unavailable");
+                  await context.permission.assert({
+                    sessionID: caller.sessionID,
+                    agent: caller.agent,
+                    source: { type: "tool", messageID: caller.messageID, id: caller.id },
+                    action: "subagent",
+                    resources: ["implementer"],
+                    save: ["implementer"],
+                  });
+                  if (
+                    canonicalDirectInput(input) !== call.input ||
+                    ["sessionID", "agent", "messageID", "id"].some(
+                      (key) =>
+                        caller[key as keyof DirectToolCaller] !==
+                        call.caller[key as keyof typeof call.caller],
+                    )
+                  )
+                    throw new Error("direct invocation changed during permission assertion");
+                  assertDirectSessionApis(context.session);
+                  const model = record(worker.model ?? parent.model);
+                  if (
+                    typeof model.id !== "string" ||
+                    typeof model.providerID !== "string" ||
+                    (model.variant !== undefined && typeof model.variant !== "string")
+                  )
+                    throw new Error("direct trusted model unavailable");
+                  const admission = createDirectAdmission({
+                    context: handle.context,
+                    caller,
+                    model: {
+                      id: model.id,
+                      providerID: model.providerID,
+                      ...(model.variant !== undefined ? { variant: String(model.variant) } : {}),
                     },
-                    get: async (value) =>
-                      data(await context.session.get(value)) as unknown as Awaited<
-                        ReturnType<DirectSessionApi["get"]>
-                      >,
-                    interrupt: async (value) =>
-                      record(
-                        await context.session.interrupt({
-                          sessionID: value.sessionID,
-                          resume: false,
+                    prompt: handle.prompt,
+                    title: String(input.description),
+                    deadline: handle.deadline,
+                  });
+                  dispatch.bindDirectChild(handle, {
+                    id: admission.childID,
+                    parentID: caller.sessionID,
+                    promptID: admission.promptID,
+                  });
+                  const directTransport = createDirectSessionTransport({
+                    api: {
+                      create: (value) => context.session.create!(value),
+                      prompt: (value) => context.session.prompt!(value),
+                      context: (value) => context.session.context!(value),
+                      wait: async (value) => {
+                        await context.session.wait(value);
+                      },
+                      get: async (value) =>
+                        data(await context.session.get(value)) as unknown as Awaited<
+                          ReturnType<DirectSessionApi["get"]>
+                        >,
+                      interrupt: async (value) => {
+                        if (call.parentAfterSettled) await call.refreshAuthority!();
+                        return record(
+                          await context.session.interrupt({
+                            sessionID: value.sessionID,
+                            resume: false,
+                          }),
+                        ) as unknown as { interrupted: boolean };
+                      },
+                    },
+                    ...(trustedOptions.now ? { now: trustedOptions.now } : {}),
+                    onUncertain: (_reason, detail) => {
+                      if (detail?.cause) dispatch.stopDirectRecovery(handle!, detail.cause);
+                      else
+                        dispatch.stopDirectTask(
+                          handle!,
+                          "direct native termination or operation uncertain",
+                        );
+                    },
+                    onChild: (child) => dispatch.acknowledgeDirectChild(handle!, child),
+                  });
+                  call.stop = () =>
+                    directTransport.stop("direct native invocation stopped or unloaded");
+                  const attempt = directTransport.prepare(admission, caller);
+                  call.attempt = attempt;
+                  call.transport = directTransport;
+                  const activationPath = process.env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH;
+                  const activationParents = new Map<string, fs.Stats>();
+                  if (activationPath) {
+                    let child = activationPath;
+                    for (let parent = path.dirname(child); ; parent = path.dirname(parent)) {
+                      const stat = fs.lstatSync(parent);
+                      if (
+                        !stat.isDirectory() ||
+                        stat.isSymbolicLink() ||
+                        ![0, process.getuid!()].includes(stat.uid)
+                      )
+                        throw new Error("unsafe direct activation ancestry");
+                      if (stat.mode & 0o022) {
+                        const next = fs.lstatSync(child);
+                        if (
+                          stat.uid !== 0 ||
+                          !(stat.mode & 0o1000) ||
+                          !next.isDirectory() ||
+                          next.uid !== process.getuid!() ||
+                          (next.mode & 0o777) !== 0o700
+                        )
+                          throw new Error("unsafe writable activation ancestry");
+                      }
+                      activationParents.set(parent, stat);
+                      if (parent === path.dirname(parent)) break;
+                      child = parent;
+                    }
+                  }
+                  const assertActivationParents = () => {
+                    for (const [parent, original] of activationParents) {
+                      const current = fs.lstatSync(parent);
+                      if (
+                        !current.isDirectory() ||
+                        current.isSymbolicLink() ||
+                        current.dev !== original.dev ||
+                        current.ino !== original.ino ||
+                        current.uid !== original.uid ||
+                        current.mode !== original.mode
+                      )
+                        throw new Error("direct activation ancestry changed");
+                    }
+                  };
+                  const readActivation = () => {
+                    if (
+                      !activationPath ||
+                      path.resolve(activationPath) !== activationPath ||
+                      fs.realpathSync(activationPath) !== activationPath
+                    )
+                      throw new Error("direct activation path unavailable");
+                    const before = fs.lstatSync(activationPath);
+                    if (
+                      !before.isFile() ||
+                      before.isSymbolicLink() ||
+                      before.uid !== process.getuid!() ||
+                      (before.mode & 0o777) !== 0o600 ||
+                      before.nlink !== 1 ||
+                      before.size > 1048576
+                    )
+                      throw new Error("unsafe direct activation file");
+                    const fd = fs.openSync(
+                      activationPath,
+                      fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW,
+                    );
+                    try {
+                      const opened = fs.fstatSync(fd);
+                      const bytes = fs.readFileSync(fd);
+                      const after = fs.fstatSync(fd);
+                      const current = fs.lstatSync(activationPath);
+                      if (
+                        [opened, after, current].some(
+                          (stat) =>
+                            stat.dev !== before.dev ||
+                            stat.ino !== before.ino ||
+                            stat.uid !== before.uid ||
+                            stat.mode !== before.mode ||
+                            stat.size !== before.size ||
+                            stat.mtimeMs !== before.mtimeMs ||
+                            stat.ctimeMs !== before.ctimeMs,
+                        )
+                      )
+                        throw new Error("direct activation changed during read");
+                      return {
+                        stat: after,
+                        digest: createHash("sha256").update(bytes).digest("hex"),
+                      };
+                    } finally {
+                      fs.closeSync(fd);
+                    }
+                  };
+                  const activationIdentity = readActivation();
+                  call.assertAuthority = () => {
+                    if (
+                      !ready ||
+                      !eventStreamConnected ||
+                      eventStreamLost ||
+                      abort.signal.aborted ||
+                      activationFailed ||
+                      !verifyRoles ||
+                      canonicalDirectInput(input) !== call.input ||
+                      call.disqualifiers.length
+                    )
+                      throw new Error("direct plugin authority lost");
+                    const current = readActivation();
+                    if (
+                      current.stat.dev !== activationIdentity.stat.dev ||
+                      current.stat.ino !== activationIdentity.stat.ino ||
+                      current.stat.uid !== activationIdentity.stat.uid ||
+                      current.stat.mode !== activationIdentity.stat.mode ||
+                      current.digest !== activationIdentity.digest
+                    )
+                      throw new Error("direct activation identity changed");
+                  };
+                  call.refreshAuthority = async () => {
+                    const generation = call.generation;
+                    const assertCurrent = dispatch.directRecoveryAssertion(handle!);
+                    const check = () => {
+                      assertCurrent();
+                      call.assertAuthority!();
+                      if (call.generation !== generation)
+                        throw new Error("direct callbacks changed during authority refresh");
+                    };
+                    check();
+                    await verifyRoles!();
+                    check();
+                    const primary = data(
+                      await context.session.get({ sessionID: caller.sessionID }),
+                    );
+                    check();
+                    if (primary.id !== caller.sessionID || primary.parentID !== undefined)
+                      throw new Error("direct primary authority changed");
+                    const response = await context.agent.list();
+                    check();
+                    const entries = Array.isArray(response) ? response : record(response).data;
+                    if (
+                      !Array.isArray(entries) ||
+                      !entries.some(
+                        (a) => a.id === caller.agent && ["primary", "all"].includes(String(a.mode)),
+                      ) ||
+                      !entries.some((a) => a.id === "implementer" && a.mode === "subagent")
+                    )
+                      throw new Error("direct role authority changed");
+                    await context.permission.assert({
+                      sessionID: caller.sessionID,
+                      agent: caller.agent,
+                      source: { type: "tool", messageID: caller.messageID, id: caller.id },
+                      action: "subagent",
+                      resources: ["implementer"],
+                      save: ["implementer"],
+                    });
+                    check();
+                  };
+                  dispatch.registerDirectRecovery(handle, {
+                    transport: directTransport,
+                    attempt,
+                    admission,
+                    caller,
+                    callbacks: {
+                      inspect: () =>
+                        Object.freeze({
+                          generation: call.generation,
+                          pending: call.pending,
+                          executorSettled: call.executorSettled,
+                          parentAfterSettled: call.parentAfterSettled,
+                          disqualifiers: Object.freeze([...call.disqualifiers]),
                         }),
-                      ) as unknown as { interrupted: boolean },
-                  },
-                  ...(trustedOptions.now ? { now: trustedOptions.now } : {}),
-                  onUncertain: () =>
-                    dispatch.stopDirectTask(
-                      handle!,
-                      "direct native termination or operation uncertain",
-                    ),
-                  onChild: (child) => dispatch.acknowledgeDirectChild(handle!, child),
-                });
-                call.stop = () =>
-                  directTransport.stop("direct native invocation stopped or unloaded");
-                const candidate = await directTransport.execute(admission, caller);
-                dispatch.stageDirectResult(handle, () =>
-                  directTransport.consumeCandidate(candidate, admission, caller),
-                );
-                const result = {
-                  output: {
-                    sessionID: admission.childID,
-                    status: "completed",
-                    output: "Native execution ended; harness validation pending.",
-                  },
-                  content: "",
-                  metadata: {},
-                };
-                // Native runtime validates output and normalizes explicit empty content before after.
-                call.result = JSON.stringify({ ...result, content: [{ type: "text", text: "" }] });
-                return result;
-              } catch (error) {
-                if (handle)
-                  dispatch.stopDirectTask(handle, "direct executor failed or authority changed");
-                call?.stop?.();
-                if (handle)
-                  throw new Error(
-                    "Harness direct implementation stopped; unresolved evidence retained.",
+                      assertSettled: (generation) => {
+                        if (
+                          generation !== call.generation ||
+                          call.pending ||
+                          !call.beforeSettled ||
+                          !call.executorSettled ||
+                          !call.parentAfterSettled ||
+                          !call.after ||
+                          call.disqualifiers.length
+                        )
+                          throw new Error("native direct returned Promises not settled");
+                      },
+                    },
+                    assertAuthority: call.assertAuthority,
+                  });
+                  const candidate = await directTransport.execute(attempt);
+                  dispatch.stageDirectResult(handle, () =>
+                    directTransport.consumeCandidate(candidate, admission, caller),
                   );
-                throw error;
-              }
+                  const result = {
+                    output: {
+                      sessionID: admission.childID,
+                      status: "completed",
+                      output: "Native execution ended; harness validation pending.",
+                    },
+                    content: "",
+                    metadata: {},
+                  };
+                  // Native runtime validates output and normalizes explicit empty content before after.
+                  call.result = JSON.stringify({
+                    ...result,
+                    content: [{ type: "text", text: "" }],
+                  });
+                  return result;
+                } catch (error) {
+                  if (handle && call?.transport && call.attempt) {
+                    const cause = call.transport.stopCause(call.attempt);
+                    if (cause && error === call.transport.stoppedError(call.attempt)) {
+                      dispatch.stopDirectRecovery(handle, cause);
+                      throw error;
+                    }
+                  }
+                  if (handle)
+                    dispatch.stopDirectTask(handle, "direct executor failed or authority changed");
+                  call?.stop?.();
+                  if (handle)
+                    throw new Error(
+                      "Harness direct implementation stopped; unresolved evidence retained.",
+                    );
+                  throw error;
+                }
+              };
+              return call ? observeDirectPromise(call, "executor", body) : body();
             };
             wrappedExecutors.add(wrapped);
             value.execute = wrapped;
@@ -2055,7 +2367,7 @@ function v2NativeSetup(trustedOptions: { now?: () => number; maxTaskTimeoutMs?: 
         dispatch.interrupt("V2 effective permissions or activation marker unavailable");
       });
     return () => {
-      for (const call of directCalls.values()) if (!call.after) call.stop?.();
+      invalidateDirectCalls("native plugin unloaded");
       for (const timer of backgroundObservers) clearInterval(timer);
       backgroundObservers.clear();
       abort.abort();

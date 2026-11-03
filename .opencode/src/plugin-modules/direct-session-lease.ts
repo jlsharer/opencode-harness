@@ -28,6 +28,17 @@ export interface DirectLeaseIdentity {
 declare const leaseBrand: unique symbol;
 export type OwnedLease = Readonly<{ [leaseBrand]: never }>;
 
+export class DirectLeaseCleanupError extends Error {
+  readonly markerPath: string;
+  readonly markerState: "present" | "missing" | "unknown";
+  constructor(markerPath: string, markerState: "present" | "missing" | "unknown", cause: unknown) {
+    super(`direct lease cleanup failed; marker ${markerState}: ${markerPath}`, { cause });
+    this.name = "DirectLeaseCleanupError";
+    this.markerPath = markerPath;
+    this.markerState = markerState;
+  }
+}
+
 const uid = () => process.getuid!();
 
 const same = (a: Stats, b: Stats) => a.dev === b.dev && a.ino === b.ino;
@@ -230,21 +241,41 @@ export function createDirectSessionLease(options: { traceRoot: string; workspace
       return lease;
     },
     release(lease: OwnedLease) {
-      const record = validateOwned(lease);
-      // Node has no descriptor-relative unlink; malicious same-UID replacement remains outside this boundary.
-      unlinkSync(marker);
-      if (!same(record.parent, checkParent()))
-        throw new Error(`changed direct lease parent: ${marker}`);
       try {
-        lstatSync(marker);
-      } catch (error) {
-        if (missing(error)) {
-          owned.delete(lease);
-          return;
+        const record = validateOwned(lease);
+        // Node has no descriptor-relative unlink; malicious same-UID replacement remains outside this boundary.
+        unlinkSync(marker);
+        if (!same(record.parent, checkParent()))
+          throw new Error(`changed direct lease parent: ${marker}`);
+        try {
+          lstatSync(marker);
+        } catch (error) {
+          if (missing(error)) {
+            owned.delete(lease);
+            return;
+          }
+          throw error;
         }
-        throw error;
+        throw new Error(`direct lease cleanup failed: ${marker}`);
+      } catch (error) {
+        let state: "present" | "missing" | "unknown" = "unknown";
+        try {
+          const record = owned.get(lease);
+          if (!record || !same(record.parent, checkParent()))
+            throw new Error("unowned cleanup parent");
+          try {
+            lstatSync(marker);
+            state = "present";
+          } catch (failure) {
+            if (missing(failure)) state = "missing";
+            else throw failure;
+          }
+          if (!same(record.parent, checkParent())) state = "unknown";
+        } catch {
+          state = "unknown";
+        }
+        throw new DirectLeaseCleanupError(marker, state, error);
       }
-      throw new Error(`direct lease cleanup failed: ${marker}`);
     },
   };
 }

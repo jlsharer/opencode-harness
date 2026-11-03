@@ -2,11 +2,11 @@
 
 import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, chmod } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 interface RunOptions {
@@ -739,4 +739,53 @@ test("consumer install, repeat and reviewed upgrade preserve config without desi
     );
     assert.match(await expectFailure([validator, "--root", repo]), /forbidden portable references/);
   }
+});
+
+test("direct recovery portable closure refuses unowned lease without source history", async () => {
+  const repo = await makeRepo(tempParent, "direct-recovery-portable");
+  await runNode([BOOTSTRAP, "--target", repo]);
+  assert.deepEqual((await readdir(repo)).sort(), [".memory", ".opencode"]);
+  const modules = path.join(repo, ".opencode/plugin-modules");
+  const { createDirectSessionLease } = await import(
+    pathToFileURL(path.join(modules, "direct-session-lease.js")).href
+  );
+  const { createManagedDispatch } = await import(
+    pathToFileURL(path.join(modules, "managed-dispatch.js")).href
+  );
+  const traceRoot = path.join(repo, ".memory");
+  await chmod(traceRoot, 0o700);
+  const owner = createDirectSessionLease({ workspaceRoot: repo, traceRoot });
+  const lease = owner.acquire({
+    orchestrationId: "prior",
+    specDigest: "a".repeat(64),
+    delegationTaskId: "task",
+    parentSessionID: "parent",
+    parentAgent: "build",
+    parentMessageID: "message",
+    parentCallID: "call",
+    childID: "child",
+    promptID: "prompt",
+    deadline: 1,
+  });
+  const reloaded = createDirectSessionLease({ workspaceRoot: repo, traceRoot });
+  assert.throws(() => reloaded.release(lease), /cleanup|unowned/);
+  const managed = createManagedDispatch({
+    workspaceRoot: repo,
+    traceRoot,
+    directSessionLease: reloaded,
+  });
+  assert.throws(() => managed.assertCurrentLease(), /unresolved/);
+  assert.equal(managed.snapshot().stopped, true);
+  assert.equal((await managed.recoveryStatus("parent")).state, "blocked");
+  await assert.rejects(managed.releaseForFresh("parent", "a".repeat(64)));
+  assert.ok(
+    !(await readdir(modules)).some(
+      (name) => name.endsWith(".ts") || name.includes("retry-prototype"),
+    ),
+  );
+  await runNode([
+    path.join(repo, ".opencode/scripts/validate-portable-harness.mjs"),
+    "--root",
+    repo,
+  ]);
 });

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { syncBuiltinESMExports } from "node:module";
 import {
   createManagedDispatch,
   parseDelegationPolicy,
@@ -14,6 +15,7 @@ import type { V2ToolBefore, V2ToolAfter } from "./v2-dispatch-bridge.ts";
 import { HarnessLifecyclePlugin } from "./harness-lifecycle.ts";
 import { captureArtifacts, captureWorkspace } from "./acceptance-proof.ts";
 import { createDirectSessionLease } from "./direct-session-lease.ts";
+import { createDirectAdmission, createDirectSessionTransport } from "./direct-session-transport.ts";
 import {
   TASK_THREAD_ROLE_PACKET_FIELDS,
   formatTaskThreadEnvelope,
@@ -142,6 +144,231 @@ test("direct-off managed admission refuses a retained trace-wide lease", async (
   assert.equal(managed.snapshot().stopped, true);
 });
 
+for (const mode of ["controller", "cleanup", "parent-before"] as const)
+  test(
+    mode === "cleanup"
+      ? "recovery cleanup failure after unlink keeps managed stop"
+      : mode === "parent-before"
+        ? "direct recovery retained parent before Promise finally blocks manager"
+        : "direct recovery controller cancellation, false gates and four fresh-only releases",
+    async () => {
+      const cleanup = mode === "cleanup";
+      const f = fixture("implementer", 100000);
+      fs.chmodSync(f.trace, 0o700);
+      let now = 100;
+      const lease = createDirectSessionLease({ workspaceRoot: f.workspace, traceRoot: f.trace });
+      const managed = createManagedDispatch({
+        ...f.options,
+        now: () => now,
+        directImplementation: true,
+        directSessionLease: lease,
+        backgroundTransport: {
+          enabled: true,
+          models: async () => {
+            throw new Error("unexpected Job models");
+          },
+          inspect: async () => {
+            throw new Error("unexpected Job inspection");
+          },
+          abort: async () => {
+            throw new Error("unexpected Job abort");
+          },
+        },
+      });
+      for (let index = 0; index < 5; index++) {
+        const orchestrationId = index ? `fresh-${index}` : "fixture";
+        if (index) {
+          fs.mkdirSync(path.join(f.trace, "orchestrations", orchestrationId), { mode: 0o700 });
+          fs.writeFileSync(
+            path.join(f.trace, "orchestrations", orchestrationId, "normalized-spec.json"),
+            JSON.stringify({ ...f.spec, orchestrationId }),
+          );
+          await assert.rejects(
+            managed.beforeTask(
+              { sessionID: "parent", callID: `old-${index}`, agent: "build", messageID: "message" },
+              f.args({ ...f.packet("task-0"), orchestrationId }),
+            ),
+            /terminal|reused|fresh|duplicate/,
+          );
+        }
+        const caller = {
+          sessionID: "parent",
+          agent: "build",
+          messageID: `message-${index}`,
+          id: `call-${index}`,
+          signal: new AbortController().signal,
+        };
+        await managed.beforeTask(
+          { ...caller, callID: caller.id },
+          f.args({ ...f.packet(`task-${index}`), orchestrationId }),
+        );
+        const handle = managed.claimDirectTask(caller)!;
+        const admission = createDirectAdmission({
+          context: handle.context,
+          caller,
+          model: { id: "worker", providerID: "fixture" },
+          prompt: handle.prompt,
+          deadline: handle.deadline,
+        });
+        managed.bindDirectChild(handle, {
+          id: admission.childID,
+          parentID: caller.sessionID,
+          promptID: admission.promptID,
+        });
+        let generation = 0;
+        let pending = mode === "parent-before" ? 2 : 1;
+        let beforeSettled = mode !== "parent-before";
+        let executorSettled = false;
+        let parentAfterSettled = false;
+        const transport = createDirectSessionTransport({
+          now: () => now,
+          onChild: (child) => managed.acknowledgeDirectChild(handle, child),
+          onUncertain: (_reason, detail) => {
+            if (detail?.cause) managed.stopDirectRecovery(handle, detail.cause);
+            else managed.stopDirectTask(handle, "generic");
+          },
+          api: {
+            create: async () => {
+              managed.sessionCreated({ id: admission.childID, parentID: "parent" });
+              return { id: admission.childID, parentID: "parent", agent: "implementer", time: {} };
+            },
+            prompt: async () => ({
+              id: admission.promptID,
+              sessionID: admission.childID,
+              type: "user",
+              payload: { text: admission.prompt },
+              delivery: "queue",
+              time: { created: 1 },
+            }),
+            wait: async () => {
+              now = handle.deadline;
+            },
+            interrupt: async () => ({ interrupted: true }),
+            get: async () => ({
+              id: admission.childID,
+              parentID: "parent",
+              agent: "implementer",
+              outcome: "interrupted",
+              time: { idle: 2 },
+            }),
+            context: async () => [
+              { id: admission.promptID, type: "user", text: admission.prompt },
+              { id: "idle", type: "idle", outcome: "interrupted" },
+            ],
+          },
+        });
+        const attempt = transport.prepare(admission, caller);
+        const binding = {
+          transport,
+          attempt,
+          admission,
+          caller,
+          assertAuthority: () => {},
+          callbacks: {
+            inspect: () => ({
+              generation,
+              pending,
+              executorSettled,
+              parentAfterSettled,
+              disqualifiers: [],
+            }),
+            assertSettled: (expected: number) => {
+              if (
+                expected !== generation ||
+                pending ||
+                !beforeSettled ||
+                !executorSettled ||
+                !parentAfterSettled
+              )
+                throw new Error("pending callbacks");
+            },
+          },
+        };
+        managed.registerDirectRecovery(handle, binding);
+        assert.throws(() => managed.registerDirectRecovery(handle, binding), /binding/);
+        const execution = transport.execute(attempt);
+        void execution.then(
+          () => {
+            executorSettled = true;
+            pending--;
+            generation++;
+          },
+          () => {
+            executorSettled = true;
+            pending--;
+            generation++;
+          },
+        );
+        await assert.rejects(execution);
+        assert.equal(managed.snapshot().runs[index]!.attempts[0]!.state, "cancel-requested");
+        assert.equal(managed.snapshot().runs[index]!.active, 1);
+        assert.equal((await managed.resolveRecovery("parent")).state, "blocked");
+        parentAfterSettled = true;
+        generation++;
+        if (mode === "parent-before") {
+          assert.equal((await managed.resolveRecovery("parent")).state, "blocked");
+          let enterFinally!: () => void;
+          const parentBefore = new Promise<void>((resolve) => {
+            enterFinally = resolve;
+          }).finally(async () => {
+            assert.equal((await managed.resolveRecovery("parent")).state, "blocked");
+          });
+          // This trusted binding double observes the actual exposed Promise, including finally.
+          // Native normal ordering cannot run an executor before its original before settles.
+          void parentBefore.then(() => {
+            beforeSettled = true;
+            pending--;
+            generation++;
+          });
+          enterFinally();
+          await parentBefore;
+        }
+        assert.equal((await managed.resolveRecovery("parent")).state, "terminated");
+        const run = managed.snapshot().runs[index]!;
+        assert.equal(run.attempts[0]!.state, "cancelled");
+        assert.equal(run.active, 0);
+        assert.equal(run.interrupted, true);
+        assert.deepEqual(run.gates, {});
+        const status = await managed.recoveryStatus("other-primary");
+        await assert.rejects(managed.resolveRecovery("other-primary"), /bound/);
+        if (index === 4) {
+          assert.equal(status.state, "blocked");
+          break;
+        }
+        assert.equal(status.state, "ready");
+        assert.ok("treeHash" in status);
+        await assert.rejects(managed.releaseForFresh("other-primary", status.treeHash), /bound/);
+        if (cleanup) {
+          const original = fs.unlinkSync;
+          const marker = path.join(f.trace, "orchestrations/.direct-session-unresolved.json");
+          fs.unlinkSync = ((filename) => {
+            original(filename);
+            if (String(filename) === marker) throw new Error("post-unlink failure");
+          }) as typeof fs.unlinkSync;
+          syncBuiltinESMExports();
+          try {
+            await assert.rejects(
+              managed.releaseForFresh("parent", status.treeHash),
+              /marker missing/,
+            );
+          } finally {
+            fs.unlinkSync = original;
+            syncBuiltinESMExports();
+          }
+          assert.equal(managed.snapshot().stopped, true);
+          assert.equal((await managed.recoveryStatus("parent")).state, "blocked");
+          break;
+        }
+        const released = await managed.releaseForFresh("parent", status.treeHash);
+        assert.equal(released.state, "fresh-only");
+        assert.equal(managed.snapshot().stopped, false);
+        assert.equal(managed.claimDirectTask(caller), null);
+        assert.throws(() => managed.finalizeDirectTask(handle, caller));
+        if (mode === "parent-before") break;
+      }
+    },
+  );
+
 function acquireForeignLease(f: ReturnType<typeof fixture>) {
   const foreign = createDirectSessionLease({ traceRoot: f.trace, workspaceRoot: f.workspace });
   foreign.acquire({
@@ -184,6 +411,67 @@ for (const directImplementation of [false, true]) {
 }
 
 for (const fault of [
+  "direct recovery marker replaced before create remains blocked",
+  "direct recovery completed after deadline retains rejection",
+  "direct recovery restored scope remains blocked",
+  "direct recovery pending executor finally blocks resolve",
+  "direct recovery native terminal reaction blocks pending executor",
+  "direct recovery executor terminal reaction awaits parent after",
+  "direct recovery error after before executor settlement remains blocked",
+  "direct recovery parent after terminal reaction permits resolve",
+  "direct recovery expired authority refresh has no late interrupt",
+  "direct recovery exact native error identity",
+  ...(["interrupt", "wait", "get", "context"] as const).flatMap((api) =>
+    (
+      [
+        "resolve-late-callback",
+        "release-late-callback",
+        "release-tree",
+        "reject",
+        "pending",
+        "timeout",
+      ] as const
+    ).map((mode) => `direct recovery observation ${api} ${mode}` as const),
+  ),
+
+  "direct recovery pending returned hook blocks resolve",
+  "direct recovery same-byte spec replacement",
+  "direct recovery changed marker bytes remains blocked",
+  "direct recovery restored authority remains blocked",
+  "direct recovery unsafe scope remains blocked",
+  "direct recovery replaced lease remains blocked",
+  "direct recovery changed workspace root remains blocked",
+  "direct recovery changed trace root remains blocked",
+  "direct recovery replaced shared ancestor remains blocked",
+  "direct recovery replaced lease ancestor remains blocked",
+  "direct recovery 33rd changed file remains blocked",
+  "direct recovery reentrant admission during lease unlink is refused",
+  "direct recovery lost role remains blocked",
+  "direct recovery lost permission remains blocked",
+  "direct recovery lost primary remains blocked",
+  "direct recovery lost activation remains blocked",
+  "direct recovery error wrong status remains blocked",
+  "direct recovery error wrong input remains blocked",
+  "direct recovery late event after resolve remains blocked",
+  "direct recovery late callback after resolve remains blocked",
+  "direct recovery event loss after after remains blocked",
+  "direct recovery unload after after remains blocked",
+  "direct recovery changed reviewed tree remains blocked",
+  "direct recovery changed terminal context remains blocked",
+  "direct recovery cleanup failure after unlink",
+  "direct recovery pre-stop child after drains",
+  "direct recovery child command proof failure remains blocked",
+  "direct recovery pending child hook blocks resolve",
+  "direct recovery cancellation exact error identity",
+
+  "direct recovery cancellation without after remains blocked",
+  "direct recovery same-byte marker replacement",
+  "direct recovery lookalike error remains blocked",
+  "direct recovery duplicate after remains blocked",
+  "direct recovery fresh-only retires old identities",
+  ...(["orchestration", "spec", "task", "call", "child", "prompt", "result"] as const).map(
+    (identity) => `direct recovery fresh-only refuses prior ${identity}` as const,
+  ),
   "none",
   "digest",
   "deny",
@@ -228,649 +516,1277 @@ for (const fault of [
     ),
   ),
 ] as const) {
-  test(`registered native before/execute/schema/after direct boundary: ${fault}`, async () => {
-    const f = fixture("implementer", 100000);
-    fs.chmodSync(f.trace, 0o700);
-    const foreignRoute = fault.startsWith("lease-");
-    const nativeFallback =
-      fault === "native-fallback" || (foreignRoute && fault.endsWith("-native"));
-    if (nativeFallback) {
-      f.spec.roleModeTaskMapping[0]!.taskMode = "integration";
-      fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
-    }
-    const nativePrompt = () =>
-      f.args({ ...f.packet(), ...(nativeFallback ? { taskMode: "integration" } : {}) }).prompt;
-    const runtime = path.join(f.root, "runtime");
-    fs.mkdirSync(path.join(runtime, "routing"), { recursive: true });
-    fs.copyFileSync(
-      path.resolve(".opencode/routing/harness-model-routing.example.json"),
-      path.join(runtime, "routing/harness-model-routing.example.json"),
-    );
-    const env = {
-      OPENCODE_HARNESS_NATIVE_API: "v2",
-      OPENCODE_HARNESS_WORKSPACE_ROOT: f.workspace,
-      OPENCODE_HARNESS_RUNTIME_ROOT: runtime,
-      OPENCODE_HARNESS_TRACE_ROOT: f.trace,
-      OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION:
-        fault === "off" || (foreignRoute && fault.endsWith("-off")) ? undefined : "1",
-      OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH: path.join(f.root, "activation.json"),
-      OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE: "a".repeat(64),
-    };
-    const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
-    for (const [key, value] of Object.entries(env)) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    type Context = Parameters<ReturnType<typeof createV2NativePlugin>["setup"]>[0];
-    type Tool = Parameters<Parameters<Parameters<Context["tool"]["transform"]>[0]>[0]["add"]>[0];
+  test(
+    fault.startsWith("direct recovery")
+      ? fault
+      : `registered native before/execute/schema/after direct boundary: ${fault}`,
+    async () => {
+      const f = fixture("implementer", 100000);
+      fs.chmodSync(f.trace, 0o700);
+      const foreignRoute = fault.startsWith("lease-");
+      const nativeFallback =
+        fault === "native-fallback" || (foreignRoute && fault.endsWith("-native"));
+      if (nativeFallback) {
+        f.spec.roleModeTaskMapping[0]!.taskMode = "integration";
+        fs.writeFileSync(f.specFile, JSON.stringify(f.spec));
+      }
+      const nativePrompt = () =>
+        f.args({ ...f.packet(), ...(nativeFallback ? { taskMode: "integration" } : {}) }).prompt;
+      const runtime = path.join(f.root, "runtime");
+      fs.mkdirSync(path.join(runtime, "routing"), { recursive: true });
+      fs.copyFileSync(
+        path.resolve(".opencode/routing/harness-model-routing.example.json"),
+        path.join(runtime, "routing/harness-model-routing.example.json"),
+      );
+      const env = {
+        OPENCODE_HARNESS_NATIVE_API: "v2",
+        OPENCODE_HARNESS_WORKSPACE_ROOT: f.workspace,
+        OPENCODE_HARNESS_RUNTIME_ROOT: runtime,
+        OPENCODE_HARNESS_TRACE_ROOT: f.trace,
+        OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION:
+          fault === "off" || (foreignRoute && fault.endsWith("-off")) ? undefined : "1",
+        OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH: path.join(f.root, "activation.json"),
+        OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_NONCE: "a".repeat(64),
+      };
+      const saved = Object.fromEntries(Object.keys(env).map((key) => [key, process.env[key]]));
+      for (const [key, value] of Object.entries(env)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+      type Context = Parameters<ReturnType<typeof createV2NativePlugin>["setup"]>[0];
+      type Tool = Parameters<Parameters<Parameters<Context["tool"]["transform"]>[0]>[0]["add"]>[0];
 
-    const tools = new Map<string, Tool>();
-    let before!: (event: V2ToolBefore) => Promise<void>;
-    let after!: (event: V2ToolAfter) => Promise<void>;
-    const order: string[] = [];
-    const schema = Object.freeze({ nativeOriginal: true });
-    let originalCalls = 0;
-    const subagent: Record<string, unknown> = {
-      id: "subagent",
-      options: {},
-      output: schema,
-      execute: async () => {
-        originalCalls++;
-        return { original: true };
-      },
-    };
-    const agents: Record<string, unknown>[] = [
-      "researcher",
-      "planner",
-      "implementer",
-      "validator",
-    ].map((id) => ({
-      id,
-      mode: "subagent",
-      permissions: [],
-      model: { providerID: "fixture", id: "worker" },
-    }));
-    agents.push({ id: "build", mode: "primary", permissions: [] });
-    let wake: (() => void) | undefined;
-    const events: unknown[] = [];
-    let childID = "";
-    let promptID = "";
-    let prompt = "";
-    let nativeNow = 100;
-    let admittedInput: Record<string, unknown> = {};
-    let acquireOnAgentCheck = false;
-    let helperAfter: V2ToolAfter | undefined;
-    const context: Context = {
-      location: { directory: f.workspace },
-      permission: {
-        hook: async () => {},
-        assert: async (input) => {
-          order.push("permission");
-          assert.deepEqual(input, {
-            sessionID: "parent",
-            agent: "build",
-            source: { type: "tool", messageID: "message", id: "call" },
-            action: "subagent",
-            resources: ["implementer"],
-            save: ["implementer"],
+      const tools = new Map<string, Tool>();
+      let before!: (event: V2ToolBefore) => Promise<void>;
+      let after!: (event: V2ToolAfter) => Promise<void>;
+      const order: string[] = [];
+      const schema = Object.freeze({ nativeOriginal: true });
+      let originalCalls = 0;
+      const subagent: Record<string, unknown> = {
+        id: "subagent",
+        options: {},
+        output: schema,
+        execute: async () => {
+          originalCalls++;
+          return { original: true };
+        },
+      };
+      const agents: Record<string, unknown>[] = [
+        "researcher",
+        "planner",
+        "implementer",
+        "validator",
+      ].map((id) => ({
+        id,
+        mode: "subagent",
+        permissions: [],
+        model: { providerID: "fixture", id: "worker" },
+      }));
+      agents.push({ id: "build", mode: "primary", permissions: [] });
+      let wake: (() => void) | undefined;
+      const events: unknown[] = [];
+      let childID = "";
+      let promptID = "";
+      let priorChildID = "";
+      let priorPromptID = "";
+      let prompt = "";
+      let nativeNow = 100;
+      let admittedInput: Record<string, unknown> = {};
+      let acquireOnAgentCheck = false;
+      let helperAfter: V2ToolAfter | undefined;
+      let nativeCancel: (() => void) | undefined;
+      let observing = false;
+      let releasing = false;
+      let observationHooked = false;
+      let releaseHeld: (() => void) | undefined;
+      let lateAfterEvent: V2ToolAfter | undefined;
+      let nativeWaitEntered = false;
+      let finishNativeWait: (() => void) | undefined;
+      let terminalReaction: Promise<unknown> | undefined;
+      const observationCalls: string[] = [];
+      const observationStep = async (api: string) => {
+        if (observing) observationCalls.push(api);
+        if (
+          !observing ||
+          observationHooked ||
+          !fault.startsWith(`direct recovery observation ${api} `)
+        )
+          return;
+        if (fault.includes("release-") && !releasing) return;
+        observationHooked = true;
+        if (fault.endsWith("reject")) throw new Error("rejected observation fixture");
+        if (fault.endsWith("pending") || fault.endsWith("timeout"))
+          await new Promise<void>((resolve) => {
+            releaseHeld = resolve;
           });
-          if (fault === "deny") throw new Error("denied");
-          if (fault === "permission-change") admittedInput.prompt = "changed during approval";
+        if (fault.endsWith("late-callback")) await after(lateAfterEvent!);
+        if (fault.endsWith("release-tree"))
+          fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "changed during release");
+      };
+
+      let changedContext = false;
+      let commandAfter: V2ToolAfter | undefined;
+      const rawRecoveryTool = async (name: string) =>
+        JSON.parse(
+          (await tools.get(name)!.execute({}, { sessionID: "parent", agent: "build" })).content,
+        );
+      let recoveryCall = 0;
+      const recoveryTool = async (name: string, args: Record<string, unknown> = {}) => {
+        const event: V2ToolAfter = {
+          tool: name,
+          sessionID: "parent",
+          agent: "build",
+          messageID: "recovery-message",
+          id: `recovery-${recoveryCall++}`,
+          input: args,
+          status: "completed",
+        };
+        await before(event);
+        const result = await tools
+          .get(name)!
+          .execute(args, { sessionID: "parent", agent: "build" });
+        event.result = result;
+        await after(event);
+        return JSON.parse(result.content);
+      };
+
+      const context: Context = {
+        location: { directory: f.workspace },
+        permission: {
+          hook: async () => {},
+          assert: async (input) => {
+            order.push("permission");
+            assert.deepEqual(input, {
+              sessionID: "parent",
+              agent: "build",
+              source:
+                input.source?.id === "fresh-call"
+                  ? { type: "tool", messageID: "fresh-message", id: "fresh-call" }
+                  : { type: "tool", messageID: "message", id: "call" },
+              action: "subagent",
+              resources: ["implementer"],
+              save: ["implementer"],
+            });
+            if (
+              fault === "deny" ||
+              (observing && fault === "direct recovery lost permission remains blocked")
+            )
+              throw new Error("denied");
+            if (
+              observing &&
+              fault === "direct recovery expired authority refresh has no late interrupt" &&
+              !observationHooked
+            ) {
+              observationHooked = true;
+              await new Promise<void>((resolve) => {
+                releaseHeld = resolve;
+              });
+            }
+            if (fault === "permission-change") admittedInput.prompt = "changed during approval";
+            if (
+              !observing &&
+              fault === "direct recovery marker replaced before create remains blocked"
+            ) {
+              const marker = path.join(f.trace, "orchestrations/fixture/dispatch-started.json");
+              const bytes = fs.readFileSync(marker);
+              fs.renameSync(marker, marker + ".old");
+              fs.writeFileSync(marker, bytes, { mode: 0o600 });
+            }
+          },
         },
-      },
-      agent: {
-        list: async () => {
-          if (acquireOnAgentCheck) {
-            acquireOnAgentCheck = false;
-            acquireForeignLease(f);
-          }
-          return agents;
+        agent: {
+          list: async () => {
+            if (acquireOnAgentCheck) {
+              acquireOnAgentCheck = false;
+              acquireForeignLease(f);
+            }
+            return agents;
+          },
+          reload: async () => {},
+          transform: async (cb) =>
+            cb({
+              list: () => agents,
+              get: (id) => agents.find((a) => a.id === id),
+              update: (id, change) => change(agents.find((a) => a.id === id)!),
+            }),
         },
-        reload: async () => {},
-        transform: async (cb) =>
-          cb({
-            list: () => agents,
-            get: (id) => agents.find((a) => a.id === id),
-            update: (id, change) => change(agents.find((a) => a.id === id)!),
-          }),
-      },
-      tool: {
-        reload: async () => {},
-        transform: async (cb) =>
-          cb({
-            list: () => [{ id: "subagent" }],
-            update: (_id, change) => change(subagent),
-            add: (tool) => {
-              tools.set(tool.name, tool);
-            },
-          }),
-        hook: async (name, cb) => {
-          if (name === "execute.before") before = cb as typeof before;
-          else after = cb as typeof after;
-        },
-      },
-      session: {
-        hook: async () => {},
-        get: async ({ sessionID }) =>
-          sessionID === "parent"
-            ? {
-                id: "parent",
-                ...(fault === "nonprimary" ? { parentID: "ancestor" } : {}),
-                model: { providerID: "fixture", id: "parent" },
-              }
-            : {
-                id: childID,
-                parentID: "parent",
-                agent: "implementer",
-                outcome: fault === "native-failure" ? "failed" : "succeeded",
-                time: { idle: 2 },
+        tool: {
+          reload: async () => {},
+          transform: async (cb) =>
+            cb({
+              list: () => [{ id: "subagent" }],
+              update: (_id, change) => change(subagent),
+              add: (tool) => {
+                tools.set(tool.name, tool);
               },
-        create: async (input) => {
-          order.push("create");
-          assert.equal(order[0], "permission");
-          assert.ok(
-            fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
-          );
-          childID = input.id!;
-          if (fault === "extra-child")
+            }),
+          hook: async (name, cb) => {
+            if (name === "execute.before") before = cb as typeof before;
+            else after = cb as typeof after;
+          },
+        },
+        session: {
+          hook: async () => {},
+          get: async ({ sessionID }) => {
+            if (sessionID !== "parent") await observationStep("get");
+            return sessionID === "parent"
+              ? {
+                  id: "parent",
+                  ...(fault === "nonprimary" ||
+                  (observing && fault === "direct recovery lost primary remains blocked")
+                    ? { parentID: "ancestor" }
+                    : {}),
+                  model: { providerID: "fixture", id: "parent" },
+                }
+              : {
+                  id: childID,
+                  parentID: "parent",
+                  agent: "implementer",
+                  outcome: fault === "native-failure" ? "failed" : "succeeded",
+                  time: { idle: 2 },
+                };
+          },
+          create: async (input) => {
+            order.push("create");
+            assert.equal(order[0], "permission");
+            assert.ok(
+              fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+            );
+            childID = input.id!;
+            if (fault === "extra-child")
+              events.push({
+                type: "session.created",
+                data: { sessionID: "unrelated-child", parentID: "parent" },
+              });
             events.push({
               type: "session.created",
-              data: { sessionID: "unrelated-child", parentID: "parent" },
+              data: { sessionID: childID, parentID: "parent" },
             });
+            wake?.();
+            await new Promise((resolve) => setImmediate(resolve));
+            return {
+              id:
+                priorChildID && fault === "direct recovery fresh-only refuses prior child"
+                  ? priorChildID
+                  : childID,
+              parentID: "parent",
+              agent: "implementer",
+              time: {},
+            };
+          },
+          prompt: async (input) => {
+            promptID = input.id!;
+            prompt = input.text;
+            if (fault === "callback" || fault === "deferred-settled")
+              await before({
+                tool: "read",
+                sessionID: childID,
+                messageID: "child-message",
+                agent: "implementer",
+                id: "child-read",
+                input: { path: "src/a.txt" },
+              });
+            if (fault === "trace-callback")
+              await before({
+                tool: "harness_trace",
+                sessionID: childID,
+                messageID: "child-message",
+                agent: "implementer",
+                id: "child-trace",
+                input: {
+                  filePath: "orchestrations/fixture/roles/implementer/proof.md",
+                  content: "proof",
+                },
+              });
+            if (fault === "callback-missing-id" || fault === "callback-duplicate-id") {
+              const callback = {
+                tool: "read",
+                sessionID: childID,
+                messageID: "child-message",
+                agent: "implementer",
+                input: { path: "src/a.txt" },
+                id: fault === "callback-duplicate-id" ? "duplicate-read" : undefined,
+              };
+              await before(callback);
+              if (fault === "callback-duplicate-id") await before(callback);
+            }
+            if (fault.startsWith("helper-")) {
+              const name = fault.startsWith("helper-source")
+                ? fault === "helper-source-edit"
+                  ? "harness_source_edit"
+                  : "harness_source_replace"
+                : "harness_trace";
+              const helperInput =
+                name === "harness_trace"
+                  ? {
+                      filePath: "orchestrations/fixture/roles/implementer/helper.md",
+                      content: "helper proof",
+                    }
+                  : {
+                      filePath: "src/a.txt",
+                      expectedContent: "initial",
+                      content: "helper changed",
+                    };
+              helperAfter = {
+                tool: name,
+                sessionID: childID,
+                messageID: "child-message",
+                agent: "implementer",
+                id: "child-helper",
+                input: helperInput,
+                status: "completed",
+              };
+              await before(helperAfter);
+              helperAfter.result = await tools
+                .get(name)!
+                .execute(helperInput, { sessionID: childID, agent: "implementer" });
+              const absolute =
+                name === "harness_trace"
+                  ? path.join(f.trace, helperInput.filePath)
+                  : path.join(f.workspace, helperInput.filePath);
+              assert.equal(fs.readFileSync(absolute, "utf8"), helperInput.content);
+            }
+            if (
+              [
+                "direct recovery pre-stop child after drains",
+                "direct recovery child command proof failure remains blocked",
+                "direct recovery pending child hook blocks resolve",
+              ].includes(fault)
+            ) {
+              commandAfter = {
+                tool: "bash",
+                sessionID: childID,
+                agent: "implementer",
+                messageID: "child-message",
+                id: "command",
+                input: { command: "true" },
+                status: "completed",
+                result: { metadata: { exit: 0 } },
+              };
+              await before(commandAfter);
+            }
+            return {
+              id:
+                priorPromptID && fault === "direct recovery fresh-only refuses prior prompt"
+                  ? priorPromptID
+                  : promptID,
+              sessionID: childID,
+              type: "user",
+              payload: { text: prompt },
+              delivery: "queue",
+              time: { created: 1 },
+            };
+          },
+          context: async () => {
+            await observationStep("context");
+            const result = f.success();
+            if (fault === "digest") result.artifacts[0]!.sha256 = "0".repeat(64);
+            return [
+              { id: promptID, type: "user", text: prompt },
+              {
+                id: "assistant",
+                type: "assistant",
+                agent: "implementer",
+                content: [
+                  { type: "text", text: fault === "malformed" ? "{}" : JSON.stringify(result) },
+                ],
+                finish: "stop",
+                time: { completed: 2 },
+              },
+              { id: changedContext ? "changed-idle" : "idle", type: "idle", outcome: "succeeded" },
+            ];
+          },
+          interrupt: async () => {
+            await observationStep("interrupt");
+            return { interrupted: true };
+          },
+          wait: async () => {
+            await observationStep("wait");
+            if (
+              !observing &&
+              fault === "direct recovery error after before executor settlement remains blocked"
+            ) {
+              nativeCancel?.();
+              await after({
+                tool: "subagent",
+                sessionID: "parent",
+                agent: "build",
+                messageID: "message",
+                id: "call",
+                input: admittedInput,
+                status: "error",
+                get error() {
+                  return assert.fail(
+                    "unsettled executor must be rejected before private error comparison",
+                  );
+                },
+              });
+              assert.equal((await rawRecoveryTool("harness_recovery_resolve")).state, "blocked");
+            }
+            if (!observing && fault === "direct recovery pending executor finally blocks resolve") {
+              try {
+                nativeCancel?.();
+              } finally {
+                assert.equal((await rawRecoveryTool("harness_recovery_resolve")).state, "blocked");
+              }
+            }
+            if (
+              fault.startsWith("direct recovery") &&
+              fault !== "direct recovery completed after deadline retains rejection"
+            ) {
+              if (fault.includes("cancellation")) nativeCancel?.();
+              else nativeNow = 400000;
+            }
+            if (fault === "event-loss") {
+              events.push({ type: "fixture-stream-loss" });
+              wake?.();
+              await new Promise((resolve) => setImmediate(resolve));
+            }
+          },
+        },
+        model: { list: async () => [] },
+        provider: { list: async () => [] },
+        plugin: {
+          list: async () => [{ id: "opencode.config.agent", state: { status: "active" } }],
+        },
+        event: {
+          subscribe: async function* ({ signal } = {}) {
+            signal?.addEventListener("abort", () => wake?.(), { once: true });
+            while (!signal?.aborted) {
+              if (events.length) {
+                const item = events.shift();
+                if ((item as { type: string }).type === "fixture-stream-loss")
+                  throw new Error("fixture stream lost");
+                yield item;
+              } else
+                await new Promise<void>((resolve) => {
+                  wake = resolve;
+                });
+            }
+          },
+        },
+      };
+      if (fault === "direct recovery native terminal reaction blocks pending executor") {
+        const settled = new Promise<void>((resolve) => {
+          finishNativeWait = resolve;
+        });
+        // Register on the real native Promise before the adapter awaits it. Its settlement
+        // does not settle the adapter's exposed executor or supply the parent after hook.
+        terminalReaction = settled.then(async () => {
+          nativeCancel?.();
+          assert.equal((await rawRecoveryTool("harness_recovery_resolve")).state, "blocked");
+        });
+        context.session.wait = () => {
+          nativeWaitEntered = true;
+          return settled;
+        };
+      }
+      if (fault.startsWith("api-")) {
+        const [, api, value] = fault.split("-");
+        const session = context.session as unknown as Record<string, unknown>;
+        if (value === "absent") delete session[api!];
+        else session[api!] = {};
+      }
+      let dispose: (() => void) | undefined;
+      const status = async () =>
+        JSON.parse(
+          (
+            await tools
+              .get("harness_dispatch_status")!
+              .execute({}, { sessionID: "parent", agent: "build" })
+          ).content,
+        ) as Record<string, unknown>;
+      try {
+        dispose = await createV2NativePlugin({ now: () => nativeNow }).setup(context);
+        for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
+          await new Promise((resolve) => setImmediate(resolve));
+        if (fault.startsWith("api-")) {
+          assert.equal((await status()).status, "stopped");
+          assert.equal(fs.existsSync(env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH), false);
+          assert.equal(typeof before, "function");
+          assert.equal(typeof after, "function");
+          const input = { agent: "implementer", description: "fixture", prompt: f.args().prompt };
+          await assert.rejects(
+            before({
+              tool: "subagent",
+              sessionID: "parent",
+              agent: "build",
+              messageID: "message",
+              id: "call",
+              input,
+            }),
+            /activation|interrupted/,
+          );
+          await assert.rejects(
+            before({
+              tool: "write",
+              sessionID: "parent",
+              agent: "build",
+              messageID: "message",
+              id: "write",
+              input: { path: "src/a.txt", content: "unsafe" },
+            }),
+            /interrupted/,
+          );
+          const execute = subagent.execute as (input: unknown, caller: unknown) => Promise<unknown>;
+          await assert.rejects(
+            execute(input, {
+              sessionID: "parent",
+              agent: "build",
+              messageID: "message",
+              id: "call",
+              signal: new AbortController().signal,
+            }),
+          );
+          assert.equal(originalCalls, 0);
+          assert.deepEqual(order, []);
+          return;
+        }
+        assert.equal((await status()).status, "ready");
+        const event: V2ToolAfter = {
+          tool: "subagent",
+          sessionID: "parent",
+          agent: "build",
+          messageID: "message",
+          id: "call",
+          status: "completed",
+          input: {
+            agent: "implementer",
+            description: "fixture",
+            prompt: nativePrompt(),
+            ...(fault === "override" ? { model: "fixture/worker" } : {}),
+          },
+        };
+        if (fault === "permuted-input")
+          event.input = {
+            prompt: f.args().prompt,
+            background: false,
+            description: "fixture",
+            agent: "implementer",
+          };
+        if (fault.startsWith("lease-before-")) {
+          const pending = before(event);
+          // Let role verification settle and native admission reach chooseBackground's await.
+          await Promise.resolve();
+          await Promise.resolve();
+          acquireForeignLease(f);
+          await assert.rejects(pending, /unresolved/);
+          assert.equal(originalCalls, 0);
+          assert.equal((await status()).status, "stopped");
+          assert.throws(
+            () =>
+              createDirectSessionLease({
+                traceRoot: f.trace,
+                workspaceRoot: f.workspace,
+              }).assertClear(),
+            /unresolved/,
+          );
+          return;
+        }
+        await before(event);
+        // Pinned core tool runtime decodes Input Struct after before and before execute.
+        // Copy present fields in its schema order, as Effect's Struct decoder does.
+        const raw = event.input as Record<string, unknown>;
+        const decoded = Object.fromEntries(
+          ["agent", "description", "prompt", "model", "sessionID", "background"]
+            .filter((key) => Object.hasOwn(raw, key))
+            .map((key) => [key, raw[key]]),
+        );
+        if (fault === "permuted-input")
+          assert.notEqual(JSON.stringify(raw), JSON.stringify(decoded));
+        admittedInput = decoded;
+        if (fault === "changed") decoded.prompt += "changed";
+        if (fault === "extra-input") decoded.extra = "unexpected";
+        if (fault === "background-presence") delete decoded.background;
+        if (fault === "undefined-override") decoded.model = undefined;
+        if (fault === "added-continuation") decoded.sessionID = "ses_previous";
+        if (fault.startsWith("runtime-api-")) {
+          const [, , api, value] = fault.split("-");
+          const session = context.session as unknown as Record<string, unknown>;
+          if (value === "absent") delete session[api!];
+          else session[api!] = {};
+        }
+        const cancellation = new AbortController();
+        nativeCancel = () => cancellation.abort();
+        const caller = {
+          sessionID: "parent",
+          agent: "build",
+          messageID: "message",
+          id: "call",
+          signal: cancellation.signal,
+        };
+        if (fault === "caller-identity") caller.messageID = "other-message";
+        const execute = subagent.execute as (
+          input: unknown,
+          nativeCaller: typeof caller,
+        ) => Promise<unknown>;
+        assert.equal(subagent.output, schema);
+        if (fault.startsWith("lease-execute-") || fault.startsWith("lease-await-execute-")) {
+          if (fault.startsWith("lease-await-execute-")) acquireOnAgentCheck = true;
+          else acquireForeignLease(f);
+          await assert.rejects(execute(decoded, caller), /unresolved|stopped/);
+          assert.equal(originalCalls, 0);
+          assert.equal((await status()).status, "stopped");
+          assert.throws(
+            () =>
+              createDirectSessionLease({
+                traceRoot: f.trace,
+                workspaceRoot: f.workspace,
+              }).assertClear(),
+            /unresolved/,
+          );
+          return;
+        }
+        if (fault.startsWith("lease-child-") || fault.startsWith("lease-helper-")) {
+          await execute(decoded, caller);
+          assert.equal(originalCalls, 1);
+          childID = "native-child";
           events.push({
             type: "session.created",
             data: { sessionID: childID, parentID: "parent" },
           });
           wake?.();
           await new Promise((resolve) => setImmediate(resolve));
-          return { id: childID, parentID: "parent", agent: "implementer", time: {} };
-        },
-        prompt: async (input) => {
-          promptID = input.id!;
-          prompt = input.text;
-          if (fault === "callback" || fault === "deferred-settled")
-            await before({
-              tool: "read",
-              sessionID: childID,
-              messageID: "child-message",
-              agent: "implementer",
-              id: "child-read",
-              input: { path: "src/a.txt" },
-            });
-          if (fault === "trace-callback")
-            await before({
-              tool: "harness_trace",
-              sessionID: childID,
-              messageID: "child-message",
-              agent: "implementer",
-              id: "child-trace",
-              input: {
-                filePath: "orchestrations/fixture/roles/implementer/proof.md",
-                content: "proof",
-              },
-            });
-          if (fault === "callback-missing-id" || fault === "callback-duplicate-id") {
-            const callback = {
-              tool: "read",
-              sessionID: childID,
-              messageID: "child-message",
-              agent: "implementer",
-              input: { path: "src/a.txt" },
-              id: fault === "callback-duplicate-id" ? "duplicate-read" : undefined,
-            };
-            await before(callback);
-            if (fault === "callback-duplicate-id") await before(callback);
-          }
-          if (fault.startsWith("helper-")) {
-            const name = fault.startsWith("helper-source")
-              ? fault === "helper-source-edit"
-                ? "harness_source_edit"
-                : "harness_source_replace"
-              : "harness_trace";
-            const helperInput =
-              name === "harness_trace"
-                ? {
-                    filePath: "orchestrations/fixture/roles/implementer/helper.md",
-                    content: "helper proof",
-                  }
-                : { filePath: "src/a.txt", expectedContent: "initial", content: "helper changed" };
-            helperAfter = {
-              tool: name,
-              sessionID: childID,
-              messageID: "child-message",
-              agent: "implementer",
-              id: "child-helper",
-              input: helperInput,
-              status: "completed",
-            };
-            await before(helperAfter);
-            helperAfter.result = await tools
-              .get(name)!
-              .execute(helperInput, { sessionID: childID, agent: "implementer" });
-            const absolute =
-              name === "harness_trace"
-                ? path.join(f.trace, helperInput.filePath)
-                : path.join(f.workspace, helperInput.filePath);
-            assert.equal(fs.readFileSync(absolute, "utf8"), helperInput.content);
-          }
-          return {
-            id: promptID,
+          const input = { filePath: "src/a.txt", expectedContent: "initial", content: "unsafe" };
+          const childEvent = {
+            tool: "harness_source_edit",
             sessionID: childID,
-            type: "user",
-            payload: { text: prompt },
-            delivery: "queue",
-            time: { created: 1 },
+            agent: "implementer",
+            messageID: "child-message",
+            id: "child-edit",
+            input,
           };
-        },
-        context: async () => {
-          const result = f.success();
-          if (fault === "digest") result.artifacts[0]!.sha256 = "0".repeat(64);
-          return [
-            { id: promptID, type: "user", text: prompt },
-            {
-              id: "assistant",
-              type: "assistant",
-              agent: "implementer",
-              content: [
-                { type: "text", text: fault === "malformed" ? "{}" : JSON.stringify(result) },
-              ],
-              finish: "stop",
-              time: { completed: 2 },
-            },
-            { id: "idle", type: "idle", outcome: "succeeded" },
-          ];
-        },
-        interrupt: async () => ({ interrupted: true }),
-        wait: async () => {
-          if (fault === "event-loss") {
+          if (fault.startsWith("lease-helper-")) await before(childEvent);
+          acquireForeignLease(f);
+          if (fault.startsWith("lease-helper-"))
+            await assert.rejects(
+              tools
+                .get("harness_source_edit")!
+                .execute(input, { sessionID: childID, agent: "implementer" }),
+              /interrupted|unresolved/,
+            );
+          else await assert.rejects(before(childEvent), /interrupted|unresolved/);
+          assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "initial");
+          assert.equal((await status()).status, "stopped");
+          await before({
+            tool: "read",
+            sessionID: "parent",
+            id: "diagnose",
+            input: { path: "src/a.txt" },
+          });
+          assert.throws(
+            () =>
+              createDirectSessionLease({
+                traceRoot: f.trace,
+                workspaceRoot: f.workspace,
+              }).assertClear(),
+            /unresolved/,
+          );
+          return;
+        }
+        if (
+          [
+            "deny",
+            "changed",
+            "nonprimary",
+            "override",
+            "native-failure",
+            "caller-identity",
+            "permission-change",
+            "extra-child",
+            "event-loss",
+            "extra-input",
+            "background-presence",
+            "undefined-override",
+            "added-continuation",
+            "callback-missing-id",
+            "callback-duplicate-id",
+          ].includes(fault) ||
+          fault.startsWith("runtime-api-")
+        ) {
+          await assert.rejects(execute(decoded, caller));
+          assert.equal(originalCalls, 0);
+          if (fault.startsWith("runtime-api-")) assert.equal((await status()).status, "stopped");
+          if (
+            fault !== "native-failure" &&
+            fault !== "extra-child" &&
+            fault !== "event-loss" &&
+            fault !== "callback-missing-id" &&
+            fault !== "callback-duplicate-id"
+          )
+            assert.ok(!order.includes("create"));
+          return;
+        }
+        if (fault.startsWith("direct recovery")) {
+          let stoppedError: unknown;
+          let completed: unknown;
+          try {
+            const executing = execute(decoded, caller);
+            if (fault === "direct recovery native terminal reaction blocks pending executor") {
+              for (let i = 0; i < 100 && !nativeWaitEntered; i++)
+                await new Promise((resolve) => setImmediate(resolve));
+              assert.equal(nativeWaitEntered, true);
+              finishNativeWait!();
+            }
+            if (fault === "direct recovery executor terminal reaction awaits parent after")
+              terminalReaction = executing.catch(async () => {
+                assert.equal((await rawRecoveryTool("harness_recovery_resolve")).state, "blocked");
+              });
+            completed = await executing;
+          } catch (error) {
+            stoppedError = error;
+          }
+          await terminalReaction;
+          if (fault === "direct recovery completed after deadline retains rejection") {
+            assert.ok(completed);
+            nativeNow = 400000;
+          } else assert.ok(stoppedError instanceof Error);
+          const recovery = recoveryTool;
+          if (commandAfter) {
+            if (fault.includes("proof failure")) commandAfter.result = { metadata: {} };
+            let reentrant: Promise<Record<string, unknown>> | undefined;
+            if (fault.includes("pending child hook"))
+              commandAfter.result = {
+                get metadata() {
+                  reentrant ??= rawRecoveryTool("harness_recovery_resolve");
+                  return { exit: 0 };
+                },
+              };
+            await after(commandAfter);
+            if (reentrant) assert.equal((await reentrant).state, "blocked");
+          }
+          // Committed native Promise adapter wraps the exact Error; typed-error core branch
+          // delivers it to after. Effect interruption does not guarantee an after callback.
+          if (
+            fault !== "direct recovery cancellation without after remains blocked" &&
+            fault !== "direct recovery error after before executor settlement remains blocked"
+          ) {
+            event.status = "error";
+            (event as V2ToolAfter & { error: unknown }).error = {
+              error:
+                fault === "direct recovery lookalike error remains blocked"
+                  ? new Error((stoppedError as Error).message)
+                  : stoppedError,
+            };
+            if (fault === "direct recovery error wrong status remains blocked") {
+              event.status = "completed";
+              event.result = {
+                output: "UNTRUSTED CHILD TEXT",
+                content: "UNTRUSTED CHILD TEXT",
+                metadata: { text: "UNTRUSTED CHILD TEXT" },
+              };
+            }
+            if (fault === "direct recovery error wrong input remains blocked")
+              event.input = { ...decoded, prompt: "wrong" };
+            if (fault === "direct recovery completed after deadline retains rejection") {
+              event.status = "completed";
+              event.result = {
+                ...(completed as Record<string, unknown>),
+                content: [{ type: "text", text: "" }],
+              };
+            }
+            const pendingAfter = after(event);
+            if (fault === "direct recovery pending returned hook blocks resolve")
+              assert.equal((await rawRecoveryTool("harness_recovery_resolve")).state, "blocked");
+            if (fault === "direct recovery parent after terminal reaction permits resolve") {
+              assert.equal((await rawRecoveryTool("harness_recovery_resolve")).state, "blocked");
+              terminalReaction = pendingAfter.then(async () => {
+                assert.equal(
+                  (await rawRecoveryTool("harness_recovery_resolve")).state,
+                  "terminated",
+                );
+              });
+            }
+            await pendingAfter;
+            await terminalReaction;
+            if (event.status === "completed")
+              assert.doesNotMatch(JSON.stringify(event.result), /UNTRUSTED CHILD TEXT/);
+            if (fault === "direct recovery duplicate after remains blocked") await after(event);
+          }
+          if (fault === "direct recovery same-byte marker replacement") {
+            const marker = path.join(f.trace, "orchestrations/fixture/dispatch-started.json");
+            const bytes = fs.readFileSync(marker);
+            fs.renameSync(marker, marker + ".old");
+            fs.writeFileSync(marker, bytes, { mode: 0o600 });
+          }
+          lateAfterEvent = event;
+          observing = true;
+          if (fault === "direct recovery same-byte spec replacement") {
+            const bytes = fs.readFileSync(f.specFile);
+            fs.renameSync(f.specFile, f.specFile + ".old");
+            fs.writeFileSync(f.specFile, bytes);
+          }
+          if (fault === "direct recovery changed marker bytes remains blocked")
+            fs.appendFileSync(
+              path.join(f.trace, "orchestrations/fixture/dispatch-started.json"),
+              " ",
+            );
+          if (fault === "direct recovery unsafe scope remains blocked")
+            fs.writeFileSync(path.join(f.workspace, "outside"), "unsafe");
+          if (fault === "direct recovery replaced lease remains blocked") {
+            const marker = path.join(f.trace, "orchestrations/.direct-session-unresolved.json");
+            const bytes = fs.readFileSync(marker);
+            fs.renameSync(marker, marker + ".old");
+            fs.writeFileSync(marker, bytes, { mode: 0o600 });
+          }
+          for (const [name, root] of [
+            ["workspace", f.workspace],
+            ["trace", f.trace],
+          ] as const)
+            if (fault === `direct recovery changed ${name} root remains blocked`) {
+              fs.renameSync(root, root + ".old");
+              fs.cpSync(root + ".old", root, { recursive: true });
+            }
+          if (
+            fault === "direct recovery replaced shared ancestor remains blocked" ||
+            fault === "direct recovery replaced lease ancestor remains blocked"
+          ) {
+            const ancestor = fault.includes("shared")
+              ? f.root
+              : path.join(f.trace, "orchestrations");
+            const savedAncestor = ancestor + ".old";
+            const mode = fs.statSync(ancestor).mode & 0o777;
+            const children = fs.readdirSync(ancestor);
+            fs.renameSync(ancestor, savedAncestor);
+            fs.mkdirSync(ancestor, { mode });
+            // Move descendants back, preserving every root/file inode and its bytes/mode.
+            // Only the relevant intermediate directory identity changes.
+            for (const name of children)
+              fs.renameSync(path.join(savedAncestor, name), path.join(ancestor, name));
+            if (ancestor === f.root) roots.push(savedAncestor);
+          }
+          if (fault === "direct recovery lost role remains blocked")
+            agents.find((a) => a.id === "implementer")!.mode = "primary";
+          if (fault === "direct recovery lost activation remains blocked")
+            fs.appendFileSync(env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH, " ");
+          if (fault === "direct recovery event loss after after remains blocked") {
             events.push({ type: "fixture-stream-loss" });
             wake?.();
             await new Promise((resolve) => setImmediate(resolve));
           }
-        },
-      },
-      model: { list: async () => [] },
-      provider: { list: async () => [] },
-      plugin: { list: async () => [{ id: "opencode.config.agent", state: { status: "active" } }] },
-      event: {
-        subscribe: async function* ({ signal } = {}) {
-          signal?.addEventListener("abort", () => wake?.(), { once: true });
-          while (!signal?.aborted) {
-            if (events.length) {
-              const item = events.shift();
-              if ((item as { type: string }).type === "fixture-stream-loss")
-                throw new Error("fixture stream lost");
-              yield item;
-            } else
-              await new Promise<void>((resolve) => {
-                wake = resolve;
-              });
+          if (fault === "direct recovery unload after after remains blocked") {
+            dispose?.();
+            dispose = undefined;
           }
-        },
-      },
-    };
-    if (fault.startsWith("api-")) {
-      const [, api, value] = fault.split("-");
-      const session = context.session as unknown as Record<string, unknown>;
-      if (value === "absent") delete session[api!];
-      else session[api!] = {};
-    }
-    let dispose: (() => void) | undefined;
-    const status = async () =>
-      JSON.parse(
-        (
-          await tools
-            .get("harness_dispatch_status")!
-            .execute({}, { sessionID: "parent", agent: "build" })
-        ).content,
-      ) as Record<string, unknown>;
-    try {
-      dispose = await createV2NativePlugin({ now: () => nativeNow }).setup(context);
-      for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
-        await new Promise((resolve) => setImmediate(resolve));
-      if (fault.startsWith("api-")) {
-        assert.equal((await status()).status, "stopped");
-        assert.equal(fs.existsSync(env.OPENCODE_HARNESS_TRACE_PERMISSION_PROBE_PATH), false);
-        assert.equal(typeof before, "function");
-        assert.equal(typeof after, "function");
-        const input = { agent: "implementer", description: "fixture", prompt: f.args().prompt };
-        await assert.rejects(
-          before({
-            tool: "subagent",
-            sessionID: "parent",
-            agent: "build",
-            messageID: "message",
-            id: "call",
-            input,
-          }),
-          /activation|interrupted/,
-        );
-        await assert.rejects(
-          before({
-            tool: "write",
-            sessionID: "parent",
-            agent: "build",
-            messageID: "message",
-            id: "write",
-            input: { path: "src/a.txt", content: "unsafe" },
-          }),
-          /interrupted/,
-        );
-        const execute = subagent.execute as (input: unknown, caller: unknown) => Promise<unknown>;
-        await assert.rejects(
-          execute(input, {
-            sessionID: "parent",
-            agent: "build",
-            messageID: "message",
-            id: "call",
-            signal: new AbortController().signal,
-          }),
-        );
-        assert.equal(originalCalls, 0);
-        assert.deepEqual(order, []);
-        return;
-      }
-      assert.equal((await status()).status, "ready");
-      const event: V2ToolAfter = {
-        tool: "subagent",
-        sessionID: "parent",
-        agent: "build",
-        messageID: "message",
-        id: "call",
-        status: "completed",
-        input: {
-          agent: "implementer",
-          description: "fixture",
-          prompt: nativePrompt(),
-          ...(fault === "override" ? { model: "fixture/worker" } : {}),
-        },
-      };
-      if (fault === "permuted-input")
-        event.input = {
-          prompt: f.args().prompt,
-          background: false,
-          description: "fixture",
-          agent: "implementer",
-        };
-      if (fault.startsWith("lease-before-")) {
-        const pending = before(event);
-        // Let role verification settle and native admission reach chooseBackground's await.
-        await Promise.resolve();
-        await Promise.resolve();
-        acquireForeignLease(f);
-        await assert.rejects(pending, /unresolved/);
-        assert.equal(originalCalls, 0);
-        assert.equal((await status()).status, "stopped");
-        assert.throws(
-          () =>
-            createDirectSessionLease({
-              traceRoot: f.trace,
-              workspaceRoot: f.workspace,
-            }).assertClear(),
-          /unresolved/,
-        );
-        return;
-      }
-      await before(event);
-      // Pinned core tool runtime decodes Input Struct after before and before execute.
-      // Copy present fields in its schema order, as Effect's Struct decoder does.
-      const raw = event.input as Record<string, unknown>;
-      const decoded = Object.fromEntries(
-        ["agent", "description", "prompt", "model", "sessionID", "background"]
-          .filter((key) => Object.hasOwn(raw, key))
-          .map((key) => [key, raw[key]]),
-      );
-      if (fault === "permuted-input") assert.notEqual(JSON.stringify(raw), JSON.stringify(decoded));
-      admittedInput = decoded;
-      if (fault === "changed") decoded.prompt += "changed";
-      if (fault === "extra-input") decoded.extra = "unexpected";
-      if (fault === "background-presence") delete decoded.background;
-      if (fault === "undefined-override") decoded.model = undefined;
-      if (fault === "added-continuation") decoded.sessionID = "ses_previous";
-      if (fault.startsWith("runtime-api-")) {
-        const [, , api, value] = fault.split("-");
-        const session = context.session as unknown as Record<string, unknown>;
-        if (value === "absent") delete session[api!];
-        else session[api!] = {};
-      }
-      const cancellation = new AbortController();
-      const caller = {
-        sessionID: "parent",
-        agent: "build",
-        messageID: "message",
-        id: "call",
-        signal: cancellation.signal,
-      };
-      if (fault === "caller-identity") caller.messageID = "other-message";
-      const execute = subagent.execute as (
-        input: unknown,
-        nativeCaller: typeof caller,
-      ) => Promise<unknown>;
-      assert.equal(subagent.output, schema);
-      if (fault.startsWith("lease-execute-") || fault.startsWith("lease-await-execute-")) {
-        if (fault.startsWith("lease-await-execute-")) acquireOnAgentCheck = true;
-        else acquireForeignLease(f);
-        await assert.rejects(execute(decoded, caller), /unresolved|stopped/);
-        assert.equal(originalCalls, 0);
-        assert.equal((await status()).status, "stopped");
-        assert.throws(
-          () =>
-            createDirectSessionLease({
-              traceRoot: f.trace,
-              workspaceRoot: f.workspace,
-            }).assertClear(),
-          /unresolved/,
-        );
-        return;
-      }
-      if (fault.startsWith("lease-child-") || fault.startsWith("lease-helper-")) {
-        await execute(decoded, caller);
-        assert.equal(originalCalls, 1);
-        childID = "native-child";
-        events.push({ type: "session.created", data: { sessionID: childID, parentID: "parent" } });
-        wake?.();
-        await new Promise((resolve) => setImmediate(resolve));
-        const input = { filePath: "src/a.txt", expectedContent: "initial", content: "unsafe" };
-        const childEvent = {
-          tool: "harness_source_edit",
-          sessionID: childID,
-          agent: "implementer",
-          messageID: "child-message",
-          id: "child-edit",
-          input,
-        };
-        if (fault.startsWith("lease-helper-")) await before(childEvent);
-        acquireForeignLease(f);
-        if (fault.startsWith("lease-helper-"))
-          await assert.rejects(
-            tools
-              .get("harness_source_edit")!
-              .execute(input, { sessionID: childID, agent: "implementer" }),
-            /interrupted|unresolved/,
+          const resolving = recovery("harness_recovery_resolve");
+          if (fault === "direct recovery expired authority refresh has no late interrupt") {
+            assert.equal((await resolving).state, "blocked");
+            assert.ok(releaseHeld);
+            assert.deepEqual(observationCalls, []);
+            releaseHeld();
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.deepEqual(observationCalls, []);
+            assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            return;
+          }
+          if (fault.startsWith("direct recovery observation") && fault.endsWith("pending")) {
+            for (let i = 0; i < 100 && !releaseHeld; i++)
+              await new Promise((resolve) => setImmediate(resolve));
+            assert.ok(releaseHeld);
+            assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            await assert.rejects(recovery("harness_recovery_resolve"), /progress/);
+            await assert.rejects(
+              recovery("harness_recovery_release", { expectedTreeHash: "a".repeat(64) }),
+              /progress/,
+            );
+            releaseHeld();
+          }
+          let resolved = await resolving;
+          if (fault.startsWith("direct recovery observation") && fault.endsWith("timeout")) {
+            assert.equal(resolved.state, "blocked");
+            assert.ok(releaseHeld);
+            const priorCalls = [...observationCalls];
+            assert.equal((await recovery("harness_recovery_resolve")).state, "blocked");
+            releaseHeld();
+            await new Promise((resolve) => setImmediate(resolve));
+            assert.deepEqual(observationCalls, priorCalls);
+            resolved = await recovery("harness_recovery_resolve");
+            assert.equal(observationCalls[priorCalls.length], "interrupt");
+          }
+          if (
+            fault === "direct recovery completed after deadline retains rejection" &&
+            resolved.state === "blocked"
+          ) {
+            await new Promise((resolve) => setImmediate(resolve));
+            resolved = await recovery("harness_recovery_resolve");
+          }
+          if (fault === "direct recovery restored scope remains blocked") {
+            const outside = path.join(f.workspace, "outside");
+            fs.writeFileSync(outside, "unsafe");
+            assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            fs.unlinkSync(outside);
+          }
+          if (fault === "direct recovery restored authority remains blocked") {
+            const bytes = fs.readFileSync(f.specFile);
+            fs.appendFileSync(f.specFile, " ");
+            assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            fs.writeFileSync(f.specFile, bytes);
+          }
+          if (fault === "direct recovery late callback after resolve remains blocked")
+            await after({ ...event, id: "unknown-call" });
+          if (fault === "direct recovery late event after resolve remains blocked") {
+            events.push({
+              type: "session.created",
+              data: { sessionID: "late-child", parentID: "parent" },
+            });
+            wake?.();
+            await new Promise((resolve) => setImmediate(resolve));
+          }
+          if (fault === "direct recovery 33rd changed file remains blocked") {
+            assert.equal(resolved.state, "terminated");
+            for (let index = 0; index < 32; index++)
+              fs.writeFileSync(path.join(f.workspace, `src/review-${index}.txt`), "changed");
+            const boundary = await recovery("harness_recovery_status");
+            assert.equal(boundary.state, "ready");
+            assert.equal(boundary.changedFiles.length, 32);
+            fs.writeFileSync(path.join(f.workspace, "src/review-32.txt"), "changed");
+            const exceeded = await recovery("harness_recovery_status");
+            assert.equal(exceeded.state, "blocked");
+            await assert.rejects(
+              recovery("harness_recovery_release", { expectedTreeHash: boundary.treeHash }),
+            );
+            assert.ok(
+              fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+            );
+            return;
+          }
+          const status = await recovery("harness_recovery_status");
+          if (
+            (fault.startsWith("direct recovery observation") &&
+              (fault.endsWith("reject") || fault.endsWith("resolve-late-callback"))) ||
+            (fault.includes("blocked") &&
+              !fault.includes("reviewed tree") &&
+              !fault.includes("terminal context")) ||
+            fault.includes("replacement")
+          ) {
+            assert.equal(status.state, "blocked");
+            return;
+          }
+          assert.equal(resolved.state, "terminated");
+          assert.equal(status.state, "ready");
+          if (fault.startsWith("direct recovery observation") && fault.includes("release-")) {
+            releasing = true;
+            await assert.rejects(
+              recovery("harness_recovery_release", { expectedTreeHash: status.treeHash }),
+            );
+            assert.ok(observationHooked);
+            assert.ok(
+              fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+            );
+            return;
+          }
+          if (fault.includes("reviewed tree"))
+            fs.writeFileSync(path.join(f.workspace, "src/a.txt"), "changed after review");
+          if (fault.includes("terminal context")) changedContext = true;
+          if (fault.includes("reviewed tree") || fault.includes("terminal context")) {
+            await assert.rejects(
+              recovery("harness_recovery_release", { expectedTreeHash: status.treeHash }),
+            );
+            assert.ok(
+              fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+            );
+            if (fault.includes("terminal context"))
+              assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            return;
+          }
+          if (fault === "direct recovery cleanup failure after unlink") {
+            const original = fs.unlinkSync;
+            const marker = path.join(f.trace, "orchestrations/.direct-session-unresolved.json");
+            fs.unlinkSync = ((filename) => {
+              original(filename);
+              if (String(filename) === marker) throw new Error("post unlink");
+            }) as typeof fs.unlinkSync;
+            syncBuiltinESMExports();
+            try {
+              await assert.rejects(
+                recovery("harness_recovery_release", { expectedTreeHash: status.treeHash }),
+                /marker missing/,
+              );
+            } finally {
+              fs.unlinkSync = original;
+              syncBuiltinESMExports();
+            }
+            assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+            await assert.rejects(before({ ...event, id: "fresh-call" }));
+            return;
+          }
+          if (fault === "direct recovery reentrant admission during lease unlink is refused") {
+            const freshId = "unlink-fresh";
+            fs.mkdirSync(path.join(f.trace, "orchestrations", freshId), { mode: 0o700 });
+            fs.writeFileSync(
+              path.join(f.trace, "orchestrations", freshId, "normalized-spec.json"),
+              JSON.stringify({ ...f.spec, orchestrationId: freshId }),
+            );
+            const freshEvent = {
+              ...event,
+              id: "unlink-reentry",
+              input: {
+                agent: "implementer",
+                description: "fresh reentry",
+                prompt: f.args({ ...f.packet("unlink-task"), orchestrationId: freshId }).prompt,
+              },
+            };
+            const original = fs.unlinkSync;
+            const marker = path.join(f.trace, "orchestrations/.direct-session-unresolved.json");
+            let reentry: Promise<void> | undefined;
+            let checked = false;
+            fs.unlinkSync = ((filename) => {
+              if (String(filename) === marker) {
+                checked = true;
+                reentry = assert.rejects(before(freshEvent));
+                assert.equal(order.filter((item) => item === "create").length, 1);
+              }
+              original(filename);
+            }) as typeof fs.unlinkSync;
+            syncBuiltinESMExports();
+            try {
+              const released = await recovery("harness_recovery_release", {
+                expectedTreeHash: status.treeHash,
+              });
+              assert.equal(released.state, "fresh-only");
+              await reentry;
+            } finally {
+              fs.unlinkSync = original;
+              syncBuiltinESMExports();
+            }
+            assert.equal(checked, true);
+            assert.equal(order.filter((item) => item === "create").length, 1);
+            return;
+          }
+          const released = await recovery("harness_recovery_release", {
+            expectedTreeHash: status.treeHash,
+          });
+          assert.equal(released.state, "fresh-only");
+          assert.equal(released.priorOrchestrationId, "fixture");
+          assert.equal(released.treeHash, status.treeHash);
+          assert.equal(
+            fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+            false,
           );
-        else await assert.rejects(before(childEvent), /interrupted|unresolved/);
-        assert.equal(fs.readFileSync(path.join(f.workspace, "src/a.txt"), "utf8"), "initial");
-        assert.equal((await status()).status, "stopped");
-        await before({
-          tool: "read",
-          sessionID: "parent",
-          id: "diagnose",
-          input: { path: "src/a.txt" },
-        });
-        assert.throws(
-          () =>
-            createDirectSessionLease({
-              traceRoot: f.trace,
-              workspaceRoot: f.workspace,
-            }).assertClear(),
-          /unresolved/,
-        );
-        return;
-      }
-      if (
-        [
-          "deny",
-          "changed",
-          "nonprimary",
-          "override",
-          "native-failure",
-          "caller-identity",
-          "permission-change",
-          "extra-child",
-          "event-loss",
-          "extra-input",
-          "background-presence",
-          "undefined-override",
-          "added-continuation",
-          "callback-missing-id",
-          "callback-duplicate-id",
-        ].includes(fault) ||
-        fault.startsWith("runtime-api-")
-      ) {
-        await assert.rejects(execute(decoded, caller));
+          if (fault.startsWith("direct recovery fresh-only")) {
+            priorChildID = childID;
+            priorPromptID = promptID;
+            const freshId = "fresh-run";
+            fs.mkdirSync(path.join(f.trace, "orchestrations", freshId), { mode: 0o700 });
+            fs.writeFileSync(
+              path.join(f.trace, "orchestrations", freshId, "normalized-spec.json"),
+              JSON.stringify({
+                ...f.spec,
+                orchestrationId:
+                  fault === "direct recovery fresh-only refuses prior spec" ? "fixture" : freshId,
+              }),
+            );
+            const freshInput = {
+              agent: "implementer",
+              description: "fresh fixture",
+              prompt: f.args({
+                ...f.packet(
+                  fault === "direct recovery fresh-only refuses prior task" ? "task" : "fresh-task",
+                ),
+                orchestrationId:
+                  fault === "direct recovery fresh-only refuses prior orchestration"
+                    ? "fixture"
+                    : freshId,
+              }).prompt,
+            };
+            const freshEvent = {
+              ...event,
+              id: fault === "direct recovery fresh-only refuses prior call" ? "call" : "fresh-call",
+              messageID: "fresh-message",
+              input: freshInput,
+            };
+            if (
+              ["orchestration", "spec", "task", "call"].some(
+                (identity) => fault === `direct recovery fresh-only refuses prior ${identity}`,
+              )
+            ) {
+              await assert.rejects(before(freshEvent));
+              assert.equal(order.filter((item) => item === "create").length, 1);
+              return;
+            }
+            await before(freshEvent);
+            const freshCaller = {
+              ...caller,
+              id: "fresh-call",
+              messageID: "fresh-message",
+              signal: new AbortController().signal,
+            };
+            if (
+              fault === "direct recovery fresh-only refuses prior child" ||
+              fault === "direct recovery fresh-only refuses prior prompt"
+            ) {
+              await assert.rejects(execute(freshInput, freshCaller));
+              assert.equal(order.filter((item) => item === "create").length, 2);
+              assert.notEqual(childID, priorChildID);
+              if (fault.endsWith("prompt")) assert.notEqual(promptID, priorPromptID);
+              assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+              return;
+            }
+            await execute(freshInput, freshCaller);
+            assert.equal(order.filter((x) => x === "create").length, 2);
+            assert.notEqual(childID, priorChildID);
+            assert.notEqual(promptID, priorPromptID);
+            if (fault === "direct recovery fresh-only refuses prior result") {
+              const replay = {
+                ...freshEvent,
+                status: "completed" as const,
+                result: {
+                  output: {
+                    sessionID: priorChildID,
+                    status: "completed",
+                    output: "OLD STOPPED RESULT",
+                  },
+                  content: [{ type: "text", text: "OLD STOPPED RESULT" }],
+                  metadata: { harness: "success", callID: "call" },
+                },
+              };
+              await after(replay);
+              assert.doesNotMatch(
+                JSON.stringify(replay.result),
+                /OLD STOPPED RESULT|"harness":"success"/,
+              );
+              assert.equal((await recovery("harness_recovery_status")).state, "blocked");
+              return;
+            }
+          }
+          await assert.rejects(before(event));
+          return;
+        }
+        const result = await execute(decoded, caller);
+        if (fault === "off" || fault === "native-fallback") {
+          assert.equal(originalCalls, 1);
+          return;
+        }
         assert.equal(originalCalls, 0);
-        if (fault.startsWith("runtime-api-")) assert.equal((await status()).status, "stopped");
-        if (
-          fault !== "native-failure" &&
-          fault !== "extra-child" &&
-          fault !== "event-loss" &&
-          fault !== "callback-missing-id" &&
-          fault !== "callback-duplicate-id"
-        )
-          assert.ok(!order.includes("create"));
-        return;
-      }
-      const result = await execute(decoded, caller);
-      if (fault === "off" || fault === "native-fallback") {
-        assert.equal(originalCalls, 1);
-        return;
-      }
-      assert.equal(originalCalls, 0);
-      assert.deepEqual(result, {
-        output: {
-          sessionID: childID,
-          status: "completed",
-          output: "Native execution ended; harness validation pending.",
-        },
-        content: "",
-        metadata: {},
-      });
-      // Simulate pinned native schema validation before after; publication is later.
-      const output = (result as { output: { sessionID: string; status: string; output: string } })
-        .output;
-      assert.match(output.sessionID, /^ses_/);
-      assert.equal(output.status, "completed");
-      assert.equal(typeof output.output, "string");
-      assert.ok(
-        fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
-      );
-      if (fault === "missing-after") {
-        dispose();
-        dispose = undefined;
+        assert.deepEqual(result, {
+          output: {
+            sessionID: childID,
+            status: "completed",
+            output: "Native execution ended; harness validation pending.",
+          },
+          content: "",
+          metadata: {},
+        });
+        // Simulate pinned native schema validation before after; publication is later.
+        const output = (result as { output: { sessionID: string; status: string; output: string } })
+          .output;
+        assert.match(output.sessionID, /^ses_/);
+        assert.equal(output.status, "completed");
+        assert.equal(typeof output.output, "string");
         assert.ok(
           fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
         );
-        for (const direct of [false, true]) {
-          if (direct) process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION = "1";
-          else delete process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION;
-          subagent.execute = async () => {
-            originalCalls++;
-            return { original: true };
-          };
-          dispose = await createV2NativePlugin({ now: () => 100 }).setup(context);
-          for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
-            await new Promise((resolve) => setImmediate(resolve));
-          assert.equal((await status()).status, "stopped");
-          assert.equal((await status()).directSessionUnresolved, true);
-          await assert.rejects(before({ ...event, id: "fresh-call" }), /activation|interrupted/);
-          await assert.rejects(
-            before({
-              tool: "write",
-              sessionID: "parent",
-              id: "write",
-              input: { path: "src/a.txt", content: "unsafe" },
-            }),
-            /interrupted/,
-          );
+        if (fault === "missing-after") {
           dispose();
           dispose = undefined;
+          assert.ok(
+            fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+          );
+          for (const direct of [false, true]) {
+            if (direct) process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION = "1";
+            else delete process.env.OPENCODE_HARNESS_V2_DIRECT_IMPLEMENTATION;
+            subagent.execute = async () => {
+              originalCalls++;
+              return { original: true };
+            };
+            dispose = await createV2NativePlugin({ now: () => 100 }).setup(context);
+            for (let i = 0; i < 100 && (await status()).status === "activating"; i++)
+              await new Promise((resolve) => setImmediate(resolve));
+            assert.equal((await status()).status, "stopped");
+            assert.equal((await status()).directSessionUnresolved, true);
+            await assert.rejects(before({ ...event, id: "fresh-call" }), /activation|interrupted/);
+            await assert.rejects(
+              before({
+                tool: "write",
+                sessionID: "parent",
+                id: "write",
+                input: { path: "src/a.txt", content: "unsafe" },
+              }),
+              /interrupted/,
+            );
+            dispose();
+            dispose = undefined;
+          }
+          return;
         }
-        return;
-      }
-      // The pinned native runtime normalizes explicit empty string content before hooks.
-      event.result = {
-        ...(result as Record<string, unknown>),
-        content: [{ type: "text", text: "" }],
-      };
-      if (helperAfter && fault !== "helper-trace-deferred")
-        await after({
-          ...helperAfter,
-          ...(fault === "helper-foreign-after" ? { id: "foreign-call" } : {}),
-        });
-      if (fault === "deferred-settled")
-        await after({
-          tool: "read",
-          sessionID: childID,
-          messageID: "child-message",
-          agent: "implementer",
-          id: "child-read",
-          input: { path: "src/a.txt" },
-          status: "completed",
-          result: { output: "read", content: "read", metadata: {} },
-        });
-      if (fault === "raw-result")
+        // The pinned native runtime normalizes explicit empty string content before hooks.
         event.result = {
-          output: { sessionID: childID, status: "completed", output: "untrusted child result" },
-          content: "untrusted child result",
-          metadata: { success: true },
+          ...(result as Record<string, unknown>),
+          content: [{ type: "text", text: "" }],
         };
-      if (fault === "cancel-after") cancellation.abort();
-      if (fault === "expired-after") nativeNow = 400000;
-      if (fault === "after-identity") event.messageID = "wrong";
-      await after(event);
-      assert.doesNotMatch(
-        JSON.stringify(event.result),
-        /validation pending|Fixture checked|verified fixture/,
-      );
-      const expected = [
-        "none",
-        "duplicate-after",
-        "deferred-settled",
-        "permuted-input",
-        "helper-source-edit",
-        "helper-source-replace",
-        "helper-trace",
-      ].includes(fault)
-        ? "success"
-        : "rejected";
-      assert.equal((event.result as { metadata: { harness: string } }).metadata.harness, expected);
-      const safe = [
-        "none",
-        "digest",
-        "duplicate-after",
-        "deferred-settled",
-        "permuted-input",
-        "helper-source-edit",
-        "helper-source-replace",
-        "helper-trace",
-      ].includes(fault);
-      assert.equal(
-        fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
-        !safe,
-      );
-      if (fault === "duplicate-after") {
+        if (helperAfter && fault !== "helper-trace-deferred")
+          await after({
+            ...helperAfter,
+            ...(fault === "helper-foreign-after" ? { id: "foreign-call" } : {}),
+          });
+        if (fault === "deferred-settled")
+          await after({
+            tool: "read",
+            sessionID: childID,
+            messageID: "child-message",
+            agent: "implementer",
+            id: "child-read",
+            input: { path: "src/a.txt" },
+            status: "completed",
+            result: { output: "read", content: "read", metadata: {} },
+          });
+        if (fault === "raw-result")
+          event.result = {
+            output: { sessionID: childID, status: "completed", output: "untrusted child result" },
+            content: "untrusted child result",
+            metadata: { success: true },
+          };
+        if (fault === "cancel-after") cancellation.abort();
+        if (fault === "expired-after") nativeNow = 400000;
+        if (fault === "after-identity") event.messageID = "wrong";
         await after(event);
-        assert.equal((await status()).status, "stopped");
-        assert.doesNotMatch(JSON.stringify(event.result), /validation pending/);
+        assert.doesNotMatch(
+          JSON.stringify(event.result),
+          /validation pending|Fixture checked|verified fixture/,
+        );
+        const expected = [
+          "none",
+          "duplicate-after",
+          "deferred-settled",
+          "permuted-input",
+          "helper-source-edit",
+          "helper-source-replace",
+          "helper-trace",
+        ].includes(fault)
+          ? "success"
+          : "rejected";
+        assert.equal(
+          (event.result as { metadata: { harness: string } }).metadata.harness,
+          expected,
+        );
+        const safe = [
+          "none",
+          "digest",
+          "duplicate-after",
+          "deferred-settled",
+          "permuted-input",
+          "helper-source-edit",
+          "helper-source-replace",
+          "helper-trace",
+        ].includes(fault);
+        assert.equal(
+          fs.existsSync(path.join(f.trace, "orchestrations/.direct-session-unresolved.json")),
+          !safe,
+        );
+        if (fault === "duplicate-after") {
+          await after(event);
+          assert.equal((await status()).status, "stopped");
+          assert.doesNotMatch(JSON.stringify(event.result), /validation pending/);
+        }
+      } finally {
+        dispose?.();
+        for (const [key, value] of Object.entries(saved)) {
+          if (value === undefined) delete process.env[key];
+          else process.env[key] = value;
+        }
       }
-    } finally {
-      dispose?.();
-      for (const [key, value] of Object.entries(saved)) {
-        if (value === undefined) delete process.env[key];
-        else process.env[key] = value;
-      }
-    }
-  });
+    },
+  );
 }
 
 for (const version of ["1.0.0", "2.0.0"])

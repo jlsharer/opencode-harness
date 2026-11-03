@@ -269,7 +269,7 @@ test("direct implementation launcher rejects ambient, duplicate, unsupported and
 });
 
 for (const profile of ["external", "portable"] as const) {
-  test(`direct implementation ${profile} launcher proves exact opt-in marker before attach`, () => {
+  test(`direct implementation ${profile} launcher proves exact opt-in marker before attach`, async () => {
     const workspace = repo(`direct-${profile}`);
     if (profile === "portable") {
       const installed = spawnSync(
@@ -316,7 +316,35 @@ for (const profile of ["external", "portable"] as const) {
     const trace = selected.env.OPENCODE_HARNESS_TRACE_ROOT as string;
     const marker = path.join(trace, "orchestrations/.direct-session-unresolved.json");
     fs.mkdirSync(path.dirname(marker), { recursive: true, mode: 0o700 });
-    fs.writeFileSync(marker, "{}", { mode: 0o600 });
+    fs.writeFileSync(
+      marker,
+      JSON.stringify({
+        version: 1,
+        traceRoot: trace,
+        workspaceRoot: workspace,
+        orchestrationId: "old",
+        delegationTaskId: "old-task",
+        parentSessionID: "old-parent",
+        childID: "old-child",
+        promptID: "old-prompt",
+        deadline: 1,
+      }),
+      { mode: 0o600 },
+    );
+    const leaseModule = await import(
+      pathToFileURL(
+        path.join(
+          selected.env.OPENCODE_HARNESS_RUNTIME_ROOT,
+          "plugin-modules/direct-session-lease.js",
+        ),
+      ).href
+    );
+    const reloaded = leaseModule.createDirectSessionLease({
+      traceRoot: trace,
+      workspaceRoot: workspace,
+    });
+    assert.throws(() => reloaded.release({}), /cleanup|unowned/);
+    assert.throws(() => reloaded.assertClear(), /unresolved/);
     for (const option of [[], ["--v2-direct-implementation"]]) {
       const retained = run([...base, ...option], { OPENCODE_BIN: native.executable });
       assert.notEqual(retained.status, 0);
