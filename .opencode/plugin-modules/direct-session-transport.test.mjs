@@ -8,8 +8,9 @@ function deferred() {
     });
     return { promise, resolve };
 }
-function setup() {
+function setup(uncertainHook) {
     let time = 0;
+    let observation = 0;
     const abort = new AbortController();
     const caller = {
         sessionID: "parent",
@@ -35,6 +36,7 @@ function setup() {
     const timers = [];
     const scheduled = [];
     const uncertain = [];
+    let childAcknowledgment;
     let messages = [
         { id: admission.promptID, type: "user", text: admission.prompt, time: { created: 1 } },
         {
@@ -105,21 +107,27 @@ function setup() {
     const transport = createDirectSessionTransport({
         api,
         now: () => time,
+        observationNow: () => observation,
         schedule: (_ms, cb) => {
             scheduled.push(_ms);
             timers.push(cb);
             return () => { };
         },
-        onUncertain: (e) => {
+        onUncertain: (e, detail) => {
             uncertain.push(e);
+            uncertainHook?.(e, detail);
         },
         onChild: (child) => {
             assert.equal(child.id, admission.childID);
             assert.equal(child.parentID, caller.sessionID);
             events.push("child");
+            return childAcknowledgment;
         },
     });
     return {
+        holdChild: (promise) => {
+            childAcknowledgment = promise;
+        },
         caller,
         admission,
         api,
@@ -129,6 +137,9 @@ function setup() {
         abort,
         timers,
         scheduled,
+        observe: (n) => {
+            observation += n;
+        },
         elapse: (n) => {
             time += n;
         },
@@ -361,4 +372,483 @@ test("cancellation reconciliation observes at most 2000ms and never renews the a
     await rejected;
     assert.equal(f.admission.deadline, 1000);
     assert.equal(f.uncertain.length, 1);
+});
+const tick = () => new Promise((resolve) => setImmediate(resolve));
+test("direct recovery repeated stop never repeats initial interrupt", async () => {
+    const f = setup();
+    const waiting = deferred();
+    f.api.wait = () => waiting.promise;
+    const running = f.transport.execute(f.admission, f.caller);
+    const rejected = assert.rejects(running);
+    await tick();
+    f.abort.abort();
+    f.transport.stop("independent fault");
+    await tick();
+    assert.equal(f.events.filter((e) => e === "interrupt").length, 1);
+    waiting.resolve();
+    await rejected;
+});
+async function stoppedPrompt() {
+    const f = setup();
+    const prompt = deferred();
+    const original = f.api.prompt;
+    f.api.prompt = () => prompt.promise;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running, (e) => e === f.transport.stoppedError(handle));
+    await tick();
+    f.abort.abort();
+    await tick();
+    return { ...f, handle, rejected, prompt, original };
+}
+test("direct recovery pending prompt blocks idle proof", async () => {
+    const f = await stoppedPrompt();
+    assert.equal(f.transport.inspectSettlement(f.handle).pending.prompt, 1);
+    await assert.rejects(f.transport.reconcileStopped(f.handle));
+    f.timers.at(-1)();
+    await f.rejected;
+    f.prompt.resolve(await f.original({
+        sessionID: f.admission.childID,
+        id: f.admission.promptID,
+        text: f.admission.prompt,
+        delivery: "queue",
+    }));
+    await tick();
+});
+test("direct recovery late wake precedes fresh termination", async () => {
+    const f = await stoppedPrompt();
+    f.prompt.resolve(await f.original({
+        sessionID: f.admission.childID,
+        id: f.admission.promptID,
+        text: f.admission.prompt,
+        delivery: "queue",
+    }));
+    await f.rejected;
+    await tick();
+    const cause = f.transport.stopCause(f.handle);
+    assert.ok(f.transport.isStopCause(f.handle, cause));
+    assert.equal(f.transport.isStopCause(f.handle, { ...cause }), false);
+    f.transport.stop(f.handle, cause);
+    const receipt = await f.transport.reconcileStopped(f.handle);
+    assert.deepEqual(f.events.slice(-4), ["interrupt", "wait-finalizers", "get", "context"]);
+    f.transport.assertTermination(receipt, f.handle);
+    assert.throws(() => f.transport.assertTermination({ ...receipt }, f.handle));
+    const next = await f.transport.reconcileStopped(f.handle);
+    assert.throws(() => f.transport.assertTermination(receipt, f.handle));
+    f.transport.assertSameTermination(receipt, next, f.handle);
+    f.transport.consumeTermination(next, f.handle);
+    assert.throws(() => f.transport.consumeTermination(next, f.handle));
+});
+test("direct recovery deadline is never renewed", async () => {
+    const f = await stoppedPrompt();
+    assert.equal(f.admission.deadline, 1000);
+    assert.equal(f.scheduled.includes(2000), true);
+    f.timers.at(-1)();
+    await f.rejected;
+});
+test("direct recovery synchronous reentry sees invoking operation and thrown rejection", async () => {
+    const f = setup();
+    const handle = f.transport.prepare(f.admission, f.caller);
+    f.api.create = () => {
+        assert.equal(f.transport.inspectSettlement(handle).pending.create, 1);
+        throw new Error("native failure");
+    };
+    await assert.rejects(f.transport.execute(handle));
+    assert.equal(f.transport.inspectSettlement(handle).pending.create, 0);
+    assert.ok(f.transport.inspectSettlement(handle).disqualifiers.length);
+    await assert.rejects(f.transport.reconcileStopped(handle));
+});
+test("direct recovery observation timeout retains operation until actual settlement", async () => {
+    const f = await stoppedPrompt();
+    f.prompt.resolve(await f.original({
+        sessionID: f.admission.childID,
+        id: f.admission.promptID,
+        text: f.admission.prompt,
+        delivery: "queue",
+    }));
+    await f.rejected;
+    await tick();
+    const pending = deferred();
+    f.api.wait = () => pending.promise;
+    const observing = f.transport.reconcileStopped(f.handle);
+    const rejected = assert.rejects(observing);
+    await tick();
+    f.observe(2000);
+    f.timers.at(-1)();
+    await rejected;
+    assert.equal(f.transport.inspectSettlement(f.handle).pending.wait, 1);
+    await assert.rejects(f.transport.reconcileStopped(f.handle));
+    pending.resolve();
+    await tick();
+    assert.equal(f.events.includes("get"), false);
+    f.api.wait = async () => { };
+    const receipt = await f.transport.reconcileStopped(f.handle);
+    f.transport.assertTermination(receipt, f.handle);
+});
+async function drainPrompt(f) {
+    f.prompt.resolve(await f.original({
+        sessionID: f.admission.childID,
+        id: f.admission.promptID,
+        text: f.admission.prompt,
+        delivery: "queue",
+    }));
+    await f.rejected;
+    await tick();
+}
+for (const stage of ["create", "wait", "get", "context", "child-acknowledgment"])
+    test("direct recovery pending original " + stage + " blocks despite idle", async () => {
+        const f = setup();
+        const done = deferred();
+        const original = stage === "child-acknowledgment" ? undefined : f.api[stage];
+        if (stage === "child-acknowledgment")
+            f.holdChild(done.promise);
+        else
+            f.api[stage] = () => done.promise;
+        const handle = f.transport.prepare(f.admission, f.caller);
+        const running = f.transport.execute(handle);
+        const rejected = assert.rejects(running);
+        await tick();
+        f.abort.abort();
+        await tick();
+        f.timers.at(-1)();
+        await rejected;
+        assert.equal(f.transport.inspectSettlement(handle).pending[stage], 1);
+        await assert.rejects(f.transport.reconcileStopped(handle));
+        done.resolve(stage === "create"
+            ? { id: f.admission.childID, parentID: "parent", agent: "implementer", time: {} }
+            : original
+                ? await original({
+                    sessionID: f.admission.childID,
+                })
+                : undefined);
+        await tick();
+        assert.equal(f.transport.inspectSettlement(handle).pending[stage], 0);
+    });
+test("direct recovery late create validates identity and retains its late interrupt", async () => {
+    const f = setup();
+    const child = deferred();
+    const interrupts = [deferred(), deferred()];
+    let count = 0;
+    f.api.create = () => child.promise;
+    f.api.interrupt = () => interrupts[count++].promise;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running);
+    f.abort.abort();
+    await tick();
+    f.timers.at(-1)();
+    await rejected;
+    child.resolve({ id: f.admission.childID, parentID: "parent", agent: "implementer", time: {} });
+    await tick();
+    assert.equal(count, 2);
+    assert.equal(f.transport.inspectSettlement(handle).pending.create, 1);
+    assert.equal(f.transport.inspectSettlement(handle).pending.interrupt, 2);
+    f.transport.stop(handle, f.transport.stopCause(handle));
+    assert.equal(count, 2);
+    interrupts[0].resolve({ interrupted: false });
+    interrupts[1].resolve({ interrupted: true });
+    await tick();
+    assert.equal(f.transport.inspectSettlement(handle).pending.create, 0);
+    assert.equal(f.transport.inspectSettlement(handle).pending.interrupt, 0);
+    assert.equal(f.events.includes("prompt"), false);
+    await assert.rejects(f.transport.reconcileStopped(handle));
+});
+test("direct recovery late malformed create and prompt remain ineligible", async () => {
+    for (const stage of ["create", "prompt"]) {
+        const f = setup();
+        const done = deferred();
+        f.api[stage] = () => done.promise;
+        const handle = f.transport.prepare(f.admission, f.caller);
+        const running = f.transport.execute(handle);
+        const rejected = assert.rejects(running);
+        await tick();
+        f.abort.abort();
+        await tick();
+        f.timers.at(-1)();
+        await rejected;
+        done.resolve({ id: "wrong", parentID: "parent", agent: "implementer", time: {} });
+        await tick();
+        assert.ok(f.transport.inspectSettlement(handle).disqualifiers.length);
+        await assert.rejects(f.transport.reconcileStopped(handle));
+    }
+});
+for (const outcome of ["succeeded", "failed", "interrupted"])
+    test("direct recovery terminal " + outcome + " is termination only", async () => {
+        const f = await stoppedPrompt();
+        await drainPrompt(f);
+        const get = f.api.get;
+        f.api.get = async (input) => ({ ...(await get(input)), outcome });
+        f.mutate((messages) => [messages[0], { ...messages.at(-1), outcome }]);
+        // Even succeeded is not success acceptance: recovery never parses/consumes a result.
+        f.api.interrupt = async () => ({ interrupted: false });
+        const receipt = await f.transport.reconcileStopped(f.handle);
+        f.transport.assertTermination(receipt, f.handle);
+        assert.equal(f.transport.inspectSettlement(f.handle).phase, "termination-proved");
+        await assert.rejects(f.transport.execute(f.admission, f.caller));
+    });
+for (const [label, mutate] of [
+    ["absent prompt", (m) => m.slice(1)],
+    [
+        "foreign user",
+        (m) => [m[0], { id: "foreign", type: "user", text: "other" }, ...m.slice(1)],
+    ],
+    ["duplicate id", (m) => [m[0], { ...m[1], id: m[0].id }, m[2]]],
+    ["empty id", (m) => [m[0], { ...m[1], id: "" }, m[2]]],
+    ["foreign assistant", (m) => [m[0], { ...m[1], agent: "validator" }, m[2]]],
+    [
+        "incomplete assistant",
+        (m) => [m[0], { ...m[1], time: { created: 1 } }, m[2]],
+    ],
+    [
+        "intervening switch",
+        (m) => [m[0], { id: "switch", type: "agent-switched" }, ...m.slice(1)],
+    ],
+    [
+        "idle outcome mismatch",
+        (m) => [...m.slice(0, -1), { ...m.at(-1), outcome: "failed" }],
+    ],
+    [
+        "oversized bytes",
+        (m) => [m[0], { ...m[1], text: "x".repeat(1048576) }, m[2]],
+    ],
+    [
+        "oversized count",
+        (m) => [
+            ...m,
+            ...Array.from({ length: 256 }, (_, i) => ({ id: "more" + i, type: "idle" })),
+        ],
+    ],
+])
+    test("direct recovery refuses " + label, async () => {
+        const f = await stoppedPrompt();
+        await drainPrompt(f);
+        f.mutate(mutate);
+        await assert.rejects(f.transport.reconcileStopped(f.handle));
+        assert.ok(f.transport.inspectSettlement(f.handle).disqualifiers.length);
+    });
+for (const field of ["id", "parentID", "agent"])
+    test("direct recovery refuses wrong final " + field, async () => {
+        const f = await stoppedPrompt();
+        await drainPrompt(f);
+        const get = f.api.get;
+        f.api.get = async (input) => ({ ...(await get(input)), [field]: "wrong" });
+        await assert.rejects(f.transport.reconcileStopped(f.handle));
+    });
+test("direct recovery private handle and stop bindings cannot be copied", async () => {
+    const f = await stoppedPrompt();
+    f.transport.assertBinding(f.handle, f.admission, f.caller);
+    assert.throws(() => f.transport.assertBinding({ ...f.handle }, f.admission, f.caller));
+    assert.throws(() => f.transport.assertBinding(f.handle, { ...f.admission }, f.caller));
+    assert.throws(() => f.transport.assertBinding(f.handle, f.admission, {
+        ...f.caller,
+        signal: new AbortController().signal,
+    }));
+    assert.equal(f.transport.isStopCause(f.handle, new Error("caller-cancelled")), false);
+    await drainPrompt(f);
+    assert.throws(() => f.transport.stop(f.handle, { ...f.transport.stopCause(f.handle) }));
+    await assert.rejects(f.transport.reconcileStopped(f.handle));
+});
+test("direct recovery exact deadline token and signal cancellation remain distinct", async () => {
+    const f = setup();
+    const pending = deferred();
+    f.api.wait = () => pending.promise;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running);
+    await tick();
+    f.elapse(1000);
+    f.timers[0]();
+    pending.resolve();
+    await rejected;
+    assert.equal(f.transport.stopCause(handle).code, "deadline-expired");
+    const receipt = await f.transport.reconcileStopped(handle);
+    f.transport.assertTermination(receipt, handle);
+    assert.equal(f.admission.deadline, 1000);
+});
+test("direct recovery concurrent observation and reentrant authority changes cannot authorize", async () => {
+    const f = await stoppedPrompt();
+    await drainPrompt(f);
+    const waiting = deferred();
+    f.api.wait = () => waiting.promise;
+    const first = f.transport.reconcileStopped(f.handle);
+    await tick();
+    await assert.rejects(f.transport.reconcileStopped(f.handle));
+    waiting.resolve();
+    const receipt = await first;
+    f.transport.assertTermination(receipt, f.handle);
+    await assert.rejects(f.transport.reconcileStopped(f.handle, () => {
+        f.transport.stop("authority changed");
+    }));
+    assert.throws(() => f.transport.assertTermination(receipt, f.handle));
+});
+test("direct recovery late observation acknowledgment is validated after timeout", async () => {
+    const f = await stoppedPrompt();
+    await drainPrompt(f);
+    const pending = deferred();
+    f.api.interrupt = () => pending.promise;
+    const observing = f.transport.reconcileStopped(f.handle);
+    const rejected = assert.rejects(observing);
+    await tick();
+    f.observe(2000);
+    f.timers.at(-1)();
+    await rejected;
+    pending.resolve({ interrupted: "invalid" });
+    await tick();
+    assert.ok(f.transport.inspectSettlement(f.handle).disqualifiers.length);
+});
+for (const stage of ["get", "context"])
+    test("direct recovery late observation malformed " + stage + " is sticky", async () => {
+        const f = await stoppedPrompt();
+        await drainPrompt(f);
+        const pending = deferred();
+        f.api[stage] = () => pending.promise;
+        const observing = f.transport.reconcileStopped(f.handle);
+        const rejected = assert.rejects(observing);
+        await tick();
+        f.observe(2000);
+        f.timers.at(-1)();
+        await rejected;
+        pending.resolve(stage === "get"
+            ? {
+                id: "wrong",
+                agent: "implementer",
+                parentID: "parent",
+                time: { idle: 1 },
+                outcome: "succeeded",
+            }
+            : []);
+        await tick();
+        assert.ok(f.transport.inspectSettlement(f.handle).disqualifiers.length);
+    });
+test("direct recovery manager deadline observation uses the immutable admitted clock", async () => {
+    const f = setup();
+    const pending = deferred();
+    f.api.wait = () => pending.promise;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running);
+    await tick();
+    assert.equal(f.transport.stopCause(handle), undefined);
+    f.elapse(1000);
+    assert.equal(f.transport.stopCause(handle), undefined);
+    const cause = f.transport.observeStopCause(handle);
+    assert.equal(cause?.code, "deadline-expired");
+    f.transport.stop(handle, cause);
+    pending.resolve();
+    await rejected;
+    const receipt = await f.transport.reconcileStopped(handle);
+    assert.throws(() => f.transport.assertSameTermination(receipt, receipt, handle));
+    f.transport.assertTermination(receipt, handle);
+});
+test("direct recovery independent fault at observation deadline stays disqualifying", async () => {
+    const f = await stoppedPrompt();
+    await drainPrompt(f);
+    await assert.rejects(f.transport.reconcileStopped(f.handle, () => {
+        f.observe(2000);
+        throw new Error("authority fault");
+    }));
+    assert.ok(f.transport.inspectSettlement(f.handle).disqualifiers.length);
+});
+test("direct recovery final authority callback cannot extend observation budget", async () => {
+    const f = await stoppedPrompt();
+    await drainPrompt(f);
+    let calls = 0;
+    await assert.rejects(f.transport.reconcileStopped(f.handle, () => {
+        if (++calls === 14)
+            f.observe(2000);
+    }));
+    assert.equal(calls, 14);
+});
+test("direct recovery stop publication precedes callback reentry and reporting failure sticks", async () => {
+    let f;
+    let reentrant;
+    f = setup((_reason, detail) => {
+        assert.ok(detail);
+        assert.equal(f.transport.inspectSettlement(detail.handle).phase, "stopped");
+        assert.equal(f.transport.inspectSettlement(detail.handle).executionSettled, false);
+        reentrant = assert.rejects(f.transport.reconcileStopped(detail.handle));
+        throw new Error("reporting failure");
+    });
+    const pending = deferred();
+    f.api.wait = () => pending.promise;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running);
+    await tick();
+    f.abort.abort();
+    pending.resolve();
+    await rejected;
+    await reentrant;
+    assert.ok(f.transport.inspectSettlement(handle).disqualifiers.includes("stop-reporting-failed"));
+    await assert.rejects(f.transport.reconcileStopped(handle));
+});
+test("direct recovery native promise reactions cannot substitute for exposed execution settlement", async () => {
+    const f = setup();
+    const done = deferred();
+    const context = f.api.context;
+    let reentrant;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    void done.promise.then(() => {
+        f.abort.abort();
+        assert.equal(f.transport.inspectSettlement(handle).executionSettled, false);
+        reentrant = assert.rejects(f.transport.reconcileStopped(handle));
+    });
+    f.api.context = () => done.promise;
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running, (e) => e === f.transport.stoppedError(handle));
+    await tick();
+    done.resolve([...(await context({ sessionID: f.admission.childID }))]);
+    await rejected;
+    await reentrant;
+    assert.equal(f.transport.inspectSettlement(handle).executionSettled, true);
+    const receipt = await f.transport.reconcileStopped(handle);
+    f.transport.assertTermination(receipt, handle);
+});
+test("direct recovery staged candidates cannot be consumed after an exact typed stop", async () => {
+    const f = setup();
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const candidate = await f.transport.execute(handle);
+    f.abort.abort();
+    assert.equal(f.transport.stopCause(handle).code, "caller-cancelled");
+    assert.throws(() => f.transport.consumeCandidate(candidate, f.admission, f.caller));
+    assert.ok(f.transport.inspectSettlement(handle).disqualifiers.length);
+});
+test("direct recovery later native rejection is sticky after allowed stop", async () => {
+    const f = await stoppedPrompt();
+    await drainPrompt(f);
+    f.api.wait = () => Promise.reject(new Error("native later fault"));
+    await assert.rejects(f.transport.reconcileStopped(f.handle));
+    assert.ok(f.transport.inspectSettlement(f.handle).disqualifiers.includes("native-operation-rejected"));
+    f.api.wait = async () => { };
+    await assert.rejects(f.transport.reconcileStopped(f.handle));
+});
+test("direct recovery explicit stop observer reentry is idempotent and never upgrades faults", async () => {
+    let f;
+    let count = 0;
+    f = setup((_reason, detail) => {
+        assert.ok(detail?.cause);
+        count++;
+        f.transport.assertBinding(detail.handle, f.admission, f.caller);
+        assert.equal(f.transport.observeStopCause(detail.handle), detail.cause);
+        f.transport.stop(detail.handle, detail.cause);
+    });
+    const done = deferred();
+    f.api.wait = () => done.promise;
+    const handle = f.transport.prepare(f.admission, f.caller);
+    const running = f.transport.execute(handle);
+    const rejected = assert.rejects(running);
+    await tick();
+    f.elapse(1000);
+    const cause = f.transport.observeStopCause(handle);
+    assert.equal(cause?.code, "deadline-expired");
+    assert.equal(count, 1);
+    assert.equal(f.events.filter((e) => e === "interrupt").length, 1);
+    done.resolve();
+    await rejected;
+    const g = setup();
+    const other = g.transport.prepare(g.admission, g.caller);
+    g.transport.stop("unclassified");
+    g.elapse(1000);
+    g.abort.abort();
+    assert.equal(g.transport.observeStopCause(other), undefined);
 });

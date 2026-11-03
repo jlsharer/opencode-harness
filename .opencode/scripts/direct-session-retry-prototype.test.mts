@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +11,7 @@ import {
   auditNativeSource,
   auditNativeToolContract,
 } from "./direct-session-retry-prototype.mts";
+import * as prototype from "./direct-session-retry-prototype.mts";
 import type {
   DirectSessionApi,
   NativeMessage,
@@ -431,9 +432,32 @@ test(
   "optional pinned source audit; fixtures alone are not native-source evidence",
   { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
   () => {
-    assert.equal(
-      auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!).commit,
-      "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
+    const result = auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!);
+    assert.equal(result.commit, "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824");
+    assert.equal(result.source, "committed Git blobs at exact pin");
+    const paths = [
+      "packages/plugin/src/promise/adapter.ts",
+      "packages/plugin/src/promise/plugin.ts",
+    ];
+    const dirty = execFileSync(
+      "git",
+      [
+        "-C",
+        process.env.DIRECT_SESSION_NATIVE_SOURCE!,
+        "diff",
+        "--name-only",
+        result.commit,
+        "--",
+        ...paths,
+      ],
+      { encoding: "utf8", maxBuffer: 4194304 },
+    )
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+    assert.deepEqual(
+      result.workingTreeDifferences.filter((file) => paths.includes(file)).sort(),
+      dirty.sort(),
     );
   },
 );
@@ -715,5 +739,205 @@ test(
         error,
       );
     }
+  },
+);
+
+const recoveryPaths = {
+  adapter: "packages/plugin/src/promise/adapter.ts",
+  tool: "packages/plugin/src/promise/tool.ts",
+  coreTool: "packages/core/src/tool.ts",
+  sessionDomain: "packages/plugin/src/promise/session.ts",
+  pluginContext: "packages/plugin/src/promise/plugin.ts",
+  session: "packages/core/src/session/session.ts",
+  execution: "packages/core/src/session/execution.ts",
+  coordinator: "packages/core/src/session/run-coordinator.ts",
+  restart: "packages/core/src/session/execution/restart.ts",
+};
+
+function recoverySource() {
+  return Object.fromEntries(
+    Object.entries(recoveryPaths).map(([key, file]) => [
+      key,
+      execFileSync(
+        "git",
+        [
+          "-C",
+          process.env.DIRECT_SESSION_NATIVE_SOURCE!,
+          "show",
+          `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824:${file}`,
+        ],
+        { encoding: "utf8", maxBuffer: 4194304 },
+      ),
+    ]),
+  ) as unknown as prototype.NativeRecoverySource;
+}
+
+test("direct recovery source audit rejects missing and oversized pure fields", () => {
+  assert.throws(
+    () => prototype.auditNativeRecoveryContract({} as prototype.NativeRecoverySource),
+    /recovery source/,
+  );
+  for (const key of Object.keys(recoveryPaths)) {
+    const source = Object.fromEntries(
+      Object.keys(recoveryPaths).map((name) => [name, "valid bounded text"]),
+    );
+    delete source[key];
+    assert.throws(
+      () =>
+        prototype.auditNativeRecoveryContract(source as unknown as prototype.NativeRecoverySource),
+      /recovery source/,
+    );
+    source[key] = "x".repeat(4194305);
+    assert.throws(
+      () =>
+        prototype.auditNativeRecoveryContract(source as unknown as prototype.NativeRecoverySource),
+      /recovery source/,
+    );
+  }
+});
+
+test(
+  "direct recovery source audit rejects structural branch and ordering mutations",
+  { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+  () => {
+    const source = recoverySource();
+    prototype.auditNativeRecoveryContract(source);
+    prototype.auditNativeRecoveryContract(
+      Object.fromEntries(
+        Object.entries(source).map(([key, text]) => [key, "// harmless formatting\n" + text]),
+      ) as unknown as prototype.NativeRecoverySource,
+    );
+    for (const [key, before, after] of [
+      ["adapter", "error instanceof Tool.Error", "false"],
+      ["adapter", "String(error), error", "String(error), error: new Error(String(error))"],
+      ["adapter", "catch: toolError", "catch: (error) => error"],
+      ["tool", 'readonly status: "error"', 'readonly status: "completed"'],
+      ["coreTool", 'Effect.catchTag("Tool.Error",', "Effect.catchCause("],
+      ["coreTool", "error: execution.failure", "error: new Error(String(execution.failure))"],
+      [
+        "coreTool",
+        'yield* hooks.trigger("tool", "execute.after", afterEvent)\n        return yield* afterEvent.error',
+        'return yield* afterEvent.error\n        yield* hooks.trigger("tool", "execute.after", afterEvent)',
+      ],
+      ["session", "yield* execution.awaitIdle(sessionID)", "yield* Effect.void"],
+      ["session", "yield* execution.wake(sessionID)", "yield* execution.awaitIdle(sessionID)"],
+      ["execution", "awaitIdle: coordinator.awaitIdle", "awaitIdle: () => Effect.void"],
+      [
+        "execution",
+        'outcome.reason === "shutdown" ? undefined : releaseOnCommit(sessionID)',
+        "releaseOnCommit(sessionID)",
+      ],
+      ["coordinator", "Effect.andThen(awaitIdle(key))", "Effect.asVoid"],
+      ["coordinator", "options.settled?.(key, exit, execution.interruptionReason)", "Effect.void"],
+      [
+        "coordinator",
+        "if (execution.pendingWake) start(key, false, execution.pendingWake)",
+        "if (false) start(key, false, execution.pendingWake)",
+      ],
+      ["restart", "store.listSuspended()", "Effect.succeed([])"],
+      ["restart", ".resume(sessionID)", ".awaitIdle(sessionID)"],
+      [
+        "pluginContext",
+        "readonly session: SessionDomain",
+        "readonly session: SessionDomain & { epoch: number }",
+      ],
+      ["sessionDomain", '  | "wait"', '  | "inbox"'],
+    ] as const) {
+      const changed = source[key].replace(before, after);
+      assert.notEqual(changed, source[key], key + " mutation must apply: " + before);
+      assert.throws(
+        () =>
+          prototype.auditNativeRecoveryContract({
+            ...source,
+            [key]: changed + "\n/* " + before + " */",
+          }),
+        /recovery source/,
+        key + " semantic mutation",
+      );
+    }
+  },
+);
+
+test("direct recovery committed reader rejects wrong pin", () => {
+  assert.throws(() => auditNativeSource(process.cwd()), /pin mismatch/);
+});
+
+test(
+  "direct recovery committed reader bounds blob output and missing blobs",
+  { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+  () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "direct-audit-reader-"));
+    const original = process.env.PATH;
+    const git = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    try {
+      for (const mode of ["overflow", "missing"]) {
+        const script = path.join(root, "git");
+        writeFileSync(
+          script,
+          [
+            "#!/usr/bin/env node",
+            "const {spawnSync}=require('node:child_process');",
+            "const args=process.argv.slice(2);if(args.includes('show')) {",
+            mode === "overflow"
+              ? "process.stdout.write('x'.repeat(4194305));"
+              : "process.exitCode=1;",
+            `} else {const r=spawnSync(${JSON.stringify(git)},args,{stdio:'inherit'});process.exitCode=r.status??1;}`,
+            "",
+          ].join("\n"),
+        );
+        chmodSync(script, 0o700);
+        process.env.PATH = root + path.delimiter + original;
+        assert.throws(
+          () => auditNativeSource(process.env.DIRECT_SESSION_NATIVE_SOURCE!),
+          /unavailable|bounded/,
+        );
+      }
+    } finally {
+      process.env.PATH = original;
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
+
+test(
+  "direct recovery source rejects wake/settlement reordering and unrelated token camouflage",
+  { skip: !process.env.DIRECT_SESSION_NATIVE_SOURCE },
+  () => {
+    const source = recoverySource();
+    const wake =
+      "if (input.resume !== false) yield* execution.wake(sessionID)\n        return admitted";
+    const reordered = source.session.replace(
+      wake,
+      "return admitted\n        if (input.resume !== false) yield* execution.wake(sessionID)",
+    );
+    assert.notEqual(reordered, source.session);
+    assert.throws(
+      () => prototype.auditNativeRecoveryContract({ ...source, session: reordered }),
+      /recovery source/,
+    );
+    const successor =
+      "if (execution.pendingWake) start(key, false, execution.pendingWake)\n      else executions.delete(key)\n      Deferred.doneUnsafe(execution.done, exit)";
+    const earlyDone = source.coordinator.replace(
+      successor,
+      "Deferred.doneUnsafe(execution.done, exit)\n      if (execution.pendingWake) start(key, false, execution.pendingWake)\n      else executions.delete(key)",
+    );
+    assert.notEqual(earlyDone, source.coordinator);
+    assert.throws(
+      () => prototype.auditNativeRecoveryContract({ ...source, coordinator: earlyDone }),
+      /recovery source/,
+    );
+    const camouflage =
+      source.adapter.replace("error instanceof Tool.Error", "false") +
+      `
+      function unrelated(error: unknown) {
+        return error instanceof Tool.Error ? error : new Tool.Error({
+          message: error instanceof Error ? error.message : String(error), error
+        });
+      }
+    `;
+    assert.throws(
+      () => prototype.auditNativeRecoveryContract({ ...source, adapter: camouflage }),
+      /recovery source/,
+    );
   },
 );

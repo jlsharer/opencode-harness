@@ -3,7 +3,7 @@
  * Observed extra prompts are denied; the public API supplies no exclusive child lock against UI/plugins.
  */
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 import * as ts from "typescript";
@@ -528,22 +528,59 @@ export function auditNativeSource(
     commit = execFileSync("git", ["-C", root, "rev-parse", "HEAD"], {
       encoding: "utf8",
       stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 4 * 1024 * 1024,
     }).trim();
   } catch {
     throw new Error("native source audit unavailable");
   }
   if (commit !== "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824")
     throw new Error("native source pin mismatch");
-  const workingTreeDifferences: string[] = [];
+  // Metadata is bounded too. Never read potentially unbounded dirty working-tree content.
+  const auditedPaths = [
+    "packages/client/src/effect/api/api.ts",
+    "packages/schema/src/tool.ts",
+    "packages/schema/src/session-message.ts",
+    "packages/schema/src/prompt.ts",
+    "packages/schema/src/session-inbox.ts",
+    "packages/schema/src/session.ts",
+    "packages/schema/src/model.ts",
+    "packages/schema/src/session-id.ts",
+    ...Object.values(nativeRecoveryPaths),
+  ];
+  let workingTreeDifferences: string[];
+  try {
+    workingTreeDifferences = execFileSync(
+      "git",
+      ["-C", root, "diff", "--name-only", commit, "--", ...auditedPaths],
+      {
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      },
+    )
+      .trim()
+      .split("\n")
+      .filter(Boolean);
+  } catch {
+    throw new Error("native source bounded metadata unavailable");
+  }
   const read = (file: string) => {
-    const bytes = readFileSync(path.join(root, file), "utf8");
-    const committed = execFileSync("git", ["-C", root, "show", `${commit}:${file}`], {
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-    });
-    if (bytes !== committed) workingTreeDifferences.push(file);
-    return committed;
+    if (!auditedPaths.includes(file)) throw new Error("native source path not allowlisted");
+    try {
+      return execFileSync("git", ["-C", root, "show", `${commit}:${file}`], {
+        encoding: "utf8",
+        maxBuffer: 4 * 1024 * 1024,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+    } catch {
+      throw new Error("native source bounded committed blob unavailable: " + file);
+    }
   };
+  auditNativeRecoveryContract(
+    Object.fromEntries(
+      Object.entries(nativeRecoveryPaths).map(([key, file]) => [key, read(file)]),
+    ) as unknown as NativeRecoverySource,
+  );
   const api = read("packages/client/src/effect/api/api.ts");
   const adapter = read("packages/plugin/src/promise/adapter.ts");
   for (const method of ["create", "prompt", "wait", "get", "context", "interrupt"])
@@ -828,7 +865,9 @@ export function auditNativeSource(
     workingTreeDifferences,
     messageProjectionFields: [...projectedFields].sort(),
     evidence:
-      "public shapes, consumed model/session/prompt/context projection fields, requiredness and literal variants, promise forwarding and coordinator finalizer ordering",
+      "public shapes, consumed model/session/prompt/context projection fields, requiredness and literal variants, " +
+      "promise forwarding, exact executor Error retention/typed after branch, interruption exclusion, " +
+      "coordinator finalizers/successors, prompt admission/wake and restart claim retention; exact recovery source AST attestation",
     limits:
       "bounded static projection audit, not full codec/type equivalence; no live activation or exclusive session lock",
   };
@@ -875,4 +914,156 @@ export function auditNativeToolContract(source: {
     !source.message.includes('Schema.String.check(Schema.isStartingWith("msg_"))')
   )
     throw new Error("public prefix codec mismatch");
+}
+
+export interface NativeRecoverySource {
+  adapter: string;
+  tool: string;
+  coreTool: string;
+  sessionDomain: string;
+  pluginContext: string;
+  session: string;
+  execution: string;
+  coordinator: string;
+  restart: string;
+}
+
+const nativeRecoveryPaths: Record<keyof NativeRecoverySource, string> = {
+  adapter: "packages/plugin/src/promise/adapter.ts",
+  tool: "packages/plugin/src/promise/tool.ts",
+  coreTool: "packages/core/src/tool.ts",
+  sessionDomain: "packages/plugin/src/promise/session.ts",
+  pluginContext: "packages/plugin/src/promise/plugin.ts",
+  session: "packages/core/src/session/session.ts",
+  execution: "packages/core/src/session/execution.ts",
+  coordinator: "packages/core/src/session/run-coordinator.ts",
+  restart: "packages/core/src/session/execution/restart.ts",
+};
+
+/** Source attestation is deliberately stricter than semantic equivalence. The named-node
+ * assertions identify the assumptions, while the full comment-free AST pins their surrounding
+ * control flow (including interruption, conditional wake, finalizer and successor ordering).
+ * Neither establishes a live-host callback fence or guarantees after on native interruption.
+ */
+export function auditNativeRecoveryContract(source: NativeRecoverySource): void {
+  const expected: Record<keyof NativeRecoverySource, string> = {
+    adapter: "986365eff0fad41853ac22ff27c0aa9dbcf41d9647a34c9e02759b0731c48165",
+    tool: "f6a0142d2d53927c2cb720c2841ef924484322021701eebe035557d130b23002",
+    coreTool: "8e2b4a926e335e7b2226f2bb74c2273b9aa56ace03a2d44391c7e4bc53a65215",
+    sessionDomain: "eed7d27982225e86592939858c495e95082380237e1d1772a6f0ac47b713afc2",
+    pluginContext: "bc8789e77fc6f2293a1f554f4a41058d9006afaecaae362f035bc8a6a74c5c96",
+    session: "98d51cbce9cc32696fd74a23aba24afc0ab41bd906f3f9e282943391f94c90e4",
+    execution: "2374646e5f4885af8291c41bd1eb2a2b714eade4103e347a054cf53e12d434a7",
+    coordinator: "afdd13037bdb58c1d488e8e3b2575c55d43b4bcdf95eea5d6f0104371df54bd4",
+    restart: "5d687db45b2ce2387b8dbe64fe6a367d11d8704255042c03e397fb358282f85f",
+  };
+  // Check every field's type/byte bound before allocating any parser tree.
+  for (const key of Object.keys(expected) as (keyof NativeRecoverySource)[]) {
+    if (
+      !source ||
+      typeof source[key] !== "string" ||
+      Buffer.byteLength(source[key]) > 4 * 1024 * 1024
+    )
+      throw new Error("native recovery source missing or exceeds bounded input: " + key);
+  }
+  const printer = ts.createPrinter({ removeComments: true });
+  const trees = {} as Record<keyof NativeRecoverySource, ts.SourceFile>;
+  for (const key of Object.keys(expected) as (keyof NativeRecoverySource)[]) {
+    const ast = ts.createSourceFile("native.ts", source[key], ts.ScriptTarget.Latest, true);
+    trees[key] = ast;
+    const canonical = printer.printFile(ast);
+    if (createHash("sha256").update(canonical).digest("hex") !== expected[key])
+      throw new Error("native recovery source structural attestation mismatch: " + key);
+  }
+  const node = (key: keyof NativeRecoverySource, name: string) => {
+    const found: ts.Node[] = [];
+    const visit = (value: ts.Node) => {
+      if (
+        (ts.isVariableDeclaration(value) ||
+          ts.isInterfaceDeclaration(value) ||
+          ts.isTypeAliasDeclaration(value)) &&
+        ts.isIdentifier(value.name) &&
+        value.name.text === name
+      )
+        found.push(value);
+      ts.forEachChild(value, visit);
+    };
+    visit(trees[key]);
+    const selected =
+      found.length > 1
+        ? found.filter(
+            (value) =>
+              ts.isVariableDeclaration(value) &&
+              value.initializer?.getText(trees[key]).startsWith(`Effect.fn("Session.${name}")`),
+          )
+        : found;
+    if (selected.length !== 1)
+      throw new Error("native recovery source named node mismatch: " + name);
+    return printer
+      .printNode(ts.EmitHint.Unspecified, selected[0]!, trees[key])
+      .replace(/\s+/g, " ");
+  };
+  const requireParts = (text: string, parts: string[]) => {
+    let position = -1;
+    for (const part of parts) {
+      const next = text.indexOf(part, position + 1);
+      if (next < 0) throw new Error("native recovery source contract ordering mismatch");
+      position = next;
+    }
+  };
+  // Exact original object reaches Tool.Error.error; the executor's failure channel uses it.
+  requireParts(node("adapter", "toolError"), [
+    "error instanceof Tool.Error ? error : new Tool.Error",
+    "String(error), error }",
+  ]);
+  requireParts(node("adapter", "executePromiseTool"), [
+    "Effect.tryPromise",
+    "tool.execute(input,",
+    "...context,",
+    "signal,",
+    "catch: toolError",
+  ]);
+  // Only the typed failure channel enters error-after. An interrupted Effect is outside catchTag.
+  requireParts(node("coreTool", "executeTool"), [
+    'Effect.catchTag("Tool.Error",',
+    'if ("failure" in execution)',
+    'status: "error"',
+    "error: execution.failure",
+    'yield* hooks.trigger("tool", "execute.after", afterEvent)',
+    "return yield* afterEvent.error",
+  ]);
+  requireParts(node("session", "wait"), [
+    'Effect.fn("Session.wait")',
+    "yield* execution.awaitIdle(sessionID)",
+  ]);
+  requireParts(node("coordinator", "awaitIdle"), [
+    "Deferred.await(execution.done)",
+    "Effect.andThen(awaitIdle(key))",
+  ]);
+  requireParts(node("coordinator", "start"), [
+    "options.settled?.(key, exit, execution.interruptionReason)",
+    "Effect.sync(() => settle(key, execution, exit))",
+  ]);
+  requireParts(node("coordinator", "settle"), [
+    "if (execution.pendingWake)",
+    "start(key, false, execution.pendingWake)",
+    "Deferred.doneUnsafe(execution.done, exit)",
+  ]);
+  requireParts(node("session", "prompt"), [
+    "const admitted =",
+    "yield* execution.wake(sessionID)",
+    "return admitted",
+  ]);
+  requireParts(node("execution", "layer"), [
+    'outcome.reason === "shutdown" ? undefined : releaseOnCommit(sessionID)',
+    "awaitIdle: coordinator.awaitIdle",
+  ]);
+  requireParts(node("restart", "layer"), ["store.listSuspended()", ".resume(sessionID)"]);
+  // The exact Context/SessionDomain AST attestation above also excludes any client/inbox/epoch
+  // capability. A public session interrupt/wait pair is not an all-operation admission fence.
+  if (
+    /readonly (?:client|inbox|epoch)\s*:/.test(node("pluginContext", "Context")) ||
+    /["'](?:inbox|epoch)["']/.test(node("sessionDomain", "SessionDomain"))
+  )
+    throw new Error("native recovery source unexpected public fence");
 }
