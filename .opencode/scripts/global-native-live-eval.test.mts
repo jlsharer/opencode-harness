@@ -119,16 +119,32 @@ const nativeContext = (sessionID = "parent", id = "control"): EvalNativeToolCont
   progress: async () => {},
 });
 
-function result(outcome = "clarification") {
+function result(outcome: "clarification" | "success" = "clarification") {
   const text = JSON.stringify({
     ...context,
     version: 1,
     outcome,
-    summary: "Need decision",
-    evidence: [],
-    artifacts: [],
-    requestNonce: "nonce",
-    question: "Which file?",
+    ...(outcome === "clarification"
+      ? {
+          summary: "Need decision",
+          evidence: [],
+          artifacts: [],
+          requestNonce: "nonce",
+          question: "Which file?",
+        }
+      : {
+          summary: "Inspected a.txt",
+          evidence: [{ reference: "a.txt" }],
+          artifacts: [{ reference: "a.txt" }],
+          outputContract: {
+            citedFindings: "a.txt contains evidence",
+            sourceList: ["a.txt"],
+            implementationImplications: "No change required",
+            risks: "None identified",
+            recommendedNextRole: "validator",
+            traceArtifactPath: "a.txt",
+          },
+        }),
   });
   return {
     output: { sessionID: "child", status: "completed", output: text },
@@ -137,7 +153,12 @@ function result(outcome = "clarification") {
   };
 }
 
-async function host(t: { after(fn: () => unknown): void }, timeoutMs = 1000) {
+async function host(
+  t: { after(fn: () => unknown): void },
+  timeoutMs = 1000,
+  deferTransforms = false,
+  now = Date.now,
+) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gn-fixture-"));
   fs.writeFileSync(path.join(cwd, "a.txt"), "evidence");
   const sessions = new Map([
@@ -168,6 +189,15 @@ async function host(t: { after(fn: () => unknown): void }, timeoutMs = 1000) {
     };
   };
   let lookup: (() => Promise<void>) | null = null;
+  const transforms = new Set<Parameters<EvalNativeContext["tool"]["transform"]>[0]>();
+  let dirty = false;
+
+  function rebuild() {
+    tools.clear();
+    for (const fn of transforms) fn({ add: (d) => tools.set(d.name, d as EvalTool) });
+    dirty = false;
+  }
+
   const ctx: EvalNativeContext = {
     location: { directory: cwd },
     options: { evaluationRoot: cwd, traceRoot: path.join(cwd, "trace") },
@@ -183,15 +213,13 @@ async function host(t: { after(fn: () => unknown): void }, timeoutMs = 1000) {
     },
     tool: {
       transform: async (fn) => {
-        const added: string[] = [];
-        fn({
-          add: (d) => {
-            added.push(d.name);
-            tools.set(d.name, d as EvalTool);
-          },
-        });
+        transforms.add(fn);
+        dirty = true;
+        if (!deferTransforms) rebuild();
         return registration(() => {
-          for (const name of added) tools.delete(name);
+          transforms.delete(fn);
+          dirty = true;
+          if (!deferTransforms) rebuild();
         });
       },
       hook: async (name, fn) => {
@@ -200,19 +228,23 @@ async function host(t: { after(fn: () => unknown): void }, timeoutMs = 1000) {
           if (hooks.get(name) === fn) hooks.delete(name);
         });
       },
-      list: async () => [
-        { id: "subagent", execute: async () => ({}) },
-        ...Array.from(tools.values(), (v) => ({
-          id: v.name,
-          execute: async (input: unknown, context: Record<string, unknown>) =>
-            v.execute(input, context as EvalNativeToolContext),
-        })),
-      ],
+      list: async () => {
+        if (dirty) rebuild();
+        return [
+          { id: "subagent", execute: async () => ({}) },
+          ...Array.from(tools.values(), (v) => ({
+            id: v.name,
+            execute: async (input: unknown, context: Record<string, unknown>) =>
+              v.execute(input, context as EvalNativeToolContext),
+          })),
+        ];
+      },
     },
     command: { transform: async () => registration() },
     event: {
       subscribe: ({ signal }) => {
         subscribed = true;
+        closed = false;
         signal.addEventListener(
           "abort",
           () => {
@@ -251,6 +283,7 @@ async function host(t: { after(fn: () => unknown): void }, timeoutMs = 1000) {
   const driver = await createGlobalNativeLiveEval(ctx, {
     traceRoot: path.join(cwd, "trace"),
     timeoutMs,
+    now,
   });
   t.after(async () => {
     await driver.dispose();
@@ -734,7 +767,8 @@ test("FIXTURE completed hold cancels outside adapter queue and releases original
   const f = await host(t);
   const { e } = await f.continuation("completed-after-hold");
   e.status = "completed";
-  e.result = result("success");
+  const completed = result("success");
+  e.result = { ...completed, content: [{ type: "text", text: completed.content }] };
   await f.after(e);
   const snap = f.driver.snapshot();
   assert.equal(snap.diagnostic, "OBSERVED");
@@ -993,6 +1027,221 @@ test("FIXTURE malformed selected result and duplicate callback never become obse
   await f.after(e);
   assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
 });
+test("FIXTURE deferred catalog materializes in default setup and replays after invalidation", async (t) => {
+  const f = await host(t, 1000, true);
+  await f.driver.dispose();
+  const cleanup = await plugin.setup(f.ctx);
+  try {
+    const names = [
+      "harness_eval_control",
+      "harness_eval_rendezvous",
+      "harness_orchestration",
+      "subagent",
+    ];
+    assert.deepEqual((await f.ctx.tool.list()).map((v) => v.id).sort(), names);
+    const first = f.tools.get("harness_orchestration");
+    const invalidate = (await f.ctx.tool.transform(() => {})) as { dispose(): Promise<void> };
+    try {
+      assert.deepEqual((await f.ctx.tool.list()).map((v) => v.id).sort(), names);
+      assert.notEqual(f.tools.get("harness_orchestration"), first);
+      await f.control({ version: 1, action: "orchestration.admit", spec: workflow() });
+    } finally {
+      await invalidate.dispose();
+    }
+  } finally {
+    await cleanup();
+  }
+  assert.deepEqual(
+    (await f.ctx.tool.list()).map((v) => v.id),
+    ["subagent"],
+  );
+});
+
+test("FIXTURE admitted original after bounds the native callback and retains registrations through settlement", async (t) => {
+  const f = await host(t, 35);
+  await f.before(f.event);
+  f.event.status = "completed";
+  f.event.result = result();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.lookup(() => blocked);
+  const after = f.after(f.event);
+  const check = () => {
+    const rejected = f.event.result as {
+      output: { status: string };
+      content: string;
+      metadata: { harness: string };
+    };
+    assert.equal(rejected.output.status, "rejected");
+    assert.deepEqual(JSON.parse(rejected.content), rejected.output);
+    assert.equal(rejected.metadata.harness, "rejected");
+  };
+  try {
+    assert.match(await observedSettlement(after), /after unresolved/);
+    check();
+    assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
+    await f.driver.dispose();
+    assert.ok(f.liveRegistrations() > 0);
+  } finally {
+    f.lookup(null);
+    release();
+    await after.catch(() => {});
+  }
+  for (let i = 0; i < 100 && f.liveRegistrations(); i++) await new Promise((r) => setTimeout(r, 5));
+  assert.equal(f.liveRegistrations(), 0);
+  check();
+});
+
+test("FIXTURE original post-callback identity lookup shares the after deadline", async (t) => {
+  const f = await host(t, 50);
+  await f.before(f.event);
+  f.event.status = "completed";
+  f.event.result = result();
+  let release!: () => void;
+  const blocked = new Promise<void>((r) => {
+    release = r;
+  });
+  let calls = 0;
+  // The genuine adapter reads child, child, parent before its callback returns.
+  f.lookup(async () => {
+    if (++calls === 4) await blocked;
+  });
+  const after = f.after(f.event);
+  try {
+    assert.match(await observedSettlement(after), /deadline|unresolved/);
+    assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
+    const rejected = f.event.result as {
+      output: { status: string };
+      content: string;
+      metadata: { harness: string };
+    };
+    assert.equal(rejected.output.status, "rejected");
+    assert.equal(rejected.metadata.harness, "rejected");
+    assert.deepEqual(JSON.parse(rejected.content), rejected.output);
+    await f.driver.dispose();
+    assert.ok(f.liveRegistrations() > 0);
+  } finally {
+    f.lookup(null);
+    release();
+    await after.catch(() => {});
+  }
+});
+test("FIXTURE admitted original after does not renew the original deadline", async (t) => {
+  let time = Date.now();
+  const f = await host(t, 1000, false, () => time);
+  await f.before(f.event);
+  time += 86_400_000;
+  f.event.status = "completed";
+  f.event.result = result();
+  await assert.rejects(f.after(f.event), /deadline|unresolved/);
+  assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
+  await assert.rejects(f.arm());
+});
+
+test("FIXTURE uncancelled native continuation accepts the same structured success", async (t) => {
+  const f = await host(t);
+  await f.clarify();
+  const e = {
+    ...f.event,
+    id: "positive-call",
+    messageID: "positive-message",
+    input: {
+      agent: "researcher",
+      description: "continue",
+      sessionID: "child",
+      background: false,
+      prompt:
+        "<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n" +
+        JSON.stringify({
+          version: 1,
+          kind: "clarification-response",
+          delegationTaskId: "task",
+          requestNonce: "nonce",
+          answer: "Inspect a.txt",
+        }) +
+        "\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>",
+    },
+  };
+  await f.before(e);
+  e.status = "completed";
+  const completed = result("success");
+  e.result = structuredClone(completed);
+  await f.after(e);
+  assert.deepEqual(e.result, completed);
+  await assert.rejects(f.control({ version: 1, action: "task.cancel", context }), /terminal task/);
+});
+
+for (const bad of [
+  "mismatched native content",
+  "invalid success body",
+  "unexpected native result field",
+] as const)
+  test(`FIXTURE ${bad} cannot establish cancelled late rejection`, async (t) => {
+    const f = await host(t);
+    const { e } = await f.continuation("completed-after-hold");
+    e.status = "completed";
+    const completed = result("success");
+    if (bad === "mismatched native content") completed.content = "different content";
+    else if (bad === "unexpected native result field")
+      Object.assign(completed, { surplus: "unexpected" });
+    else {
+      completed.output.output = JSON.stringify({ ...context, version: 1, outcome: "success" });
+      completed.content = `<subagent sessionID="child" state="completed">\n${completed.output.output}\n</subagent>`;
+    }
+    e.result = completed;
+    await f.after(e);
+    const snap = f.driver.snapshot();
+    assert.equal(snap.diagnostic, "INCONCLUSIVE");
+    assert.deepEqual(snap.result, e.result);
+  });
+for (const surface of [
+  "callID",
+  "parentSessionID",
+  "verifiedChildSessionID",
+  "reason",
+  "content",
+  "metadata",
+  "duplicate JSON key",
+] as const)
+  test(`FIXTURE corrupted post-callback ${surface} cannot establish late rejection`, async (t) => {
+    const f = await host(t);
+    const { e } = await f.continuation("completed-after-hold");
+    e.status = "completed";
+    let value: unknown = result("success");
+    Object.defineProperty(e, "result", {
+      get: () => value,
+      set: (actual: {
+        output: Record<string, unknown>;
+        content: string;
+        metadata: Record<string, unknown>;
+      }) => {
+        if (surface === "content") actual.content = "{}";
+        else if (surface === "duplicate JSON key")
+          actual.content = actual.content.replace("{", '{"status":"success",');
+        else if (surface === "metadata") actual.metadata.callID = "unrelated";
+        else {
+          actual.output[surface] = "unrelated";
+          actual.content = JSON.stringify(actual.output);
+        }
+        value = actual;
+      },
+    });
+    await f.after(e);
+    assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
+    assert.deepEqual(f.driver.snapshot().result, value);
+  });
+
+for (const missing of ["harness_orchestration", "harness_eval_control", "harness_eval_rendezvous"])
+  test(`FIXTURE setup refuses missing final catalog entry ${missing}`, async (t) => {
+    const f = await host(t);
+    await f.driver.dispose();
+    const catalog = f.ctx.tool.list.bind(f.ctx.tool);
+    f.ctx.tool.list = async () => (await catalog()).filter((v) => v.id !== missing);
+    await assert.rejects(plugin.setup(f.ctx), /registration|catalog|ownership/);
+    assert.equal(f.liveRegistrations(), 0);
+  });
 const nativeSourceFiles = [
   "packages/plugin/src/promise/plugin.ts",
   "packages/plugin/src/promise/tool.ts",
@@ -1002,6 +1251,8 @@ const nativeSourceFiles = [
   "packages/schema/src/tool.ts",
   "packages/schema/src/event.ts",
   "packages/schema/src/session-event.ts",
+  "packages/core/src/plugin.ts",
+  "packages/core/src/state.ts",
   "packages/core/src/tool.ts",
   "packages/core/src/tool/plugin/subagent.ts",
   "packages/core/src/plugin/module.ts",
@@ -1024,6 +1275,14 @@ test(
     );
     auditGlobalLiveEvalNativeContract(source);
     for (const [file, old, replacement] of [
+      ["packages/core/src/plugin.ts", "yield* State.batch(", "yield* State.unbatched("],
+      ["packages/core/src/state.ts", "batch.notifications.add(notify)", "notify()"],
+      ["packages/core/src/state.ts", "transform.run(editor)", "transform.skip(editor)"],
+      [
+        "packages/core/src/tool.ts",
+        "Array.from(state.get().tools.values())",
+        "Array.from(stale.tools.values())",
+      ],
       ["packages/schema/src/tool.ts", "readonly messageID:", "readonly wrongMessageID:"],
       ["packages/schema/src/session-event.ts", "assistantMessageID:", "wrongMessageID:"],
       ["packages/core/src/tool/plugin/subagent.ts", ": input.prompt", ': "WRAPPED" + input.prompt'],

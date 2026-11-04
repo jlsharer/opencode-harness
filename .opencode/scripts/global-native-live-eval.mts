@@ -13,7 +13,7 @@ import type {
   NativeEvent,
 } from "../src/plugin-modules/global-native-plugin.ts";
 import { object } from "../src/plugin-modules/global-protocol.ts";
-import type { TaskContext } from "../src/plugin-modules/task-contracts.ts";
+import { validateTaskResult, type TaskContext } from "../src/plugin-modules/task-contracts.ts";
 
 export interface EvalNativeToolContext extends Record<string, unknown> {
   sessionID: string;
@@ -106,6 +106,37 @@ const exact = (input: Record<string, unknown>, keys: string[]) => {
     throw Error("unexpected evaluation fields");
 };
 
+const evaluationTools = [
+  "harness_orchestration",
+  "harness_eval_control",
+  "harness_eval_rendezvous",
+];
+
+function checkInventory(inventory: { id: string }[], names = evaluationTools) {
+  if (names.some((name) => inventory.filter((t) => t.id === name).length !== 1))
+    throw Error("native registration ownership lost");
+}
+
+// Cancellation short-circuits protocol.result before it checks the task body.
+// Inspect only the evidence shape here. The registered adapter still owns the result.
+function checkCompletion(result: Record<string, unknown>, child: string, context: TaskContext) {
+  exact(result, ["output", "content", "metadata"]);
+  const output = object(result.output);
+  const text = output.output;
+  if (
+    typeof text !== "string" ||
+    !same(output, { sessionID: child, status: "completed", output: text }) ||
+    !same(result.metadata, { sessionID: child, status: "completed" })
+  )
+    throw Error("malformed native completion output/metadata");
+  const wrapper = `<subagent sessionID="${child}" state="completed">\n${text}\n</subagent>`;
+  if (result.content !== wrapper && !same(result.content, [{ type: "text", text: wrapper }]))
+    throw Error("native content/output mismatch");
+  const fenced = /^```json\n(\{[\s\S]*\})\n```$/.exec(text);
+  if (validateTaskResult(JSON.parse(fenced?.[1] ?? text), context).outcome !== "success")
+    throw Error("native completion lacks structured success");
+}
+
 export async function createGlobalNativeLiveEval(
   ctx: EvalNativeContext,
   options: { timeoutMs?: number; traceRoot: string; now?: () => number },
@@ -127,11 +158,7 @@ export async function createGlobalNativeLiveEval(
   )
     throw Error("missing native evaluation capability");
   const inventory = await ctx.tool.list();
-  if (
-    inventory.some((t) =>
-      ["harness_orchestration", "harness_eval_control", "harness_eval_rendezvous"].includes(t.id),
-    )
-  )
+  if (inventory.some((t) => evaluationTools.includes(t.id)))
     throw Error("duplicate adapter/control ownership");
   const plugins = await ctx.plugin.list();
   if (
@@ -310,6 +337,7 @@ export async function createGlobalNativeLiveEval(
   async function authoritativeAfter(
     callback: (event: NativeEvent) => Promise<void>,
     event: NativeEvent,
+    deadline: number,
   ) {
     let timedOut = false;
     const operation = callback(event).finally(() => {
@@ -322,11 +350,8 @@ export async function createGlobalNativeLiveEval(
     pendingCallbacks.add(operation);
     void operation.finally(() => pendingCallbacks.delete(operation)).catch(() => {});
     try {
-      await finite(
-        operation,
-        attempt ? Math.min(timeoutMs, attempt.deadline - now()) : timeoutMs,
-        "authoritative native after unresolved",
-      );
+      await finite(operation, deadline - now(), "authoritative native after unresolved");
+      if (now() >= deadline) throw Error("authoritative native after unresolved at deadline");
     } catch (error) {
       timedOut = true;
       replaceGlobalResult(
@@ -484,15 +509,12 @@ export async function createGlobalNativeLiveEval(
                   event.status !== "completed"
                 )
                   throw Error("malformed selected native callback");
-                const result = object(event.result),
-                  output = object(result.output),
-                  metadata = object(result.metadata);
-                if (
-                  output.sessionID !== attempt.original.child ||
-                  metadata.sessionID !== attempt.original.child
-                )
-                  throw Error("callback child mismatch");
                 bounded(event.result);
+                checkCompletion(
+                  object(event.result),
+                  attempt.original.child,
+                  attempt.original.context,
+                );
                 snapshot.callbackBeforeHash = hash({ input: event.input, result: event.result });
                 record("native-completed-held", {
                   callID: event.id,
@@ -508,15 +530,27 @@ export async function createGlobalNativeLiveEval(
                 fail(String(error));
               }
               // Always pass the same event to the real callback before disposal. Never replace native results here.
-              await authoritativeAfter(callback, event);
+              await authoritativeAfter(callback, event, attempt.deadline);
               try {
                 snapshot.result = bounded(event.result);
                 record("adapter-after-returned", snapshot.result);
-                if (
-                  attempt.cancelled &&
-                  snapshot.diagnostic !== "INCONCLUSIVE" &&
-                  object(object(event.result).metadata).harness === "rejected"
-                ) {
+                if (attempt.cancelled && snapshot.diagnostic !== "INCONCLUSIVE") {
+                  const rejection = {
+                    version: 1,
+                    status: "rejected",
+                    callID: selected.id,
+                    parentSessionID: selected.sessionID,
+                    verifiedChildSessionID: attempt.original.child,
+                    reason: "duplicate, cancelled or late result",
+                  };
+                  const result = object(snapshot.result);
+                  exact(result, ["output", "content", "metadata"]);
+                  if (
+                    !same(result.output, rejection) ||
+                    result.content !== JSON.stringify(rejection) ||
+                    !same(result.metadata, { harness: "rejected", callID: selected.id })
+                  )
+                    throw Error("native rejection does not match the bound cancelled result");
                   snapshot.diagnostic = "OBSERVED";
                   snapshot.phase = "rejection-observed";
                   clearTimeout(attempt.timer);
@@ -526,9 +560,26 @@ export async function createGlobalNativeLiveEval(
               }
               return;
             }
-            await callback(event);
             const original = admitted.get(JSON.stringify([event.sessionID, event.id]));
-            if (!original || event.status !== "completed") return;
+            if (
+              !original ||
+              event.tool !== original.event.tool ||
+              (attempt &&
+                (original.event.sessionID !== attempt.original.event.sessionID ||
+                  original.event.id !== attempt.original.event.id))
+            ) {
+              await callback(event);
+              return;
+            }
+            const deadline = Math.min(original.deadline, now() + timeoutMs);
+            await authoritativeAfter(callback, event, deadline);
+            if (
+              event.status !== "completed" ||
+              event.messageID !== original.event.messageID ||
+              event.agent !== original.event.agent ||
+              !same(event.input, original.event.input)
+            )
+              return;
             try {
               const r = object(event.result);
               if (object(r.metadata).harness === "rejected") return;
@@ -547,13 +598,18 @@ export async function createGlobalNativeLiveEval(
                 child: output.sessionID,
                 nonce: decoded.requestNonce,
               };
-              await identity(verified);
+              await identity(verified, { deadline, stopWithAttempt: false });
               observed.set(
                 JSON.stringify([event.sessionID, canonical(original.context)]),
                 verified,
               );
-            } catch {
-              /* a rejected or unverifiable result is never an arm prerequisite */
+            } catch (error) {
+              replaceGlobalResult(
+                event,
+                "source evaluation could not verify clarification; observation inconclusive",
+              );
+              fail(String(error));
+              throw error;
             }
           }),
         ),
@@ -566,11 +622,7 @@ export async function createGlobalNativeLiveEval(
       throw Error("evaluation cancellation unavailable");
     await identity(attempt.original);
     const tools = await wait(ctx.tool.list());
-    if (
-      tools.filter((t) => t.id === "harness_orchestration").length !== 1 ||
-      !tools.some((t) => t.id === "harness_eval_rendezvous")
-    )
-      throw Error("native registration ownership lost");
+    checkInventory(tools);
     await identity(attempt.original);
     record("cancel-invoked", {
       version: attempt.request.controlVersion,
@@ -927,6 +979,8 @@ export async function createGlobalNativeLiveEval(
 
   try {
     await adapter.register();
+    // Activation batches transforms. A public catalog read materializes the editor.
+    checkInventory(await ctx.tool.list(), ["harness_orchestration"]);
     if (!control) throw Error("actual registered harness control missing");
     await registration(
       await ctx.tool.transform((editor) => {
@@ -934,6 +988,7 @@ export async function createGlobalNativeLiveEval(
         editor.add(rendezvous as GlobalControlTool);
       }),
     );
+    checkInventory(await ctx.tool.list());
   } catch (error) {
     await dispose();
     throw error;
@@ -997,6 +1052,10 @@ export function auditGlobalLiveEvalNativeContract(source: Record<string, string>
   require("packages/schema/src/session-event.ts", /type: "session.tool.progress",[\s\S]*\.\.\.ToolBase,[\s\S]*metadata: Schema.Record\(Schema.String, Schema.Json\)/);
   require("packages/core/src/tool/plugin/subagent.ts", /yield\* context.progress\(\{ sessionID: child.id, status: "running" \}\)[\s\S]*\.prompt\(/);
   require("packages/core/src/tool/plugin/subagent.ts", /existing === undefined\s*\? \["You are a subagent spawned by another session\.", input.prompt\]\.join\("\\n"\)\s*: input.prompt/);
+  require("packages/core/src/plugin.ts", /yield\* State\.batch\([\s\S]*yield\* load\(definition\)/);
+  require("packages/core/src/state.ts", /invalidate\(\)\s+const batch = yield\* CurrentBatch[\s\S]*batch\.notifications\.add\(notify\)\s+return/);
+  require("packages/core/src/state.ts", /const next = options\.initial\(\)[\s\S]*for \(const transform of transforms\)[\s\S]*transform\.run\(editor\)/);
+  require("packages/core/src/tool.ts", /list: \(\) => Effect\.sync\(\(\) => Array\.from\(state\.get\(\)\.tools\.values\(\)\)\)/);
   require("packages/core/src/tool.ts", /const execution = yield\* execute\(tool, input, context\)[\s\S]*status: "completed",[\s\S]*yield\* hooks.trigger\("tool", "execute.after", afterEvent\)[\s\S]*afterEvent.result.content/);
   require("packages/core/src/plugin/module.ts", /Host.resolve\(installed \?\? \{ directory: operation.target \}\)/);
   require("packages/plugin/src/host.ts", /server: entry\(\["server", ""\]\)/);

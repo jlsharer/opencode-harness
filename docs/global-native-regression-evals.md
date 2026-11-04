@@ -234,6 +234,8 @@ env -i PATH="$PATH" HOME="$EVAL/home" \
 
 This exact native API uses `plugins` with `{package,options}` entries and resolves an absolute local plugin directory's `server.js`; `ctx.options` receives the options object. A different native build requires fresh compatibility proof. Quit/restart the client after plugin/config changes. Preflight `plugin.list`, tool inventory and native context must show this evaluation owner, exactly one `harness_orchestration`, both evaluation tools, native `subagent`, four role agents, no other global/project guard and a fresh primary session located inside the isolated root. Setup rejects missing capabilities, duplicate existing control ownership and unsafe root/options. Host/plugin lifecycle inspection is mandatory; absence from a text config alone is insufficient.
 
+Each plugin instance permits exactly one arm in its lifetime. Collect its status, native surfaces, traces and hashes before quitting. Repeat the isolated setup with a fresh root and plugin instance for each control version and each mode, including retries after timeout or failure.
+
 For each control version (1 and 2 separately), admit a new finite read-only task with an independent validator gate, obtain an authentic clarification through ordinary native `subagent`, and retain the exact admitted context, verified child and returned nonce. Do not manufacture a clarification or reuse a terminal/cancelled task. Request the registered tool as follows, substituting the actual context object and strings:
 
 ```json
