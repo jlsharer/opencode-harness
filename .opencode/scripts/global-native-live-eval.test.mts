@@ -364,6 +364,245 @@ async function host(t: { after(fn: () => unknown): void }, timeoutMs = 1000) {
 
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
+async function observedSettlement(operation: Promise<unknown>, milliseconds = 150) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(
+        () => "resolved",
+        (error: unknown) => String(error),
+      ),
+      new Promise<string>((resolve) => {
+        timer = setTimeout(() => resolve("still pending"), milliseconds);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+test("FIXTURE armed before wait expires and retains ownership until real admission settles", async (t) => {
+  const f = await host(t, 35);
+  await f.clarify();
+  const armed = await f.arm();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.lookup(() => blocked);
+  const before = f.before({
+    ...f.event,
+    id: "blocked-continuation",
+    messageID: "blocked-message",
+    input: {
+      agent: "researcher",
+      description: "continue",
+      prompt: armed.continuationPrompt,
+      sessionID: "child",
+      background: false,
+    },
+  });
+  try {
+    const outcome = await observedSettlement(before);
+    await f.driver.dispose();
+    assert.match(outcome, /deadline|timeout/);
+    assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
+    assert.ok(f.liveRegistrations() > 0, "pending authoritative before retains registrations");
+  } finally {
+    f.lookup(null);
+    release();
+    assert.notEqual(await observedSettlement(before), "resolved", "late admission cannot launch");
+    assert.equal(
+      await observedSettlement(
+        (async () => {
+          for (let i = 0; i < 80 && f.liveRegistrations(); i++)
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          assert.equal(f.liveRegistrations(), 0);
+        })(),
+        500,
+      ),
+      "resolved",
+      "real admission and its trace writes eventually settle",
+    );
+  }
+  assert.equal(f.liveRegistrations(), 0, "settled authoritative work permits resource cleanup");
+  assert.equal(f.driver.snapshot().cancellation, null);
+});
+
+for (const action of ["status", "arm"] as const) {
+  for (const active of [false, true]) {
+    if (active && action === "arm") continue;
+    test(`FIXTURE eval ${action} initial lookup is bounded with active=${active}`, async (t) => {
+      const f = await host(t, 35);
+      if (active) await f.continuation();
+      else if (action === "arm") await f.clarify();
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      f.lookup(() => blocked);
+      const operation =
+        action === "arm"
+          ? f.arm()
+          : f.tools.get("harness_eval_control")!.execute({ action }, nativeContext());
+      try {
+        const outcome = await observedSettlement(operation);
+        await f.driver.dispose();
+        assert.match(outcome, /deadline|timeout/);
+        assert.ok(f.liveRegistrations() > 0, "pending initial lookup retains ownership");
+      } finally {
+        f.lookup(null);
+        release();
+        assert.notEqual(await observedSettlement(operation), "resolved");
+        await tick();
+        await tick();
+      }
+      assert.equal(f.liveRegistrations(), 0);
+      if (!active) assert.equal(f.driver.snapshot().attemptID, null, "late lookup cannot arm");
+      assert.equal(f.driver.snapshot().cancellation, null);
+    });
+  }
+
+  for (const preAborted of [false, true]) {
+    test(`FIXTURE eval ${action} initial lookup observes abort preAborted=${preAborted}`, async (t) => {
+      const f = await host(t, 1000);
+      if (action === "arm") await f.clarify();
+      let release!: () => void;
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      f.lookup(() => blocked);
+      const controller = new AbortController();
+      if (preAborted) controller.abort();
+      const c = { ...nativeContext(), signal: controller.signal };
+      const input =
+        action === "status"
+          ? { action }
+          : {
+              action,
+              mode: "continuation-rendezvous",
+              controlVersion: 1,
+              context,
+              childSessionID: "child",
+              requestNonce: "nonce",
+            };
+      const operation = f.tools.get("harness_eval_control")!.execute(input, c);
+      if (!preAborted) {
+        await tick();
+        controller.abort();
+      }
+      try {
+        assert.match(await observedSettlement(operation), /abort/);
+      } finally {
+        f.lookup(null);
+        release();
+        assert.notEqual(await observedSettlement(operation), "resolved");
+      }
+      assert.equal(f.driver.snapshot().attemptID, null);
+    });
+  }
+}
+
+test("FIXTURE eval arm abort during later identity lookup cannot create an attempt", async (t) => {
+  const f = await host(t, 1000);
+  await f.clarify();
+  const controller = new AbortController();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let calls = 0;
+  let entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  f.lookup(async () => {
+    if (++calls > 1) {
+      entered();
+      await blocked;
+    }
+  });
+  const operation = f.tools.get("harness_eval_control")!.execute(
+    {
+      action: "arm",
+      mode: "continuation-rendezvous",
+      controlVersion: 1,
+      context,
+      childSessionID: "child",
+      requestNonce: "nonce",
+    },
+    { ...nativeContext(), signal: controller.signal },
+  );
+  await waiting;
+  controller.abort();
+  try {
+    assert.match(await observedSettlement(operation), /abort/);
+  } finally {
+    f.lookup(null);
+    release();
+    await tick();
+  }
+  assert.equal(f.driver.snapshot().attemptID, null);
+});
+
+test("FIXTURE direct arm has a finite deadline and cannot create a late attempt", async (t) => {
+  const f = await host(t, 35);
+  await f.clarify();
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  f.lookup(() => blocked);
+  const operation = f.driver.arm(
+    {
+      mode: "continuation-rendezvous",
+      controlVersion: 1,
+      context,
+      childSessionID: "child",
+      requestNonce: "nonce",
+    },
+    "parent",
+  );
+  try {
+    assert.match(await observedSettlement(operation), /deadline|timeout/);
+    await f.driver.dispose();
+    assert.ok(f.liveRegistrations() > 0);
+  } finally {
+    f.lookup(null);
+    release();
+    assert.notEqual(await observedSettlement(operation), "resolved");
+    await tick();
+  }
+  assert.equal(f.driver.snapshot().attemptID, null);
+});
+
+test("FIXTURE eval arm shares one deadline across initial and later identity lookups", async (t) => {
+  const f = await host(t, 200);
+  await f.clarify();
+  let releaseFirst!: () => void;
+  let releaseLater!: () => void;
+  const first = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+  const later = new Promise<void>((resolve) => {
+    releaseLater = resolve;
+  });
+  let calls = 0;
+  f.lookup(() => (++calls === 1 ? first : later));
+  const operation = f.arm();
+  const timer = setTimeout(releaseFirst, 140);
+  try {
+    assert.match(await observedSettlement(operation, 280), /deadline|timeout/);
+  } finally {
+    clearTimeout(timer);
+    f.lookup(null);
+    releaseFirst();
+    releaseLater();
+    assert.notEqual(await observedSettlement(operation), "resolved");
+  }
+  assert.equal(f.driver.snapshot().attemptID, null);
+});
+
 function json(value: unknown): void {
   if (value === null || typeof value === "string" || typeof value === "boolean") return;
   if (typeof value === "number" && Number.isFinite(value)) return;
@@ -655,6 +894,25 @@ test("FIXTURE ordinary tools and unrelated after payloads remain untouched", asy
   await f.after(e);
   assert.deepEqual(e, before);
   assert.equal(f.driver.snapshot().observations.length, 0);
+});
+test("FIXTURE evaluation expiry leaves unrelated native subagents ordinary", async (t) => {
+  const f = await host(t, 35);
+  await f.continuation();
+  await new Promise((resolve) => setTimeout(resolve, 45));
+  const e: NativeEvent = {
+    ...f.event,
+    id: "ordinary-call",
+    input: { agent: "explore", description: "ordinary", prompt: "ordinary native task" },
+  };
+  const original = structuredClone(e);
+  await f.before(e);
+  assert.deepEqual(e, original);
+  assert.equal(f.driver.snapshot().diagnostic, "INCONCLUSIVE");
+  await assert.rejects(
+    f.before({ ...f.event, id: "unrelated-managed", messageID: "unrelated-message" }),
+    /terminal or duplicate task/,
+    "another managed dispatch retains its real admission rejection",
+  );
 });
 test("FIXTURE malformed selected result and duplicate callback never become observed success", async (t) => {
   const f = await host(t);

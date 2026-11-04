@@ -238,14 +238,70 @@ export async function createGlobalNativeLiveEval(
 
   const pendingNative = new Set<Promise<unknown>>();
 
-  async function wait<T>(operation: Promise<T>): Promise<T> {
+  function trackNative<T>(operation: Promise<T>): Promise<T> {
     pendingNative.add(operation);
     void operation.finally(() => pendingNative.delete(operation)).catch(() => {});
+    return operation;
+  }
+
+  type ObservationScope = { deadline: number; signal?: AbortSignal };
+
+  function checkScope(scope: ObservationScope) {
+    if (disposed) throw Error("evaluation disposed");
+    if (scope.signal?.aborted) throw Error("native observation aborted");
+    if (now() >= scope.deadline) throw Error("native observation deadline expired");
+  }
+
+  async function wait<T>(operation: Promise<T>, scope?: ObservationScope): Promise<T> {
+    trackNative(operation);
+    if (scope) {
+      let onAbort!: () => void;
+      try {
+        checkScope(scope);
+        const interrupted = new Promise<never>((_, reject) => {
+          onAbort = () => reject(Error("native observation aborted/disposed"));
+          scope.signal?.addEventListener("abort", onAbort, { once: true });
+          abort.signal.addEventListener("abort", onAbort, { once: true });
+        });
+        const value = await finite(
+          Promise.race([operation, interrupted, ...(attempt ? [attempt.stop] : [])]),
+          scope.deadline - now(),
+          "native observation deadline expired",
+        );
+        checkScope(scope);
+        return value;
+      } finally {
+        if (onAbort) {
+          scope.signal?.removeEventListener("abort", onAbort);
+          abort.signal.removeEventListener("abort", onAbort);
+        }
+      }
+    }
     if (!attempt) return finite(operation, timeoutMs, "native observation timeout");
     return Promise.race([operation, attempt.stop]);
   }
 
   const pendingCallbacks = new Set<Promise<void>>();
+
+  async function authoritativeBefore(
+    callback: (event: NativeEvent) => Promise<void>,
+    event: NativeEvent,
+  ) {
+    const scope = { deadline: attempt?.deadline ?? now() + timeoutMs };
+    checkScope(scope);
+    const operation = callback(event);
+    pendingCallbacks.add(operation);
+    void operation.finally(() => pendingCallbacks.delete(operation)).catch(() => {});
+    try {
+      await wait(operation, scope);
+      // The real callback remains the admission authority, but late settlement
+      // must never return launch permission through this registered wrapper.
+      if (snapshot.diagnostic === "INCONCLUSIVE") throw Error("evaluation before inconclusive");
+    } catch (error) {
+      fail(String(error));
+      throw error;
+    }
+  }
 
   async function authoritativeAfter(
     callback: (event: NativeEvent) => Promise<void>,
@@ -286,11 +342,14 @@ export async function createGlobalNativeLiveEval(
     return r;
   }
 
-  async function identity(original: NonNullable<ReturnType<typeof observed.get>>) {
-    const p = await wait(ctx.session.get({ sessionID: original.event.sessionID }));
-    const c = await wait(ctx.session.get({ sessionID: original.child }));
-    const p2 = await wait(ctx.session.get({ sessionID: original.event.sessionID }));
-    const c2 = await wait(ctx.session.get({ sessionID: original.child }));
+  async function identity(
+    original: NonNullable<ReturnType<typeof observed.get>>,
+    scope?: ObservationScope,
+  ) {
+    const p = await wait(ctx.session.get({ sessionID: original.event.sessionID }), scope);
+    const c = await wait(ctx.session.get({ sessionID: original.child }), scope);
+    const p2 = await wait(ctx.session.get({ sessionID: original.event.sessionID }), scope);
+    const c2 = await wait(ctx.session.get({ sessionID: original.child }), scope);
     if (
       disposed ||
       !same(p, p2) ||
@@ -312,7 +371,7 @@ export async function createGlobalNativeLiveEval(
     ...ctx,
     session: {
       ...ctx.session,
-      get: ctx.session.get.bind(ctx.session),
+      get: (input) => trackNative(ctx.session.get(input)),
       hook: async (name, fn) => registration(await ctx.session.hook!(name, fn)),
     },
     command: { transform: async (fn) => registration(await ctx.command.transform(fn)) },
@@ -333,7 +392,17 @@ export async function createGlobalNativeLiveEval(
         registration(
           await ctx.tool.hook(name, async (event) => {
             if (name === "execute.before") {
-              await callback(event);
+              const managedRoles = ["researcher", "planner", "implementer", "validator"];
+              if (
+                event.tool === "subagent" &&
+                (managedRoles.includes(event.agent) ||
+                  managedRoles.includes(String(object(event.input).agent))) &&
+                (!attempt ||
+                  (event.sessionID === attempt.original.event.sessionID &&
+                    object(event.input).sessionID === attempt.original.child))
+              )
+                await authoritativeBefore(callback, event);
+              else await callback(event);
               if (event.tool !== "subagent") return;
               const input = object(event.input);
               if (typeof input.prompt !== "string") return;
@@ -373,7 +442,7 @@ export async function createGlobalNativeLiveEval(
                   role: decoded.role,
                   taskMode: decoded.packet.taskMode,
                 } as TaskContext;
-                const p = await ctx.session.get({ sessionID: event.sessionID });
+                const p = await wait(ctx.session.get({ sessionID: event.sessionID }));
                 const diagnostics = adapter.protocol.diagnostics(
                   event.sessionID,
                   context.orchestrationId,
@@ -527,7 +596,11 @@ export async function createGlobalNativeLiveEval(
 
   let arming = false;
 
-  async function arm(request: EvalArmRequest, parentSessionID: string): Promise<EvalSnapshot> {
+  async function arm(
+    request: EvalArmRequest,
+    parentSessionID: string,
+    scope?: ObservationScope,
+  ): Promise<EvalSnapshot> {
     if (arming) throw Error("active evaluation arm");
     arming = true;
     try {
@@ -552,13 +625,17 @@ export async function createGlobalNativeLiveEval(
         original.nonce !== request.requestNonce
       )
         throw Error("verified unresolved clarification prerequisite missing");
-      await identity(original);
+      const observationScope = scope ?? { deadline: now() + timeoutMs };
+      observationScope.deadline = Math.min(observationScope.deadline, original.deadline);
+      checkScope(observationScope);
+      await identity(original, observationScope);
+      checkScope(observationScope);
       const task = adapter.protocol
         .diagnostics(parentSessionID, original.context.orchestrationId)
         .attempts.find((a) => a.id === original.context.delegationTaskId);
       if (!task || task.state !== "awaiting-guidance")
         throw Error("task is terminal or clarification unavailable");
-      const deadline = Math.min(now() + timeoutMs, original.deadline);
+      const deadline = observationScope.deadline;
       if (deadline <= now()) throw Error("original task deadline expired");
       const token = randomBytes(32).toString("hex"),
         attemptID = randomUUID();
@@ -683,7 +760,21 @@ export async function createGlobalNativeLiveEval(
       ],
     },
     async (input, context) => {
-      const p = await ctx.session.get({ sessionID: context.sessionID });
+      const r = object(input);
+      const original =
+        r.action === "arm"
+          ? observed.get(JSON.stringify([context.sessionID, canonical(r.context)]))
+          : undefined;
+      const scope = {
+        deadline: Math.min(
+          now() + timeoutMs,
+          attempt?.deadline ?? Infinity,
+          original?.deadline ?? Infinity,
+        ),
+        signal: context.signal,
+      };
+      checkScope(scope);
+      const p = await wait(ctx.session.get({ sessionID: context.sessionID }), scope);
       if (
         disposed ||
         context.signal.aborted ||
@@ -692,7 +783,6 @@ export async function createGlobalNativeLiveEval(
         (p.agent !== undefined && p.agent !== context.agent)
       )
         throw Error("evaluation control requires native primary identity");
-      const r = object(input);
       if (r.action === "status") {
         exact(r, ["action"]);
         if (attempt && context.sessionID !== attempt.original.event.sessionID)
@@ -702,7 +792,7 @@ export async function createGlobalNativeLiveEval(
       exact(r, ["action", "mode", "controlVersion", "context", "childSessionID", "requestNonce"]);
       const { action, ...request } = r;
       if (action !== "arm") throw Error("unsupported evaluation action");
-      return output(await arm(request as unknown as EvalArmRequest, context.sessionID));
+      return output(await arm(request as unknown as EvalArmRequest, context.sessionID, scope));
     },
   );
   const rendezvous = tool(
@@ -839,7 +929,11 @@ export async function createGlobalNativeLiveEval(
     await dispose();
     throw error;
   }
-  return { arm, snapshot: () => structuredClone(snapshot), dispose };
+  return {
+    arm: (request: EvalArmRequest, parentSessionID: string) => arm(request, parentSessionID),
+    snapshot: () => structuredClone(snapshot),
+    dispose,
+  };
 }
 
 export default {
