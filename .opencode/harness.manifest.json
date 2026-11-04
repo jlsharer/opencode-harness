@@ -11,6 +11,8 @@
     {"path": ".opencode/plugin-modules/direct-session-transport.test.mjs", "kind": "generated-plugin-test-compatibility", "owner": "harness-owned"},
     {"path": ".opencode/plugin-modules/direct-session-lease.js", "kind": "generated-plugin-module-compatibility", "owner": "harness-owned"},
     {"path": ".opencode/plugin-modules/direct-session-lease.test.mjs", "kind": "generated-plugin-test-compatibility", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/global-native-live-eval.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
+    {"path": ".opencode/scripts/global-native-live-eval.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/scripts/direct-session-retry-prototype.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/scripts/direct-session-retry-prototype.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},
     {"path": ".opencode/scripts/development-workflow.test.mts", "kind": "source-only-evaluation", "owner": "harness-owned"},

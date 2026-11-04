@@ -85,7 +85,7 @@
     "test": "npm run check:format && npm run typecheck && npm run check:generated && npm run check:source-policy && npm run test:direct-session && npm run test:prototype && npm run test:v2-bridge && npm run test:harness && npm run validate:global && npm run test:global",
     "precommit": "npm run format",
     "hooks:install": "git config --local core.hooksPath .githooks",
-    "test:global": "node --test .opencode/scripts/global-harness.test.mts .opencode/scripts/t3code-provider-contract.test.mts",
+    "test:global": "node --test .opencode/scripts/global-harness.test.mts .opencode/scripts/t3code-provider-contract.test.mts .opencode/scripts/global-native-live-eval.test.mts",
     "validate:global": "node .opencode/scripts/validate-global-harness.mts"
   },
   "devDependencies": {

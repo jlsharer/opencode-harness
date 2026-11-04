@@ -154,6 +154,8 @@ const COMMAND_ROLE_MAP: Record<RoleCommand, Role> = {
   "delegate-validate": "validator",
 };
 const STATIC_MANIFEST_PATHS = [
+  ".opencode/scripts/global-native-live-eval.mts",
+  ".opencode/scripts/global-native-live-eval.test.mts",
   ".opencode/scripts/direct-session-retry-prototype.mts",
   ".opencode/scripts/direct-session-retry-prototype.test.mts",
   ".opencode/scripts/development-workflow.test.mts",

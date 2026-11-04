@@ -158,20 +158,97 @@ Generation `7a9aff60-c5f6-48e2-b034-318fefa51171` differs from the historical ge
 
 GN-010 requires actual verified running-child correlation before Stop; a pending callback is insufficient. GN-011 requires an actually observed late callback and rejection on relevant output surfaces; silence is insufficient. Both remain **NOT_EXERCISED live**, despite fixture coverage. Missing original context or changed generation makes an attempted original-run assessment **INCONCLUSIVE**.
 
-### Proposed closure of GN-010 and GN-011
+### Approved source-only closure of GN-010 and GN-011
 
-The [proposed live-gap design](superpowers/specs/2026-11-03-global-native-live-gap-design.md) recommends a minimal source-only isolated driver first, preserving production adapter behavior. Complete an authentic clarification through native result validation, continue the exact verified unresolved child/task/nonce with a fresh call, establish the exact continuation stream boundary and fresh call-bound native execution, then cancel through the registered harness control. A correlated running label or launch acknowledgment alone is insufficient. This can prove **GN-010-CONTINUATION** only; **GN-010-FRESH remains NOT_EXERCISED**. Broader public exact tool-progress early binding is a separate later production option if required; no native core change is currently required.
+The [approved live-gap design](superpowers/specs/2026-11-03-global-native-live-gap-design.md) recommends a minimal source-only isolated driver first, preserving production adapter behavior. Complete an authentic clarification through native result validation, continue the exact verified unresolved child/task/nonce with a fresh call, establish the exact continuation stream boundary and fresh call-bound native execution, then cancel through the registered harness control. A correlated running label or launch acknowledgment alone is insufficient. This can prove **GN-010-CONTINUATION** only; **GN-010-FRESH remains NOT_EXERCISED**. Broader public exact tool-progress early binding is a separate later production option if required; no native core change is currently required.
 
 For deterministic GN-011, hold a genuine core-dispatched completed callback before adapter.after serialization, cancel through the registered control, then release the unmodified callback. Holding inside the adapter queue would block cancellation. Fabricated callback fixtures cannot satisfy GN-011. If completion precedes cancellation, that attempt cannot also prove GN-010. Preserve actual output/content/metadata and native terminal/model/parent-visible rejection, acceptance refusal, and retained resource accounting. Controlled native driver evidence is qualified LIVE evidence; modeled driver tests remain FIXTURE and manual T3Code coverage remains separate.
 
-The design is **PROPOSED**. Implementation, source-driver live attempts, and manual GN-010/GN-011 tests have not run. Both headline cases stay **NOT_EXERCISED**. The remaining test sequence is:
+The owner approved the source-only design and implementation plan. The operational entry and registered-host FIXTURE tests are implemented; source-driver LIVE attempts and manual GN-010/GN-011 tests remain **NOT_EXERCISED**. Offline checks do not close either headline case. The remaining test sequence is:
 
-1. Approve the design, then prepare the implementation plan and source-driver TDD. Test authentic versus fabricated callback boundaries, exact clarification nonce/task/child/new-call identity, fresh versus historical execution observations, wrong/stale/duplicate/conflicting/unmatched events, changed parent/cwd/generation, disposal, cancellation races, bounded hold timeout, release without payload modification and no adapter-queue deadlock. No timeout may clear protocol uncertainty or gates.
+1. Review the source-only implementation and its registered-path FIXTURE evidence, including cancellation while the rendezvous Promise is pending, outer completed-after hold, exact identities, negative cases and bounded cleanup. No timeout clears protocol uncertainty or gates.
 2. Run focused driver/global adapter/protocol tests and pinned-native public event/schema/order audits. Run source and portable validation, both runtime test scripts, global validation/tests, full npm tests, pinned-source tests and package dry run for the final change. Record exact tree, commands, exits and skips. Offline QA uses an existing owner-only mode-0700 private `TMPDIR` below `/var/tmp`; unset inherited `OPENCODE_CONFIG_CONTENT` only in that child environment, recording presence/adjustment without reading its value.
 3. Independently review the exact final source/generated/package tree and preserved global-only import closure; no legacy guard imports, installed test switch or second adapter. Resolve findings and rerun affected checks.
 4. With separate matching provider/network authorization, use a fresh isolated native instance/config/data/state/workspace and source-only driver, verifying actual native build/public-event compatibility and absence of another adapter. No automatic auth, native database mutation, global installation or activation. Record versions, source/driver hashes, generation, parent/message/call/task/child, nonce/context, deadline, event ordering and raw responses.
 5. For GN-010-CONTINUATION, the source-only driver registers a bounded read-only rendezvous tool using actual public `ctx.tool.transform`. Require an authentic native child invocation matching the verified session and fresh continuation boundary, then hold that tool’s execute Promise pending while registered cancellation runs. Driver readiness uses the actual invocation, not assumed streaming stdout. Release only after cancel returns; abort/timeout/premature completion is INCONCLUSIVE and always settles driver resources without clearing protocol uncertainty. No child file writes, installed rendezvous switch or production gate bypass. A previous same-child execution.started or absent callback is insufficient. For GN-011, retain the genuine late callback and all actual rejection surfaces. Use the deterministic outer-after hold as a separate attempt when completion already occurred. Test control versions 1 and 2 separately; absent observations are INCONCLUSIVE, never PASS. Retain old cancelled runs and uncertain reservations.
 6. Separately authorize any installation/provider restart, record the release and changed generation, then perform manual T3Code smoke. Source-driver LIVE evidence does not imply UI Stop/catalog/restart coverage. Keep GN-010-FRESH and each unexercised control/surface explicit until matching proof exists.
+
+### Isolated operational entry (separate live authorization required)
+
+The default Promise plugin is `.opencode/scripts/global-native-live-eval.mts`, ID `opencode-harness.source-global-live-eval.v1`. It owns one actual source adapter, captures its registered `harness_orchestration`, proxies real before/after registrations, subscribes before dispatch and registers `harness_eval_control` and `harness_eval_rendezvous` with Code Mode disabled. It is source-only: global/portable/runtime manifests, published package files and ordinary startup do not include it. `OBSERVED` is a diagnostic description of driver surfaces, never universal LIVE PASS or acceptance evidence. Native parent/model/terminal content is always listed as missing until the operator independently collects it.
+
+First pin the reviewed source tree and native binary bytes/version. Compatibility must be established against the exact selected binary and committed native API `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824`; the optional audit reads Git blobs, not a mutable working tree. Its registration/context/progress/prompt/loader/order checks and mutation negatives prove source compatibility only. Host event delivery and provider execution still need observation.
+
+The following templates are instructions for a separately authorized operator, not commands executed by this offline change. Replace `SOURCE` and `NATIVE_BIN` with reviewed absolute paths. Do not open the source checkout as the live workspace, inherit operator config, reuse operator auth/session databases, or install the entry into ordinary discovery. Build first, then create a fresh private root:
+
+```sh
+SOURCE=/absolute/reviewed/opencode-harness
+NATIVE_BIN=/absolute/reviewed/native-opencode
+cd "$SOURCE"
+npm run compile
+EVAL=$(mktemp -d /var/tmp/opencode-global-eval-XXXXXXXX)
+export SOURCE EVAL
+node --input-type=module <<'JS'
+import fs from 'node:fs';
+import path from 'node:path';
+import {pathToFileURL} from 'node:url';
+const {SOURCE: source,EVAL: root}=process.env;
+for (const name of ['home','config/opencode','data','state','cache','workspace','trace','plugin','profile-state'])
+  fs.mkdirSync(path.join(root,name),{recursive:true,mode:0o700});
+fs.writeFileSync(path.join(root,'workspace','a.txt'),'Read-only evaluation input\n',{mode:0o600});
+fs.cpSync(path.join(source,'.build/typescript'),path.join(root,'code'),{recursive:true});
+const {globalOperation}=await import(pathToFileURL(path.join(root,'code/bin/global-harness.js')));
+const prepared=globalOperation('prepare',{packageRoot:source,configRoot:path.join(root,'config/opencode'),stateRoot:path.join(root,'profile-state'),workspaceRoot:path.join(root,'workspace'),apply:true});
+// Prepare creates an isolated release only. It does not activate a global plugin.
+const manifest=JSON.parse(fs.readFileSync(path.join(source,'.opencode/global.manifest.json'),'utf8'));
+// The unchanged source adapter infers this resource root from its compiled module path.
+const runtimeRoot=path.join(root,'code/.opencode');
+fs.cpSync(prepared.release,runtimeRoot,{recursive:true});
+for(const asset of manifest.assets){
+  if(!asset.discovery||! /^(agents|skills)\//.test(asset.discovery))continue;
+  const target=path.join(root,'config/opencode',asset.discovery);
+  fs.mkdirSync(path.dirname(target),{recursive:true,mode:0o700});
+  fs.copyFileSync(path.join(prepared.release,asset.release),target);
+}
+for(const relative of ['.opencode/contracts/role-io-contracts.json','.opencode/schemas/memory-trace-artifact.schema.json','.opencode/skills/delegation-orchestrator/SKILL.md'])
+  if(!fs.statSync(path.join(runtimeRoot,relative)).isFile())throw Error('missing staged resource: '+relative);
+const entry=path.join(root,'code/.opencode/scripts/global-native-live-eval.mjs');
+fs.writeFileSync(path.join(root,'plugin/package.json'),JSON.stringify({type:'module'}),{mode:0o600});
+fs.writeFileSync(path.join(root,'plugin/server.js'),`export {default} from ${JSON.stringify(pathToFileURL(entry).href)};\n`,{mode:0o600});
+fs.writeFileSync(path.join(root,'config/opencode/opencode.json'),JSON.stringify({plugins:[{package:path.join(root,'plugin'),options:{evaluationRoot:root,traceRoot:path.join(root,'trace')}}]},null,2),{mode:0o600});
+fs.writeFileSync(path.join(root,'staging.json'),JSON.stringify({source,entry,runtimeRoot,prepared},null,2),{mode:0o600});
+JS
+```
+
+Keep the copied compiled code and the prepared release immutable during an attempt. Record SHA-256 inventories of the reviewed source, compiled module closure, prepared `release.json`, staged resources, local entry/config, and selected native binary. Compare each staged asset with its prepared-release hash and fail preflight on missing/mismatched assets. The source adapter's inferred `runtimeRoot` differs from an installed generated adapter layout; the deliberate resource copy above makes its returned contracts/schemas/profile references real without changing adapter behavior. On admission, verify the returned runtimeRoot equals the recorded staged path, workspaceRoot equals the fresh workspace, and traceRoot is beneath this evaluation root. Use the profile-correct prepared global skill and four projected roles, not the legacy source skill/frontmatter. Prepare and every staging write use explicit evaluation roots, never default operator global state.
+
+Before launch, supply only the separately owner-approved isolated provider/auth arrangement; these templates provide none. A missing provider arrangement is a blocker for LIVE use. Launch with a clean environment (there are no inherited `OPENCODE_CONFIG*` variables), without operator credential paths:
+
+```sh
+cd "$EVAL/workspace"
+env -i PATH="$PATH" HOME="$EVAL/home" \
+  XDG_CONFIG_HOME="$EVAL/config" XDG_DATA_HOME="$EVAL/data" \
+  XDG_STATE_HOME="$EVAL/state" XDG_CACHE_HOME="$EVAL/cache" \
+  "$NATIVE_BIN"
+```
+
+This exact native API uses `plugins` with `{package,options}` entries and resolves an absolute local plugin directory's `server.js`; `ctx.options` receives the options object. A different native build requires fresh compatibility proof. Quit/restart the client after plugin/config changes. Preflight `plugin.list`, tool inventory and native context must show this evaluation owner, exactly one `harness_orchestration`, both evaluation tools, native `subagent`, four role agents, no other global/project guard and a fresh primary session located inside the isolated root. Setup rejects missing capabilities, duplicate existing control ownership and unsafe root/options. Host/plugin lifecycle inspection is mandatory; absence from a text config alone is insufficient.
+
+For each control version (1 and 2 separately), admit a new finite read-only task with an independent validator gate, obtain an authentic clarification through ordinary native `subagent`, and retain the exact admitted context, verified child and returned nonce. Do not manufacture a clarification or reuse a terminal/cancelled task. Request the registered tool as follows, substituting the actual context object and strings:
+
+```json
+{"action":"arm","mode":"continuation-rendezvous","controlVersion":1,"context":{"orchestrationId":"ACTUAL_RUN","delegationTaskId":"ACTUAL_TASK","scopeKey":"ACTUAL_SCOPE","role":"researcher","taskMode":"research"},"childSessionID":"VERIFIED_CHILD","requestNonce":"RETURNED_NONCE"}
+```
+
+`harness_eval_control` derives generation, parent/cwd/agent and original deadline from observed successful adapter admissions/completions. It returns an unpredictable one-use `token`, `attemptID` and exact `continuationPrompt`. Copy that entire prompt unchanged into an ordinary native `subagent` request `{agent:"researcher",description:"Bounded evaluation continuation",prompt:EXACT_RETURNED_PROMPT,sessionID:VERIFIED_CHILD,background:false}`. Use a fresh native message and call identity. The prompt is the exact version-1 clarification-response envelope, with no `packet`, fresh wrapper or extra keys. The child invokes `harness_eval_rendezvous` with exactly `{"attemptID":"RETURNED_ATTEMPT","token":"RETURNED_TOKEN"}`; its session/agent/message/call/signal come from native context, never tool input.
+
+The listener requires exact parent/message/call progress and a fresh invocation from the verified child after continuation admission. A historical same-child `execution.started` event does not make ready. While this invocation's owned Promise is pending, the driver invokes the captured actual control, records JSON-valid raw output and matching text with known child and `termination:"unconfirmed"`, then releases the rendezvous. The child finishes naturally and the real after hook remains authoritative. Collect status using `harness_eval_control` input `{"action":"status"}`; it contains ordered observations, original identities/deadline, raw cancellation, callback before/release hashes and resulting output/content/metadata. It writes no evaluation evidence automatically. The adapter's ordinary external protocol trace remains enabled under the isolated trace root.
+
+For a separate GN-011 attempt, use a new admitted/clarified task and `mode:"completed-after-hold"`. Its returned prompt asks the child to finish without rendezvous. The proxy holds only the exact real completed event before entering the adapter queue, cancels through the registered control, checks unchanged input/result hashes and releases the same reference to the same callback. This does not establish execution overlap for GN-010 because execution already completed. A completion before cancellation in rendezvous mode is INCONCLUSIVE.
+
+Default attempt timeout is 15000 ms, bounded by the original task deadline (explicit creator override must be an integer 1..60000). Missing events, identity movement, abort, malformed/duplicate callback, overflow (256 observations, 64 KiB per retained payload), timeout or disposal make observations INCONCLUSIVE. A timed-out authoritative after wait rejects all visible surfaces using the existing rejection helper and throws; it never returns an unprocessed success to core. The underlying native callback is still tracked and rejection is reapplied if it later settles. Cleanup returns in finite time, retaining hook ownership while native operations remain unresolved and disposing registrations when they settle; this is not native termination proof or protocol release. Uncertain run records and reservations remain retained.
+
+After each attempt, independently collect native parent context, model and terminal surfaces, registered version-2 status, acceptance refusal, null acceptance digest and retirement refusal with retained reservations. The driver cannot infer those surfaces from hook mutation or grant acceptance/retirement. Record raw/text responses and all hashes; keep old cancelled attempts. GN-010-CONTINUATION, GN-010-FRESH, GN-011 and manual T3Code cases remain **NOT_EXERCISED LIVE** after this offline implementation. GN-005/006 failures, GN-009's scoped control-1 result and GN-008's completed PASS WITH CHILD-ENV ADJUSTMENT remain unchanged.
 
 ## Minimal evaluation record
 

@@ -1,6 +1,6 @@
 # Global-native verified cancellation and late-result design
 
-Status: **PROPOSED — owner design review pending**. This is a source-only design, not an implementation plan or completed evaluation. No implementation or live tests were run for this proposal. GN-010 and GN-011 remain **NOT_EXERCISED**.
+Status: **APPROVED — source-only implementation and FIXTURE checks complete; independent review and final QA pending**. The owner approved the design and implementation plan. The operational source-only driver and registered-host fixture tests are implemented. No native/provider LIVE tests were run. GN-010 and GN-011 remain **NOT_EXERCISED LIVE**.
 
 ## Intent and evidence boundary
 
@@ -18,7 +18,7 @@ Read-only capability research used committed native Git blobs at `68bc26b7da1990
 | Public exact tool-progress correlation plus native execution-start observation | Could cover a fresh child without a native core change; maps progress to its originating managed call | Broader later option, requiring production changes, bounded ordering and independent validation. GN-010-FRESH stays unexercised unless separately implemented and proven. |
 | Native core hook/change | Could provide a purpose-built execution boundary | Defer unless pinned public API investigation or testing proves the public route insufficient. No core edit is authorized by this proposal. |
 
-The source-only clarification/continuation approach is the author's recommendation, not an approved owner choice. Keep the implementation plan gated on approval of this document.
+The owner approved the source-only clarification/continuation approach and implementation plan. Approval covers the offline source-only implementation; real native/provider attempts still require separate matching authorization.
 
 ## Verified public capability and trust boundary
 
@@ -68,7 +68,7 @@ Record control versions 1 and 2 as separate attempts, actual native/client/WSL v
 
 ## Remaining validation and release sequence
 
-1. Owner reviews and approves the proposed approach and design. Only then write the implementation plan and use TDD for behavior changes: test the source driver’s real-event boundary, exact continuation/execution observation and callback ordering failures, implement narrowly, and independently review negative cases and preserved profile closure.
+1. Owner design/plan approval and source-only implementation are complete. Review the registered-host FIXTURE evidence and pinned-source compatibility audit, including timeout-only rejection of authentic held callbacks and retained ownership of unresolved native operations. The operational staging procedure in the runbook preserves the compiled adapter’s inferred resource paths without a shipping adapter change.
 2. Run focused global protocol/adapter/driver tests and pinned-native API/schema/order audits, plus `node .opencode/scripts/validate-harness.mts`, `node .opencode/scripts/validate-portable-harness.mjs --root .`, both runtime test scripts, `npm run validate:global`, `npm run test:global`, full `npm test`, the pinned-source suite, and `npm pack --dry-run --json` as applicable to the implemented source-driver/global/package change. Preserve exact commands, tested-tree hashes, exits and skip counts; fixture success does not close LIVE cases.
 3. For offline QA only, select an existing current-user mode-0700 private `TMPDIR` below `/var/tmp`, outside Bubblewrap's masked `/tmp`. Unset inherited `OPENCODE_CONFIG_CONTENT` only in the QA child environment; record presence/adjustment without reading or exposing its value. Do not alter global configuration or use this adjustment to bypass native approvals.
 4. Independent review must bind to the exact final source/generated/package tree and all relevant evidence. Resolve findings with fresh scoped work; rerun affected checks after changes.
