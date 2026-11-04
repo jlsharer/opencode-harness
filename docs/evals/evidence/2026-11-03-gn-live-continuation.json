@@ -1,0 +1,1773 @@
+{
+  "recordType": "Selected nonsecret LIVE observations; not an executable schema or acceptance authority",
+  "evidenceClass": "LIVE isolated source-driver native/provider execution; not T3Code UI",
+  "sourceCommits": ["60d3c94", "0509c6d"],
+  "nativeApiPin": "68bc26b7da1990ce10ffecfbc1e09eb13aa5d824",
+  "nativeBinarySha256": "ca9b3ee262e33bb4e7aa0e1230dc61086a474c8c8016b980081d0719712fd2e7",
+  "limitations": [
+    "Native termination remains unconfirmed",
+    "TOGS6b has later CLI collection only; original-turn terminal rendering was not recorded",
+    "Raw reasoning/auth/database/private files are excluded; raw evidence hashes are provenance references, not copied payloads",
+    "Post-run input/artifact checks compare deterministic setup bytes, not a captured pre-run full filesystem inventory"
+  ],
+  "cases": [
+    {
+      "caseRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b",
+      "context": {
+        "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+        "delegationTaskId": "research-80a0f60ab0",
+        "scopeKey": "unit",
+        "role": "researcher",
+        "taskMode": "research"
+      },
+      "staging": {
+        "root": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b",
+        "source": "/home/joshl/projects/opencode-harness",
+        "binary": "/home/joshl/.opencode/bin/opencode",
+        "nativeVersion": "2.1.4",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "controlVersion": 1,
+        "mode": "continuation-rendezvous",
+        "evaluationTimeoutMs": 60000,
+        "runtimeRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b/code/.opencode",
+        "preparedRelease": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b/profile-state/releases/0.1.20-6f1e61508946ab2c3711",
+        "preparedAssetMatches": 56,
+        "sourceDriverSha256": "78dde153a13a20bbd0e59ac9f092d0238821406940b31d948dff35c71a0fdc6d",
+        "compiledEntrySha256": "c8647c6254819b7e004bf96bd5f9628e231396cd897a7f70ae910087bdc66ab7",
+        "wrapperSha256": "f9be1f234624a5b298b628f990da74352d599adac52dd1eff2bec47b9544fe76",
+        "configSha256": "99590c0d2c58990cb3f63bfda10b30e64580cb3f3b4d354f0e7c47c60e5fb7a7",
+        "authentication": "one fresh isolated OpenAI OAuth connection, auth-only native transfer; no operator database or session copy"
+      },
+      "parent": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "child": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "childStructuredResults": [
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+          "delegationTaskId": "research-80a0f60ab0",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "clarification",
+          "summary": "Need declared input confirmation",
+          "evidence": [],
+          "artifacts": [],
+          "requestNonce": "confirm-a-only-5e82c912b04749c6aeb39d71",
+          "question": "Confirm that a.txt is the only authorized workspace input?"
+        },
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+          "delegationTaskId": "research-80a0f60ab0",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "success",
+          "summary": "Read a.txt and the supplied artifact after rendezvous release; no files changed.",
+          "evidence": [
+            {
+              "reference": "a.txt"
+            }
+          ],
+          "artifacts": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b/trace/sessions/ses_e5af96463ffeEXAk1hu8Am70Yg/orchestrations/gn-live-v1-continuation-rendezvous-80a0f60ab0/roles/researcher/provided-fixture.md"
+            }
+          ],
+          "outputContract": {
+            "citedFindings": "Direct evidence: a.txt:1 contains \"Read-only evaluation input\".",
+            "sourceList": ["a.txt"],
+            "implementationImplications": "No changes required",
+            "risks": "Read-only evaluation; no validation or acceptance claimed.",
+            "recommendedNextRole": "validator",
+            "traceArtifactPath": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b/trace/sessions/ses_e5af96463ffeEXAk1hu8Am70Yg/orchestrations/gn-live-v1-continuation-rendezvous-80a0f60ab0/roles/researcher/provided-fixture.md"
+          }
+        }
+      ],
+      "parentFinalText": "The existing child continuation settled with **rejection**, not acceptance.\n\n- Arm succeeded; the exact returned prompt was dispatched immediately to `ses_e5af8b7e3ffeBW0Xz7P7chtlzn`.\n- Driver observations: continuation admitted → rendezvous pending → cancellation returned `termination: \"unconfirmed\"` → rendezvous released.\n- Child finished naturally and emitted success JSON; the adapter rejected it: `\"duplicate, cancelled or late result\"`.\n- Evaluation status: phase `rejection-observed`, diagnostic `OBSERVED`; callback-before and callback-release hashes matched.\n- Three native content surfaces remained listed as missing.\n- Orchestration status: `accepted: false`; retirement refusal: `\"cancelled task: termination uncertain\"`.\n\nNo replacement child, manual cancellation, acceptance, retirement, or workspace writes were performed. No PASS is claimed.",
+      "identities": {
+        "parentSessionID": "ses_e5af96463ffeEXAk1hu8Am70Yg",
+        "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b/workspace",
+        "parentAgent": "build",
+        "agent": "build",
+        "context": {
+          "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+          "delegationTaskId": "research-80a0f60ab0",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research"
+        },
+        "childSessionID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn",
+        "requestNonce": "confirm-a-only-5e82c912b04749c6aeb39d71",
+        "generation": "bb5a4021-928a-4f02-97a9-9b845a3883bd",
+        "originalDeadline": 1793770380278,
+        "deadline": 1793770175992,
+        "clarificationCallID": "call_xp426rFfRb86AZ5T5vC3VMXo",
+        "clarificationMessageID": "msg_1a506dfae001NyA46P6uQshCMK"
+      },
+      "diagnostic": "OBSERVED",
+      "phase": "rejection-observed",
+      "orderedObservations": [
+        {
+          "sequence": 1,
+          "type": "armed",
+          "data": {
+            "agent": "build",
+            "childSessionID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn",
+            "clarificationCallID": "call_xp426rFfRb86AZ5T5vC3VMXo",
+            "clarificationMessageID": "msg_1a506dfae001NyA46P6uQshCMK",
+            "context": {
+              "delegationTaskId": "research-80a0f60ab0",
+              "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-TOGS6b/workspace",
+            "deadline": 1793770175992,
+            "generation": "bb5a4021-928a-4f02-97a9-9b845a3883bd",
+            "originalDeadline": 1793770380278,
+            "parentAgent": "build",
+            "parentSessionID": "ses_e5af96463ffeEXAk1hu8Am70Yg",
+            "requestNonce": "confirm-a-only-5e82c912b04749c6aeb39d71"
+          }
+        },
+        {
+          "sequence": 10,
+          "type": "continuation-admitted",
+          "data": {
+            "agent": "build",
+            "id": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+            "input": {
+              "agent": "researcher",
+              "background": false,
+              "description": "Bounded live evaluation continuation",
+              "prompt": "<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n{\"version\":1,\"kind\":\"clarification-response\",\"delegationTaskId\":\"research-80a0f60ab0\",\"requestNonce\":\"confirm-a-only-5e82c912b04749c6aeb39d71\",\"answer\":\"Invoke harness_eval_rendezvous exactly once with {\\\"attemptID\\\":\\\"80edcefb-2df3-45e1-a4e0-bf32247ef346\\\",\\\"token\\\":\\\"84a700b80a81a374e59acec9b523ca34461c8b96dfbb333b229e1eb33e8d919c\\\"}, then finish the original finite read-only task.\"}\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>",
+              "sessionID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn"
+            },
+            "messageID": "msg_1a507d414001y8JV3tdLd83zlr",
+            "sessionID": "ses_e5af96463ffeEXAk1hu8Am70Yg",
+            "tool": "subagent"
+          }
+        },
+        {
+          "sequence": 20,
+          "type": "rendezvous-pending",
+          "data": {
+            "agent": "researcher",
+            "id": "call_aueDbenAG2nhbDauiN5zzuZr",
+            "messageID": "msg_1a507f3a700157hitQVrnfO5hw",
+            "sessionID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn"
+          }
+        },
+        {
+          "sequence": 21,
+          "type": "cancel-invoked",
+          "data": {
+            "context": {
+              "delegationTaskId": "research-80a0f60ab0",
+              "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "version": 1
+          }
+        },
+        {
+          "sequence": 22,
+          "type": "cancel-returned",
+          "data": {
+            "content": "{\"childID\":\"ses_e5af8b7e3ffeBW0Xz7P7chtlzn\",\"termination\":\"unconfirmed\"}",
+            "output": {
+              "childID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn",
+              "termination": "unconfirmed"
+            }
+          }
+        },
+        {
+          "sequence": 23,
+          "type": "rendezvous-released",
+          "data": {
+            "id": "call_aueDbenAG2nhbDauiN5zzuZr"
+          }
+        },
+        {
+          "sequence": 113,
+          "type": "native-completed-held",
+          "data": {
+            "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+            "hash": "017727c608c7fad1ef348c388e80173518afde3cfedad3a0a02f61e0f162dcd2"
+          }
+        },
+        {
+          "sequence": 118,
+          "type": "adapter-after-returned",
+          "data": {
+            "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_n8FLgWM4FRya2PN4Pvf8ao8T\",\"parentSessionID\":\"ses_e5af96463ffeEXAk1hu8Am70Yg\",\"verifiedChildSessionID\":\"ses_e5af8b7e3ffeBW0Xz7P7chtlzn\",\"reason\":\"duplicate, cancelled or late result\"}",
+            "metadata": {
+              "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+              "harness": "rejected"
+            },
+            "output": {
+              "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+              "parentSessionID": "ses_e5af96463ffeEXAk1hu8Am70Yg",
+              "reason": "duplicate, cancelled or late result",
+              "status": "rejected",
+              "verifiedChildSessionID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn",
+              "version": 1
+            }
+          }
+        }
+      ],
+      "cancellation": {
+        "content": "{\"childID\":\"ses_e5af8b7e3ffeBW0Xz7P7chtlzn\",\"termination\":\"unconfirmed\"}",
+        "output": {
+          "childID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn",
+          "termination": "unconfirmed"
+        }
+      },
+      "callbackBeforeHash": "017727c608c7fad1ef348c388e80173518afde3cfedad3a0a02f61e0f162dcd2",
+      "callbackReleaseHash": "017727c608c7fad1ef348c388e80173518afde3cfedad3a0a02f61e0f162dcd2",
+      "adapterResult": {
+        "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_n8FLgWM4FRya2PN4Pvf8ao8T\",\"parentSessionID\":\"ses_e5af96463ffeEXAk1hu8Am70Yg\",\"verifiedChildSessionID\":\"ses_e5af8b7e3ffeBW0Xz7P7chtlzn\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "metadata": {
+          "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+          "harness": "rejected"
+        },
+        "output": {
+          "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+          "parentSessionID": "ses_e5af96463ffeEXAk1hu8Am70Yg",
+          "reason": "duplicate, cancelled or late result",
+          "status": "rejected",
+          "verifiedChildSessionID": "ses_e5af8b7e3ffeBW0Xz7P7chtlzn",
+          "version": 1
+        }
+      },
+      "nativeParentSubagent": {
+        "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+        "status": "completed",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_n8FLgWM4FRya2PN4Pvf8ao8T\",\"parentSessionID\":\"ses_e5af96463ffeEXAk1hu8Am70Yg\",\"verifiedChildSessionID\":\"ses_e5af8b7e3ffeBW0Xz7P7chtlzn\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_n8FLgWM4FRya2PN4Pvf8ao8T",
+          "truncated": false
+        }
+      },
+      "originalCliSubagent": null,
+      "collectionCliExit": {
+        "code": 0,
+        "signal": null
+      },
+      "nativeStatus": {
+        "version": 2,
+        "profileVersion": "2.0.0",
+        "supportedControlVersions": [1, 2],
+        "generation": "bb5a4021-928a-4f02-97a9-9b845a3883bd",
+        "residentRuns": {
+          "used": 1,
+          "limit": 128
+        },
+        "replay": {
+          "identityRecords": 5,
+          "identityLimit": 65536,
+          "canonicalBytes": 1055,
+          "byteLimit": 16777216,
+          "reservedRecords": 0,
+          "reservedBytes": 563,
+          "reservedSummaryBytes": 563,
+          "remainingRecords": 65531,
+          "remainingBytes": 16776161
+        },
+        "runs": [
+          {
+            "orchestrationId": "gn-live-v1-continuation-rendezvous-80a0f60ab0",
+            "accepted": false,
+            "acceptanceDigest": null,
+            "retirementRefusal": "cancelled task: termination uncertain"
+          }
+        ],
+        "residentCalls": {
+          "used": 2,
+          "limit": 4096
+        }
+      },
+      "acceptanceError": {
+        "type": "unknown",
+        "message": "independent acceptance incomplete or stale"
+      },
+      "ordinaryRead": [
+        {
+          "input": {
+            "path": "a.txt"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Read file a.txt, lines 1-1\n1: Read-only evaluation input"
+            }
+          ]
+        }
+      ],
+      "inventory": {
+        "method": "Post-run inventory compared with deterministic operator setup bytes; not a captured pre-run filesystem inventory",
+        "workspace": [
+          {
+            "path": "workspace/a.txt",
+            "mode": 384,
+            "bytes": 27,
+            "sha256": "2fa7da75f19d29590276a0c5edabbc8554cbeeb88951767d7f7ee5cf61041565"
+          }
+        ],
+        "inputUnchanged": true,
+        "providedArtifact": {
+          "path": "trace/sessions/ses_e5af96463ffeEXAk1hu8Am70Yg/orchestrations/gn-live-v1-continuation-rendezvous-80a0f60ab0/roles/researcher/provided-fixture.md",
+          "expectedSha256": "4d9cf615fdea235c6c80f967396568e3331b34bc1e885ca3d427c9b3314fd760",
+          "observedSha256": "4d9cf615fdea235c6c80f967396568e3331b34bc1e885ca3d427c9b3314fd760",
+          "mode": 256
+        }
+      },
+      "rawEvidenceSha256": {
+        "staging.json": "960cbc4064f04738608c202f67e5245620765216b53887406a5f2ad481b24e47",
+        "eval-status-extracted.json": "d940816b473891155da55446013a445949ff9f7dd299713f7fe325a354ed44f7",
+        "initial-context.json": "03f692ea4ebfc0bcf9277dabd4c063fe5724d0b6473ed3db5b4c51e8e0a980ac",
+        "continue-context.json": "feb3c72a5e363c15d2fb499bd394670d8caf623a890d59a3be8114633608f405",
+        "collect-context.json": "98efb702506b6324158a4a64b1948d08aded018765725916cef65faf6d9f58ca",
+        "child-session.json": "47f851c97fb5da5f0e570baf302cfa65c65f800d8540f0deaabace61442bf079",
+        "child-context.json": "9e5653b486fb3f2ccac8724db6c9acb5271cc526d4edf1fac135567a59fca3ca",
+        "terminal-collect.jsonl": "c9c77ea2e1451e91c288a9a875c020591159e9d1a346ff16f0d94fe8dd290d8a",
+        "post-inventory.json": "b0cb45104c7982b08bd296bee3b577073cf802d651452218cf2d1a484f657614"
+      }
+    },
+    {
+      "caseRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT",
+      "context": {
+        "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+        "delegationTaskId": "research-22c2f023cc",
+        "scopeKey": "unit",
+        "role": "researcher",
+        "taskMode": "research"
+      },
+      "staging": {
+        "root": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT",
+        "source": "/home/joshl/projects/opencode-harness",
+        "binary": "/home/joshl/.opencode/bin/opencode",
+        "nativeVersion": "2.1.4",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "controlVersion": 2,
+        "mode": "continuation-rendezvous",
+        "evaluationTimeoutMs": 60000,
+        "runtimeRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/code/.opencode",
+        "preparedRelease": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/profile-state/releases/0.1.20-6f1e61508946ab2c3711",
+        "preparedAssetMatches": 56,
+        "sourceDriverSha256": "78dde153a13a20bbd0e59ac9f092d0238821406940b31d948dff35c71a0fdc6d",
+        "compiledEntrySha256": "c8647c6254819b7e004bf96bd5f9628e231396cd897a7f70ae910087bdc66ab7",
+        "wrapperSha256": "e782d18ed451a42bf7fc64ea98138f020a4908a43ae2b170665da632c6184151",
+        "configSha256": "1f0793b269e0dfc74dd10fea7a286fc23b209577af0b21874ac11f80cc3802b8",
+        "authentication": "one fresh isolated OpenAI OAuth connection, auth-only native transfer; no operator database or session copy"
+      },
+      "parent": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "child": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "childStructuredResults": [
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+          "delegationTaskId": "research-22c2f023cc",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "clarification",
+          "summary": "Need declared input confirmation",
+          "evidence": [],
+          "artifacts": [],
+          "requestNonce": "confirm-7a6906dc-883d-42ee-bb92-ef520faa9367",
+          "question": "Confirm that a.txt is the only authorized workspace input?"
+        },
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+          "delegationTaskId": "research-22c2f023cc",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "success",
+          "summary": "Read a.txt after the authorized continuation and rendezvous; read and referenced the supplied artifact. No files changed.",
+          "evidence": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/workspace/a.txt"
+            }
+          ],
+          "artifacts": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/trace/sessions/ses_e5af53356ffeo2KPpo5I7Lr2Uv/orchestrations/gn-live-v2-continuation-rendezvous-22c2f023cc/roles/researcher/provided-fixture.md"
+            }
+          ],
+          "outputContract": {
+            "citedFindings": "Direct evidence: a.txt:1 contains \"Read-only evaluation input\".",
+            "sourceList": ["a.txt"],
+            "implementationImplications": "No changes required",
+            "risks": "Read-only evaluation; no validation or acceptance asserted.",
+            "recommendedNextRole": "validator",
+            "traceArtifactPath": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/trace/sessions/ses_e5af53356ffeo2KPpo5I7Lr2Uv/orchestrations/gn-live-v2-continuation-rendezvous-22c2f023cc/roles/researcher/provided-fixture.md"
+          }
+        }
+      ],
+      "parentFinalText": "Continued the exact existing child with the unchanged returned prompt.\n\n- **Attempt:** `411bc666-4508-44cc-8958-2a93ed196c15`\n- **Observed sequence:** continuation admitted → rendezvous pending → driver cancellation → rendezvous released → native completion held → adapter returned.\n- **Native result:** `rejected` — “duplicate, cancelled or late result”.\n- **Evaluation status:** `rejection-observed`, diagnostic `OBSERVED`; callback hashes match.\n- **Cancellation:** termination `unconfirmed`.\n- **Missing surfaces:** native parent-visible, model, and terminal content.\n- **Orchestration:** unaccepted; retirement refusal: `cancelled task: termination uncertain`.\n\nNo replacement child, manual cancellation, acceptance, retirement, or writes performed. These are observations, not a PASS claim.",
+      "identities": {
+        "parentSessionID": "ses_e5af53356ffeo2KPpo5I7Lr2Uv",
+        "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/workspace",
+        "parentAgent": "build",
+        "agent": "build",
+        "context": {
+          "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+          "delegationTaskId": "research-22c2f023cc",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research"
+        },
+        "childSessionID": "ses_e5af4870effetJzVZeuAYHAb1S",
+        "requestNonce": "confirm-7a6906dc-883d-42ee-bb92-ef520faa9367",
+        "generation": "67a18530-37b8-4732-821e-cd4eca2d5547",
+        "originalDeadline": 1793770654925,
+        "deadline": 1793770444320,
+        "clarificationCallID": "call_KnZJ0oezZd0qC4YE0CvqEi2j",
+        "clarificationMessageID": "msg_1a50b0f9a001h0uaLsTMyX1UGj"
+      },
+      "diagnostic": "OBSERVED",
+      "phase": "rejection-observed",
+      "orderedObservations": [
+        {
+          "sequence": 1,
+          "type": "armed",
+          "data": {
+            "agent": "build",
+            "childSessionID": "ses_e5af4870effetJzVZeuAYHAb1S",
+            "clarificationCallID": "call_KnZJ0oezZd0qC4YE0CvqEi2j",
+            "clarificationMessageID": "msg_1a50b0f9a001h0uaLsTMyX1UGj",
+            "context": {
+              "delegationTaskId": "research-22c2f023cc",
+              "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-continuation-rendezvous-6bCLuT/workspace",
+            "deadline": 1793770444320,
+            "generation": "67a18530-37b8-4732-821e-cd4eca2d5547",
+            "originalDeadline": 1793770654925,
+            "parentAgent": "build",
+            "parentSessionID": "ses_e5af53356ffeo2KPpo5I7Lr2Uv",
+            "requestNonce": "confirm-7a6906dc-883d-42ee-bb92-ef520faa9367"
+          }
+        },
+        {
+          "sequence": 10,
+          "type": "continuation-admitted",
+          "data": {
+            "agent": "build",
+            "id": "call_IpXQXBi5TZImetQwAh0cDmHh",
+            "input": {
+              "agent": "researcher",
+              "background": false,
+              "description": "Bounded live evaluation continuation",
+              "prompt": "<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n{\"version\":1,\"kind\":\"clarification-response\",\"delegationTaskId\":\"research-22c2f023cc\",\"requestNonce\":\"confirm-7a6906dc-883d-42ee-bb92-ef520faa9367\",\"answer\":\"Invoke harness_eval_rendezvous exactly once with {\\\"attemptID\\\":\\\"411bc666-4508-44cc-8958-2a93ed196c15\\\",\\\"token\\\":\\\"707ad62843a05573796e576a6c9487cf7f732c853b4cf7e928cbc2dd6ad93015\\\"}, then finish the original finite read-only task.\"}\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>",
+              "sessionID": "ses_e5af4870effetJzVZeuAYHAb1S"
+            },
+            "messageID": "msg_1a50bebd50019UZn0OZzzchJh3",
+            "sessionID": "ses_e5af53356ffeo2KPpo5I7Lr2Uv",
+            "tool": "subagent"
+          }
+        },
+        {
+          "sequence": 20,
+          "type": "rendezvous-pending",
+          "data": {
+            "agent": "researcher",
+            "id": "call_Lw5wRxViJqzGKYlMyxEuVhxE",
+            "messageID": "msg_1a50c0caf001K6GYb913mNnL4J",
+            "sessionID": "ses_e5af4870effetJzVZeuAYHAb1S"
+          }
+        },
+        {
+          "sequence": 21,
+          "type": "cancel-invoked",
+          "data": {
+            "context": {
+              "delegationTaskId": "research-22c2f023cc",
+              "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "version": 2
+          }
+        },
+        {
+          "sequence": 22,
+          "type": "cancel-returned",
+          "data": {
+            "content": "{\"childID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"termination\":\"unconfirmed\"}",
+            "output": {
+              "childID": "ses_e5af4870effetJzVZeuAYHAb1S",
+              "termination": "unconfirmed"
+            }
+          }
+        },
+        {
+          "sequence": 23,
+          "type": "rendezvous-released",
+          "data": {
+            "id": "call_Lw5wRxViJqzGKYlMyxEuVhxE"
+          }
+        },
+        {
+          "sequence": 114,
+          "type": "native-completed-held",
+          "data": {
+            "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+            "hash": "3896597569e0014473d7ace4aac440c9216d3993b251d5c6500bc22b370d2596"
+          }
+        },
+        {
+          "sequence": 119,
+          "type": "adapter-after-returned",
+          "data": {
+            "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_IpXQXBi5TZImetQwAh0cDmHh\",\"parentSessionID\":\"ses_e5af53356ffeo2KPpo5I7Lr2Uv\",\"verifiedChildSessionID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"reason\":\"duplicate, cancelled or late result\"}",
+            "metadata": {
+              "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+              "harness": "rejected"
+            },
+            "output": {
+              "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+              "parentSessionID": "ses_e5af53356ffeo2KPpo5I7Lr2Uv",
+              "reason": "duplicate, cancelled or late result",
+              "status": "rejected",
+              "verifiedChildSessionID": "ses_e5af4870effetJzVZeuAYHAb1S",
+              "version": 1
+            }
+          }
+        }
+      ],
+      "cancellation": {
+        "content": "{\"childID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"termination\":\"unconfirmed\"}",
+        "output": {
+          "childID": "ses_e5af4870effetJzVZeuAYHAb1S",
+          "termination": "unconfirmed"
+        }
+      },
+      "callbackBeforeHash": "3896597569e0014473d7ace4aac440c9216d3993b251d5c6500bc22b370d2596",
+      "callbackReleaseHash": "3896597569e0014473d7ace4aac440c9216d3993b251d5c6500bc22b370d2596",
+      "adapterResult": {
+        "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_IpXQXBi5TZImetQwAh0cDmHh\",\"parentSessionID\":\"ses_e5af53356ffeo2KPpo5I7Lr2Uv\",\"verifiedChildSessionID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "metadata": {
+          "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+          "harness": "rejected"
+        },
+        "output": {
+          "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+          "parentSessionID": "ses_e5af53356ffeo2KPpo5I7Lr2Uv",
+          "reason": "duplicate, cancelled or late result",
+          "status": "rejected",
+          "verifiedChildSessionID": "ses_e5af4870effetJzVZeuAYHAb1S",
+          "version": 1
+        }
+      },
+      "nativeParentSubagent": {
+        "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+        "status": "completed",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_IpXQXBi5TZImetQwAh0cDmHh\",\"parentSessionID\":\"ses_e5af53356ffeo2KPpo5I7Lr2Uv\",\"verifiedChildSessionID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+          "truncated": false
+        }
+      },
+      "originalCliSubagent": {
+        "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+        "status": "completed",
+        "output": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_IpXQXBi5TZImetQwAh0cDmHh\",\"parentSessionID\":\"ses_e5af53356ffeo2KPpo5I7Lr2Uv\",\"verifiedChildSessionID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_IpXQXBi5TZImetQwAh0cDmHh\",\"parentSessionID\":\"ses_e5af53356ffeo2KPpo5I7Lr2Uv\",\"verifiedChildSessionID\":\"ses_e5af4870effetJzVZeuAYHAb1S\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_IpXQXBi5TZImetQwAh0cDmHh",
+          "truncated": false
+        },
+        "exit": {
+          "code": 0,
+          "signal": null
+        }
+      },
+      "collectionCliExit": {
+        "code": 0,
+        "signal": null
+      },
+      "nativeStatus": {
+        "version": 2,
+        "profileVersion": "2.0.0",
+        "supportedControlVersions": [1, 2],
+        "generation": "67a18530-37b8-4732-821e-cd4eca2d5547",
+        "residentRuns": {
+          "used": 1,
+          "limit": 128
+        },
+        "replay": {
+          "identityRecords": 5,
+          "identityLimit": 65536,
+          "canonicalBytes": 1055,
+          "byteLimit": 16777216,
+          "reservedRecords": 0,
+          "reservedBytes": 563,
+          "reservedSummaryBytes": 563,
+          "remainingRecords": 65531,
+          "remainingBytes": 16776161
+        },
+        "runs": [
+          {
+            "orchestrationId": "gn-live-v2-continuation-rendezvous-22c2f023cc",
+            "accepted": false,
+            "acceptanceDigest": null,
+            "retirementRefusal": "cancelled task: termination uncertain"
+          }
+        ],
+        "residentCalls": {
+          "used": 2,
+          "limit": 4096
+        }
+      },
+      "acceptanceError": {
+        "type": "unknown",
+        "message": "independent acceptance incomplete or stale"
+      },
+      "ordinaryRead": [
+        {
+          "input": {
+            "path": "a.txt"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Read file a.txt, lines 1-1\n1: Read-only evaluation input"
+            }
+          ]
+        }
+      ],
+      "inventory": {
+        "method": "Post-run inventory compared with deterministic operator setup bytes; not a captured pre-run filesystem inventory",
+        "workspace": [
+          {
+            "path": "workspace/a.txt",
+            "mode": 384,
+            "bytes": 27,
+            "sha256": "2fa7da75f19d29590276a0c5edabbc8554cbeeb88951767d7f7ee5cf61041565"
+          }
+        ],
+        "inputUnchanged": true,
+        "providedArtifact": {
+          "path": "trace/sessions/ses_e5af53356ffeo2KPpo5I7Lr2Uv/orchestrations/gn-live-v2-continuation-rendezvous-22c2f023cc/roles/researcher/provided-fixture.md",
+          "expectedSha256": "f1f95c2a764669ca6fda5655776eda4da565720bf552ba90ef30ad8aabb0a8f8",
+          "observedSha256": "f1f95c2a764669ca6fda5655776eda4da565720bf552ba90ef30ad8aabb0a8f8",
+          "mode": 256
+        }
+      },
+      "rawEvidenceSha256": {
+        "staging.json": "57a1c8228319e1f1c6f65f03afb7a1bb79bb04acdfc4d8445a5928b17b932684",
+        "eval-status-extracted.json": "9c355fc883c9f5059bf14c477844bd65b153334bc4c5530c3a1d7a02614726ff",
+        "initial-context.json": "17cec6cf0960156dcae24c4a806354163ce980db262434860943a7e99fe22a6d",
+        "continue-context.json": "cfbc135f46070628ff86177a9d51298369dafbb8e646d4845a28ec24c841098d",
+        "collect-context.json": "baabd239e874b0c54b7c08a4d5cd5ad7536e5e415183fb8a6059664216ba593a",
+        "child-session.json": "89da0746ce9a128c45f7295afba655a7e3bf9a8927ab33cb83cb2bc63eac45d3",
+        "child-context.json": "691c61b9e8e8ebbefb789a28bba866e98e4acb4ad8178015c8fc433a04cfa79e",
+        "terminal-continue.jsonl": "7b350f88ca840c3310d42d63063ecc5f9350c3f885e402626e2fdafc51549fcd",
+        "terminal-collect.jsonl": "a83ff24e64e77e722f646f7f81cef6626bc9c2dfdeff532e4e312dbb1ea92680",
+        "post-inventory.json": "37572563df12dddbdf0a55b21a04c53f6d88df2ed91fe3c7795becfc81e21bef"
+      }
+    },
+    {
+      "caseRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1",
+      "context": {
+        "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+        "delegationTaskId": "research-6608dc6e4e",
+        "scopeKey": "unit",
+        "role": "researcher",
+        "taskMode": "research"
+      },
+      "staging": {
+        "root": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1",
+        "source": "/home/joshl/projects/opencode-harness",
+        "binary": "/home/joshl/.opencode/bin/opencode",
+        "nativeVersion": "2.1.4",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "controlVersion": 1,
+        "mode": "completed-after-hold",
+        "evaluationTimeoutMs": 60000,
+        "runtimeRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/code/.opencode",
+        "preparedRelease": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/profile-state/releases/0.1.20-6f1e61508946ab2c3711",
+        "preparedAssetMatches": 56,
+        "sourceDriverSha256": "78dde153a13a20bbd0e59ac9f092d0238821406940b31d948dff35c71a0fdc6d",
+        "compiledEntrySha256": "c8647c6254819b7e004bf96bd5f9628e231396cd897a7f70ae910087bdc66ab7",
+        "wrapperSha256": "8935cc44801e6cc3179fa1aa96d0f5cfceae8c434922bba939d22b7fe387391d",
+        "configSha256": "40006112c0f10ad6767ccd6b2430f577964f8c57aaf2f35bcae47d8ec900e37c",
+        "authentication": "one fresh isolated OpenAI OAuth connection, auth-only native transfer; no operator database or session copy"
+      },
+      "parent": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "child": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "childStructuredResults": [
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+          "delegationTaskId": "research-6608dc6e4e",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "clarification",
+          "summary": "Need declared input confirmation",
+          "evidence": [],
+          "artifacts": [],
+          "requestNonce": "confirm-78674cb3-bfc4-46bd-9ea5-38eafbb4d622",
+          "question": "Confirm that a.txt is the only authorized workspace input?"
+        },
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+          "delegationTaskId": "research-6608dc6e4e",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "success",
+          "summary": "Read a.txt after correlated confirmation; referenced the supplied artifact. No files changed.",
+          "evidence": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/workspace/a.txt"
+            }
+          ],
+          "artifacts": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/trace/sessions/ses_e5af1e1e4ffev02jHLDCCP301D/orchestrations/gn-live-v1-completed-after-hold-6608dc6e4e/roles/researcher/provided-fixture.md"
+            }
+          ],
+          "outputContract": {
+            "citedFindings": "Direct evidence: a.txt:1 contains \"Read-only evaluation input\".",
+            "sourceList": [
+              "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/workspace/a.txt"
+            ],
+            "implementationImplications": "No changes required",
+            "risks": "Read-only evaluation; no validation or acceptance claimed.",
+            "recommendedNextRole": "validator",
+            "traceArtifactPath": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/trace/sessions/ses_e5af1e1e4ffev02jHLDCCP301D/orchestrations/gn-live-v1-completed-after-hold-6608dc6e4e/roles/researcher/provided-fixture.md"
+          }
+        }
+      ],
+      "parentFinalText": "Observed rejection—not a claimed PASS.\n\n- Armed attempt `80331fd8-d2ef-4c5d-b27d-94323de03a49` and immediately dispatched the unchanged continuation to existing child `ses_e5af13a0bffeC2gZ1XQpEnELl3`.\n- Child read `a.txt`, emitted structured success, and finished naturally.\n- Driver observed `native-completed-held`, then invoked v1 cancellation; termination returned `unconfirmed`.\n- Native continuation returned `rejected`: `duplicate, cancelled or late result`.\n- Callback before/release hashes matched.\n- Evaluation status: `rejection-observed`, diagnostic `OBSERVED`; three native content surfaces remain listed as missing.\n- Orchestration remains unaccepted; retirement refusal: `cancelled task: termination uncertain`.\n\nNo writes, extra children, manual cancellation, acceptance, or retirement performed.",
+      "identities": {
+        "parentSessionID": "ses_e5af1e1e4ffev02jHLDCCP301D",
+        "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/workspace",
+        "parentAgent": "build",
+        "agent": "build",
+        "context": {
+          "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+          "delegationTaskId": "research-6608dc6e4e",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research"
+        },
+        "childSessionID": "ses_e5af13a0bffeC2gZ1XQpEnELl3",
+        "requestNonce": "confirm-78674cb3-bfc4-46bd-9ea5-38eafbb4d622",
+        "generation": "cc929848-c8ed-4be7-ba38-245705370be8",
+        "originalDeadline": 1793770871247,
+        "deadline": 1793770661956,
+        "clarificationCallID": "call_6sMUR1Ot6vEf22QLq2ELyqrc",
+        "clarificationMessageID": "msg_1a50e5bf9001V6MMGPPhtBMPqv"
+      },
+      "diagnostic": "OBSERVED",
+      "phase": "rejection-observed",
+      "orderedObservations": [
+        {
+          "sequence": 1,
+          "type": "armed",
+          "data": {
+            "agent": "build",
+            "childSessionID": "ses_e5af13a0bffeC2gZ1XQpEnELl3",
+            "clarificationCallID": "call_6sMUR1Ot6vEf22QLq2ELyqrc",
+            "clarificationMessageID": "msg_1a50e5bf9001V6MMGPPhtBMPqv",
+            "context": {
+              "delegationTaskId": "research-6608dc6e4e",
+              "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-completed-after-hold-1cixV1/workspace",
+            "deadline": 1793770661956,
+            "generation": "cc929848-c8ed-4be7-ba38-245705370be8",
+            "originalDeadline": 1793770871247,
+            "parentAgent": "build",
+            "parentSessionID": "ses_e5af1e1e4ffev02jHLDCCP301D",
+            "requestNonce": "confirm-78674cb3-bfc4-46bd-9ea5-38eafbb4d622"
+          }
+        },
+        {
+          "sequence": 10,
+          "type": "continuation-admitted",
+          "data": {
+            "agent": "build",
+            "id": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+            "input": {
+              "agent": "researcher",
+              "background": false,
+              "description": "Bounded live evaluation continuation",
+              "prompt": "<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n{\"version\":1,\"kind\":\"clarification-response\",\"delegationTaskId\":\"research-6608dc6e4e\",\"requestNonce\":\"confirm-78674cb3-bfc4-46bd-9ea5-38eafbb4d622\",\"answer\":\"Finish the original finite read-only task and return its required structured result.\"}\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>",
+              "sessionID": "ses_e5af13a0bffeC2gZ1XQpEnELl3"
+            },
+            "messageID": "msg_1a50f3df9001wp2I7qIgW0cSKs",
+            "sessionID": "ses_e5af1e1e4ffev02jHLDCCP301D",
+            "tool": "subagent"
+          }
+        },
+        {
+          "sequence": 119,
+          "type": "native-completed-held",
+          "data": {
+            "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+            "hash": "d1c50fbac147d8041499fd66a9bc273172c50a0707fdb8e6dedcd12246dff8a0"
+          }
+        },
+        {
+          "sequence": 124,
+          "type": "cancel-invoked",
+          "data": {
+            "context": {
+              "delegationTaskId": "research-6608dc6e4e",
+              "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "version": 1
+          }
+        },
+        {
+          "sequence": 125,
+          "type": "cancel-returned",
+          "data": {
+            "content": "{\"childID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"termination\":\"unconfirmed\"}",
+            "output": {
+              "childID": "ses_e5af13a0bffeC2gZ1XQpEnELl3",
+              "termination": "unconfirmed"
+            }
+          }
+        },
+        {
+          "sequence": 126,
+          "type": "adapter-after-returned",
+          "data": {
+            "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_tQp7zbPEaHOpFe9Vj90uMV6z\",\"parentSessionID\":\"ses_e5af1e1e4ffev02jHLDCCP301D\",\"verifiedChildSessionID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"reason\":\"duplicate, cancelled or late result\"}",
+            "metadata": {
+              "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+              "harness": "rejected"
+            },
+            "output": {
+              "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+              "parentSessionID": "ses_e5af1e1e4ffev02jHLDCCP301D",
+              "reason": "duplicate, cancelled or late result",
+              "status": "rejected",
+              "verifiedChildSessionID": "ses_e5af13a0bffeC2gZ1XQpEnELl3",
+              "version": 1
+            }
+          }
+        }
+      ],
+      "cancellation": {
+        "content": "{\"childID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"termination\":\"unconfirmed\"}",
+        "output": {
+          "childID": "ses_e5af13a0bffeC2gZ1XQpEnELl3",
+          "termination": "unconfirmed"
+        }
+      },
+      "callbackBeforeHash": "d1c50fbac147d8041499fd66a9bc273172c50a0707fdb8e6dedcd12246dff8a0",
+      "callbackReleaseHash": "d1c50fbac147d8041499fd66a9bc273172c50a0707fdb8e6dedcd12246dff8a0",
+      "adapterResult": {
+        "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_tQp7zbPEaHOpFe9Vj90uMV6z\",\"parentSessionID\":\"ses_e5af1e1e4ffev02jHLDCCP301D\",\"verifiedChildSessionID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "metadata": {
+          "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+          "harness": "rejected"
+        },
+        "output": {
+          "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+          "parentSessionID": "ses_e5af1e1e4ffev02jHLDCCP301D",
+          "reason": "duplicate, cancelled or late result",
+          "status": "rejected",
+          "verifiedChildSessionID": "ses_e5af13a0bffeC2gZ1XQpEnELl3",
+          "version": 1
+        }
+      },
+      "nativeParentSubagent": {
+        "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+        "status": "completed",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_tQp7zbPEaHOpFe9Vj90uMV6z\",\"parentSessionID\":\"ses_e5af1e1e4ffev02jHLDCCP301D\",\"verifiedChildSessionID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+          "truncated": false
+        }
+      },
+      "originalCliSubagent": {
+        "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+        "status": "completed",
+        "output": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_tQp7zbPEaHOpFe9Vj90uMV6z\",\"parentSessionID\":\"ses_e5af1e1e4ffev02jHLDCCP301D\",\"verifiedChildSessionID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_tQp7zbPEaHOpFe9Vj90uMV6z\",\"parentSessionID\":\"ses_e5af1e1e4ffev02jHLDCCP301D\",\"verifiedChildSessionID\":\"ses_e5af13a0bffeC2gZ1XQpEnELl3\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_tQp7zbPEaHOpFe9Vj90uMV6z",
+          "truncated": false
+        },
+        "exit": {
+          "code": 0,
+          "signal": null
+        }
+      },
+      "collectionCliExit": {
+        "code": 0,
+        "signal": null
+      },
+      "nativeStatus": {
+        "version": 2,
+        "profileVersion": "2.0.0",
+        "supportedControlVersions": [1, 2],
+        "generation": "cc929848-c8ed-4be7-ba38-245705370be8",
+        "residentRuns": {
+          "used": 1,
+          "limit": 128
+        },
+        "replay": {
+          "identityRecords": 5,
+          "identityLimit": 65536,
+          "canonicalBytes": 1043,
+          "byteLimit": 16777216,
+          "reservedRecords": 0,
+          "reservedBytes": 557,
+          "reservedSummaryBytes": 557,
+          "remainingRecords": 65531,
+          "remainingBytes": 16776173
+        },
+        "runs": [
+          {
+            "orchestrationId": "gn-live-v1-completed-after-hold-6608dc6e4e",
+            "accepted": false,
+            "acceptanceDigest": null,
+            "retirementRefusal": "cancelled task: termination uncertain"
+          }
+        ],
+        "residentCalls": {
+          "used": 2,
+          "limit": 4096
+        }
+      },
+      "acceptanceError": {
+        "type": "unknown",
+        "message": "independent acceptance incomplete or stale"
+      },
+      "ordinaryRead": [
+        {
+          "input": {
+            "path": "a.txt"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Read file a.txt, lines 1-1\n1: Read-only evaluation input"
+            }
+          ]
+        }
+      ],
+      "inventory": {
+        "method": "Post-run inventory compared with deterministic operator setup bytes; not a captured pre-run filesystem inventory",
+        "workspace": [
+          {
+            "path": "workspace/a.txt",
+            "mode": 384,
+            "bytes": 27,
+            "sha256": "2fa7da75f19d29590276a0c5edabbc8554cbeeb88951767d7f7ee5cf61041565"
+          }
+        ],
+        "inputUnchanged": true,
+        "providedArtifact": {
+          "path": "trace/sessions/ses_e5af1e1e4ffev02jHLDCCP301D/orchestrations/gn-live-v1-completed-after-hold-6608dc6e4e/roles/researcher/provided-fixture.md",
+          "expectedSha256": "9ad3e28103eed6e28df3c12b6f98fe9f314d175cc72f8079571dc2d8501eeea9",
+          "observedSha256": "9ad3e28103eed6e28df3c12b6f98fe9f314d175cc72f8079571dc2d8501eeea9",
+          "mode": 256
+        }
+      },
+      "rawEvidenceSha256": {
+        "staging.json": "a67e98694d0997cbb1b8c628f59fa38d8a7129ecccc6ab499f801e6b39cdb903",
+        "eval-status-extracted.json": "c0c10b5c31e777f074ff9d808d11558b37e08f590a1521ce3f22a346949c6c61",
+        "initial-context.json": "df434109867cc15a57517695e65338cbb64f7706b08c45203c4754e4be394e25",
+        "continue-context.json": "c9c3305ad1b2a6ae7dd284c41c989b592e65e28d9534aceda205c0ca61bc4f4b",
+        "collect-context.json": "8dc807c8ada8b91b40efad6b8c10a503053f77e50f57fbc44ab0094bc3b5b20e",
+        "child-session.json": "c5065420174f5b1c71d0961046045cfc3a1b22e3c6c9eddf2af55ec1ed15a024",
+        "child-context.json": "8d78f065d351cf15b57581a173cdb769fbb7bdc26c0ef25877e0d07b9e5acd81",
+        "terminal-continue.jsonl": "0c19387ee0c032ae0b37c27f283d74c7ac285589e0bfc2aa334401b2c1ab84f6",
+        "terminal-collect.jsonl": "115ebc360c86e9f9f117be1af3d232be878f7a76bd083b640395fd8adb261e83",
+        "post-inventory.json": "ee13ab376d8a7f2a3d4ee99d77fefeb0998e2a21da2023a42a31b8dcec9c5343"
+      }
+    },
+    {
+      "caseRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc",
+      "context": {
+        "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+        "delegationTaskId": "research-06b1348ad4",
+        "scopeKey": "unit",
+        "role": "researcher",
+        "taskMode": "research"
+      },
+      "staging": {
+        "root": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc",
+        "source": "/home/joshl/projects/opencode-harness",
+        "binary": "/home/joshl/.opencode/bin/opencode",
+        "nativeVersion": "2.1.4",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "controlVersion": 2,
+        "mode": "completed-after-hold",
+        "evaluationTimeoutMs": 60000,
+        "runtimeRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc/code/.opencode",
+        "preparedRelease": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc/profile-state/releases/0.1.20-6f1e61508946ab2c3711",
+        "preparedAssetMatches": 56,
+        "sourceDriverSha256": "78dde153a13a20bbd0e59ac9f092d0238821406940b31d948dff35c71a0fdc6d",
+        "compiledEntrySha256": "c8647c6254819b7e004bf96bd5f9628e231396cd897a7f70ae910087bdc66ab7",
+        "wrapperSha256": "24761b9088e1174f6cb4dd42f651f768403975fa08a579bb37ec85b4974f8a5b",
+        "configSha256": "f04a5241195522c68a6ac24d211618bdd22b2c2f405ba201148349ef0ee193b1",
+        "authentication": "one fresh isolated OpenAI OAuth connection, auth-only native transfer; no operator database or session copy"
+      },
+      "parent": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "child": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "childStructuredResults": [
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+          "delegationTaskId": "research-06b1348ad4",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "clarification",
+          "summary": "Need declared input confirmation",
+          "evidence": [],
+          "artifacts": [],
+          "requestNonce": "confirm-a-91bcd472-f081-4c59-a276-08c6934e251d",
+          "question": "Confirm that a.txt is the only authorized workspace input?"
+        },
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+          "delegationTaskId": "research-06b1348ad4",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "success",
+          "summary": "Read a.txt and the supplied artifact; no files changed.",
+          "evidence": [
+            {
+              "reference": "a.txt"
+            }
+          ],
+          "artifacts": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc/trace/sessions/ses_e5aed9724ffeOLWQYaWjoS3sBR/orchestrations/gn-live-v2-completed-after-hold-06b1348ad4/roles/researcher/provided-fixture.md"
+            }
+          ],
+          "outputContract": {
+            "citedFindings": "Direct evidence: a.txt:1 contains \"Read-only evaluation input\".",
+            "sourceList": ["a.txt"],
+            "implementationImplications": "No changes required",
+            "risks": "Read-only evaluation; no validation or acceptance asserted.",
+            "recommendedNextRole": "validator",
+            "traceArtifactPath": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc/trace/sessions/ses_e5aed9724ffeOLWQYaWjoS3sBR/orchestrations/gn-live-v2-completed-after-hold-06b1348ad4/roles/researcher/provided-fixture.md"
+          }
+        }
+      ],
+      "parentFinalText": "Continuation used the existing child and exact returned prompt.\n\n- Native subagent rejected: `duplicate, cancelled or late result`.\n- Evaluation: `rejection-observed`; diagnostic: `OBSERVED`.\n- Visible observations show the child read `a.txt` and finished naturally before driver cancellation.\n- Cancellation reported termination `unconfirmed`.\n- Callback-before and release hashes matched.\n- Orchestration remains **unaccepted**; retirement refusal: `cancelled task: termination uncertain`.\n- Evaluation still lists three missing native surfaces; no PASS is claimed.\n\nStopped after the two status calls. No writes or extra children.",
+      "identities": {
+        "parentSessionID": "ses_e5aed9724ffeOLWQYaWjoS3sBR",
+        "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc/workspace",
+        "parentAgent": "build",
+        "agent": "build",
+        "context": {
+          "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+          "delegationTaskId": "research-06b1348ad4",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research"
+        },
+        "childSessionID": "ses_e5aecefbfffeZL5jIfK9yllUAW",
+        "requestNonce": "confirm-a-91bcd472-f081-4c59-a276-08c6934e251d",
+        "generation": "b435f303-7a85-4f77-bf65-399914e7cf78",
+        "originalDeadline": 1793771152412,
+        "deadline": 1793770942996,
+        "clarificationCallID": "call_po7WGT3qTLBHZCp0xkc9mXQH",
+        "clarificationMessageID": "msg_1a512aa91001fE63rAvi7c9KTe"
+      },
+      "diagnostic": "OBSERVED",
+      "phase": "rejection-observed",
+      "orderedObservations": [
+        {
+          "sequence": 1,
+          "type": "armed",
+          "data": {
+            "agent": "build",
+            "childSessionID": "ses_e5aecefbfffeZL5jIfK9yllUAW",
+            "clarificationCallID": "call_po7WGT3qTLBHZCp0xkc9mXQH",
+            "clarificationMessageID": "msg_1a512aa91001fE63rAvi7c9KTe",
+            "context": {
+              "delegationTaskId": "research-06b1348ad4",
+              "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v2-completed-after-hold-04mjGc/workspace",
+            "deadline": 1793770942996,
+            "generation": "b435f303-7a85-4f77-bf65-399914e7cf78",
+            "originalDeadline": 1793771152412,
+            "parentAgent": "build",
+            "parentSessionID": "ses_e5aed9724ffeOLWQYaWjoS3sBR",
+            "requestNonce": "confirm-a-91bcd472-f081-4c59-a276-08c6934e251d"
+          }
+        },
+        {
+          "sequence": 11,
+          "type": "continuation-admitted",
+          "data": {
+            "agent": "build",
+            "id": "call_hpGIST0y6OJxpV4hlfUS7No0",
+            "input": {
+              "agent": "researcher",
+              "background": false,
+              "description": "Bounded live evaluation continuation",
+              "prompt": "<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n{\"version\":1,\"kind\":\"clarification-response\",\"delegationTaskId\":\"research-06b1348ad4\",\"requestNonce\":\"confirm-a-91bcd472-f081-4c59-a276-08c6934e251d\",\"answer\":\"Finish the original finite read-only task and return its required structured result.\"}\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>",
+              "sessionID": "ses_e5aecefbfffeZL5jIfK9yllUAW"
+            },
+            "messageID": "msg_1a51387d6001ui7yti85e87IPA",
+            "sessionID": "ses_e5aed9724ffeOLWQYaWjoS3sBR",
+            "tool": "subagent"
+          }
+        },
+        {
+          "sequence": 109,
+          "type": "native-completed-held",
+          "data": {
+            "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+            "hash": "7d0d6bf9671391030c49b11e5bc412573756e988b6c6f2869b4743fff69e9796"
+          }
+        },
+        {
+          "sequence": 114,
+          "type": "cancel-invoked",
+          "data": {
+            "context": {
+              "delegationTaskId": "research-06b1348ad4",
+              "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "version": 2
+          }
+        },
+        {
+          "sequence": 115,
+          "type": "cancel-returned",
+          "data": {
+            "content": "{\"childID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"termination\":\"unconfirmed\"}",
+            "output": {
+              "childID": "ses_e5aecefbfffeZL5jIfK9yllUAW",
+              "termination": "unconfirmed"
+            }
+          }
+        },
+        {
+          "sequence": 116,
+          "type": "adapter-after-returned",
+          "data": {
+            "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_hpGIST0y6OJxpV4hlfUS7No0\",\"parentSessionID\":\"ses_e5aed9724ffeOLWQYaWjoS3sBR\",\"verifiedChildSessionID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"reason\":\"duplicate, cancelled or late result\"}",
+            "metadata": {
+              "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+              "harness": "rejected"
+            },
+            "output": {
+              "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+              "parentSessionID": "ses_e5aed9724ffeOLWQYaWjoS3sBR",
+              "reason": "duplicate, cancelled or late result",
+              "status": "rejected",
+              "verifiedChildSessionID": "ses_e5aecefbfffeZL5jIfK9yllUAW",
+              "version": 1
+            }
+          }
+        }
+      ],
+      "cancellation": {
+        "content": "{\"childID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"termination\":\"unconfirmed\"}",
+        "output": {
+          "childID": "ses_e5aecefbfffeZL5jIfK9yllUAW",
+          "termination": "unconfirmed"
+        }
+      },
+      "callbackBeforeHash": "7d0d6bf9671391030c49b11e5bc412573756e988b6c6f2869b4743fff69e9796",
+      "callbackReleaseHash": "7d0d6bf9671391030c49b11e5bc412573756e988b6c6f2869b4743fff69e9796",
+      "adapterResult": {
+        "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_hpGIST0y6OJxpV4hlfUS7No0\",\"parentSessionID\":\"ses_e5aed9724ffeOLWQYaWjoS3sBR\",\"verifiedChildSessionID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "metadata": {
+          "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+          "harness": "rejected"
+        },
+        "output": {
+          "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+          "parentSessionID": "ses_e5aed9724ffeOLWQYaWjoS3sBR",
+          "reason": "duplicate, cancelled or late result",
+          "status": "rejected",
+          "verifiedChildSessionID": "ses_e5aecefbfffeZL5jIfK9yllUAW",
+          "version": 1
+        }
+      },
+      "nativeParentSubagent": {
+        "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+        "status": "completed",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_hpGIST0y6OJxpV4hlfUS7No0\",\"parentSessionID\":\"ses_e5aed9724ffeOLWQYaWjoS3sBR\",\"verifiedChildSessionID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+          "truncated": false
+        }
+      },
+      "originalCliSubagent": {
+        "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+        "status": "completed",
+        "output": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_hpGIST0y6OJxpV4hlfUS7No0\",\"parentSessionID\":\"ses_e5aed9724ffeOLWQYaWjoS3sBR\",\"verifiedChildSessionID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_hpGIST0y6OJxpV4hlfUS7No0\",\"parentSessionID\":\"ses_e5aed9724ffeOLWQYaWjoS3sBR\",\"verifiedChildSessionID\":\"ses_e5aecefbfffeZL5jIfK9yllUAW\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_hpGIST0y6OJxpV4hlfUS7No0",
+          "truncated": false
+        },
+        "exit": {
+          "code": 0,
+          "signal": null
+        }
+      },
+      "collectionCliExit": {
+        "code": 0,
+        "signal": null
+      },
+      "nativeStatus": {
+        "version": 2,
+        "profileVersion": "2.0.0",
+        "supportedControlVersions": [1, 2],
+        "generation": "b435f303-7a85-4f77-bf65-399914e7cf78",
+        "residentRuns": {
+          "used": 1,
+          "limit": 128
+        },
+        "replay": {
+          "identityRecords": 5,
+          "identityLimit": 65536,
+          "canonicalBytes": 1043,
+          "byteLimit": 16777216,
+          "reservedRecords": 0,
+          "reservedBytes": 557,
+          "reservedSummaryBytes": 557,
+          "remainingRecords": 65531,
+          "remainingBytes": 16776173
+        },
+        "runs": [
+          {
+            "orchestrationId": "gn-live-v2-completed-after-hold-06b1348ad4",
+            "accepted": false,
+            "acceptanceDigest": null,
+            "retirementRefusal": "cancelled task: termination uncertain"
+          }
+        ],
+        "residentCalls": {
+          "used": 2,
+          "limit": 4096
+        }
+      },
+      "acceptanceError": {
+        "type": "unknown",
+        "message": "independent acceptance incomplete or stale"
+      },
+      "ordinaryRead": [
+        {
+          "input": {
+            "path": "a.txt"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Read file a.txt, lines 1-1\n1: Read-only evaluation input"
+            }
+          ]
+        }
+      ],
+      "inventory": {
+        "method": "Post-run inventory compared with deterministic operator setup bytes; not a captured pre-run filesystem inventory",
+        "workspace": [
+          {
+            "path": "workspace/a.txt",
+            "mode": 384,
+            "bytes": 27,
+            "sha256": "2fa7da75f19d29590276a0c5edabbc8554cbeeb88951767d7f7ee5cf61041565"
+          }
+        ],
+        "inputUnchanged": true,
+        "providedArtifact": {
+          "path": "trace/sessions/ses_e5aed9724ffeOLWQYaWjoS3sBR/orchestrations/gn-live-v2-completed-after-hold-06b1348ad4/roles/researcher/provided-fixture.md",
+          "expectedSha256": "a26549824a8299af70fb098b5e5d1e226917b7b6f0fd4912cf38dbae19eaf0db",
+          "observedSha256": "a26549824a8299af70fb098b5e5d1e226917b7b6f0fd4912cf38dbae19eaf0db",
+          "mode": 256
+        }
+      },
+      "rawEvidenceSha256": {
+        "staging.json": "afe1333725bc482a2ffb17f41a00dfcddc243ef347c83f4810c0dce8684f1880",
+        "eval-status-extracted.json": "6494f7629af2efd216284a778bef7a3fc94b902e746f43598599b4cb21a8c254",
+        "initial-context.json": "4935def44bf55bc257d08b2a438d7a6d6f72785e4c114877b5b9ce5ef956f2b3",
+        "continue-context.json": "c12e84a77441ade5074d04073a071ed367ceca8457ba3d80b4a92659fd2eb0d4",
+        "collect-context.json": "35a981c766072cde5b832dbb976e1dc46136d335cd69ee6c50ddf5b24656c351",
+        "child-session.json": "7827e1cce75a44e6173c59bfb5ad80583483efac8d2fd2b1e7d510154e35ca46",
+        "child-context.json": "619349a7bebc2e3ba8684c6bd71a993293a951f239ac083b02b1c22a5488a4b6",
+        "terminal-continue.jsonl": "2efa68d99ed2f9c84ac309c199f6dec586c257a59ab72a73abfd80637310da30",
+        "terminal-collect.jsonl": "061bf1df0b10da994a4d818a97ce84aceb943880cb5ab9919758e75f9641b861",
+        "post-inventory.json": "36572620e83a9ef46bc8c3e4cccc882472cfd1d616f24774d5b55517ac3f97ca"
+      }
+    },
+    {
+      "caseRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV",
+      "context": {
+        "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+        "delegationTaskId": "research-9152613560",
+        "scopeKey": "unit",
+        "role": "researcher",
+        "taskMode": "research"
+      },
+      "staging": {
+        "root": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV",
+        "source": "/home/joshl/projects/opencode-harness",
+        "binary": "/home/joshl/.opencode/bin/opencode",
+        "nativeVersion": "2.1.4",
+        "provider": "openai",
+        "model": "gpt-6.1-sol",
+        "controlVersion": 1,
+        "mode": "continuation-rendezvous",
+        "evaluationTimeoutMs": 60000,
+        "runtimeRoot": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV/code/.opencode",
+        "preparedRelease": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV/profile-state/releases/0.1.20-6f1e61508946ab2c3711",
+        "preparedAssetMatches": 56,
+        "sourceDriverSha256": "78dde153a13a20bbd0e59ac9f092d0238821406940b31d948dff35c71a0fdc6d",
+        "compiledEntrySha256": "c8647c6254819b7e004bf96bd5f9628e231396cd897a7f70ae910087bdc66ab7",
+        "wrapperSha256": "214065b0d71633752abe603a045f30632d8406f72c40e52a5ea1ad3ae7c1f93f",
+        "configSha256": "6f3143a8c5e03bd20c102b94c99c2e9ac97791571c34652f37e1ad304631110b",
+        "authentication": "one fresh isolated OpenAI OAuth connection, auth-only native transfer; no operator database or session copy"
+      },
+      "parent": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "child": {
+        "id": "gpt-6.1-sol",
+        "providerID": "openai",
+        "variant": "default"
+      },
+      "childStructuredResults": [
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+          "delegationTaskId": "research-9152613560",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "clarification",
+          "summary": "Need declared input confirmation",
+          "evidence": [],
+          "artifacts": [],
+          "requestNonce": "confirm-a-7d3e6498-b271-4f05-a8c6-1930fe42bd57",
+          "question": "Confirm that a.txt is the only authorized workspace input?"
+        },
+        {
+          "version": 1,
+          "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+          "delegationTaskId": "research-9152613560",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research",
+          "outcome": "success",
+          "summary": "Read a.txt",
+          "evidence": [
+            {
+              "reference": "a.txt"
+            }
+          ],
+          "artifacts": [
+            {
+              "reference": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV/trace/sessions/ses_e5aea9e4effeZcPT5kxrvtDV1o/orchestrations/gn-live-v1-continuation-rendezvous-9152613560/roles/researcher/provided-fixture.md"
+            }
+          ],
+          "outputContract": {
+            "citedFindings": "Direct evidence: a.txt, line 1, contains \"Read-only evaluation input\".",
+            "sourceList": ["a.txt"],
+            "implementationImplications": "No changes required",
+            "risks": "Read-only evaluation; no validation or acceptance claimed.",
+            "recommendedNextRole": "validator",
+            "traceArtifactPath": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV/trace/sessions/ses_e5aea9e4effeZcPT5kxrvtDV1o/orchestrations/gn-live-v1-continuation-rendezvous-9152613560/roles/researcher/provided-fixture.md"
+          }
+        }
+      ],
+      "parentFinalText": "The existing child continuation returned a native rejection:\n\n- **Child:** `ses_e5ae9e710ffeGx7eZS9vxkqEYF`\n- **Call:** `call_gGqWmbG0lPPCoFWct06AQiyn`\n- **Reason:** `duplicate, cancelled or late result`\n\nArm succeeded with attempt `599ddf0b-8976-4992-b47a-11120f5a4ba7`. Evaluation status was native-truncated; its full output was not opened.\n\nOrchestration status reports **unaccepted**, with retirement refusal: `cancelled task: termination uncertain`.\n\nNo PASS claimed. No writes, extra children, manual cancellation, acceptance, or retirement performed.",
+      "identities": {
+        "parentSessionID": "ses_e5aea9e4effeZcPT5kxrvtDV1o",
+        "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV/workspace",
+        "parentAgent": "build",
+        "agent": "build",
+        "context": {
+          "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+          "delegationTaskId": "research-9152613560",
+          "scopeKey": "unit",
+          "role": "researcher",
+          "taskMode": "research"
+        },
+        "childSessionID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF",
+        "requestNonce": "confirm-a-7d3e6498-b271-4f05-a8c6-1930fe42bd57",
+        "generation": "6b3bcbd3-f8d1-4d16-84ef-45ae25a9519f",
+        "originalDeadline": 1793771351239,
+        "deadline": 1793771170751,
+        "clarificationCallID": "call_EXyYIgdU8dpofSqUqfn0CLgi",
+        "clarificationMessageID": "msg_1a515abfc00122ExrERR4sEugt"
+      },
+      "diagnostic": "OBSERVED",
+      "phase": "rejection-observed",
+      "orderedObservations": [
+        {
+          "sequence": 1,
+          "type": "armed",
+          "data": {
+            "agent": "build",
+            "childSessionID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF",
+            "clarificationCallID": "call_EXyYIgdU8dpofSqUqfn0CLgi",
+            "clarificationMessageID": "msg_1a515abfc00122ExrERR4sEugt",
+            "context": {
+              "delegationTaskId": "research-9152613560",
+              "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "cwd": "/tmp/opencode-live-validation-4Bt9atiR/cases/v1-continuation-rendezvous-L0GzfV/workspace",
+            "deadline": 1793771170751,
+            "generation": "6b3bcbd3-f8d1-4d16-84ef-45ae25a9519f",
+            "originalDeadline": 1793771351239,
+            "parentAgent": "build",
+            "parentSessionID": "ses_e5aea9e4effeZcPT5kxrvtDV1o",
+            "requestNonce": "confirm-a-7d3e6498-b271-4f05-a8c6-1930fe42bd57"
+          }
+        },
+        {
+          "sequence": 10,
+          "type": "continuation-admitted",
+          "data": {
+            "agent": "build",
+            "id": "call_gGqWmbG0lPPCoFWct06AQiyn",
+            "input": {
+              "agent": "researcher",
+              "background": false,
+              "description": "Bounded live evaluation continuation",
+              "prompt": "<<<HARNESS_TASK_THREAD_POLICY_V1>>>\n{\"version\":1,\"kind\":\"clarification-response\",\"delegationTaskId\":\"research-9152613560\",\"requestNonce\":\"confirm-a-7d3e6498-b271-4f05-a8c6-1930fe42bd57\",\"answer\":\"Invoke harness_eval_rendezvous exactly once with {\\\"attemptID\\\":\\\"599ddf0b-8976-4992-b47a-11120f5a4ba7\\\",\\\"token\\\":\\\"2238ae95148acebb680a6923ce8043053f4a5da95c4064b2651eb14c8e21bb95\\\"}, then finish the original finite read-only task.\"}\n<<<END_HARNESS_TASK_THREAD_POLICY_V1>>>",
+              "sessionID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF"
+            },
+            "messageID": "msg_1a517019700157lqqVFOflygmq",
+            "sessionID": "ses_e5aea9e4effeZcPT5kxrvtDV1o",
+            "tool": "subagent"
+          }
+        },
+        {
+          "sequence": 21,
+          "type": "rendezvous-pending",
+          "data": {
+            "agent": "researcher",
+            "id": "call_NMOnbApoLs6oAO8LXOSUDMfi",
+            "messageID": "msg_1a5171bce001Lu1LkWOI8a0SMF",
+            "sessionID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF"
+          }
+        },
+        {
+          "sequence": 22,
+          "type": "cancel-invoked",
+          "data": {
+            "context": {
+              "delegationTaskId": "research-9152613560",
+              "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+              "role": "researcher",
+              "scopeKey": "unit",
+              "taskMode": "research"
+            },
+            "version": 1
+          }
+        },
+        {
+          "sequence": 23,
+          "type": "cancel-returned",
+          "data": {
+            "content": "{\"childID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"termination\":\"unconfirmed\"}",
+            "output": {
+              "childID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF",
+              "termination": "unconfirmed"
+            }
+          }
+        },
+        {
+          "sequence": 24,
+          "type": "rendezvous-released",
+          "data": {
+            "id": "call_NMOnbApoLs6oAO8LXOSUDMfi"
+          }
+        },
+        {
+          "sequence": 123,
+          "type": "native-completed-held",
+          "data": {
+            "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+            "hash": "6e1a63a14d649b2ef40a76f23cf4c900113546289650a778b228227567221a46"
+          }
+        },
+        {
+          "sequence": 128,
+          "type": "adapter-after-returned",
+          "data": {
+            "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_gGqWmbG0lPPCoFWct06AQiyn\",\"parentSessionID\":\"ses_e5aea9e4effeZcPT5kxrvtDV1o\",\"verifiedChildSessionID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"reason\":\"duplicate, cancelled or late result\"}",
+            "metadata": {
+              "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+              "harness": "rejected"
+            },
+            "output": {
+              "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+              "parentSessionID": "ses_e5aea9e4effeZcPT5kxrvtDV1o",
+              "reason": "duplicate, cancelled or late result",
+              "status": "rejected",
+              "verifiedChildSessionID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF",
+              "version": 1
+            }
+          }
+        }
+      ],
+      "cancellation": {
+        "content": "{\"childID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"termination\":\"unconfirmed\"}",
+        "output": {
+          "childID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF",
+          "termination": "unconfirmed"
+        }
+      },
+      "callbackBeforeHash": "6e1a63a14d649b2ef40a76f23cf4c900113546289650a778b228227567221a46",
+      "callbackReleaseHash": "6e1a63a14d649b2ef40a76f23cf4c900113546289650a778b228227567221a46",
+      "adapterResult": {
+        "content": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_gGqWmbG0lPPCoFWct06AQiyn\",\"parentSessionID\":\"ses_e5aea9e4effeZcPT5kxrvtDV1o\",\"verifiedChildSessionID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "metadata": {
+          "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+          "harness": "rejected"
+        },
+        "output": {
+          "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+          "parentSessionID": "ses_e5aea9e4effeZcPT5kxrvtDV1o",
+          "reason": "duplicate, cancelled or late result",
+          "status": "rejected",
+          "verifiedChildSessionID": "ses_e5ae9e710ffeGx7eZS9vxkqEYF",
+          "version": 1
+        }
+      },
+      "nativeParentSubagent": {
+        "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+        "status": "completed",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_gGqWmbG0lPPCoFWct06AQiyn\",\"parentSessionID\":\"ses_e5aea9e4effeZcPT5kxrvtDV1o\",\"verifiedChildSessionID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+          "truncated": false
+        }
+      },
+      "originalCliSubagent": {
+        "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+        "status": "completed",
+        "output": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_gGqWmbG0lPPCoFWct06AQiyn\",\"parentSessionID\":\"ses_e5aea9e4effeZcPT5kxrvtDV1o\",\"verifiedChildSessionID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"reason\":\"duplicate, cancelled or late result\"}",
+        "content": [
+          {
+            "type": "text",
+            "text": "{\"version\":1,\"status\":\"rejected\",\"callID\":\"call_gGqWmbG0lPPCoFWct06AQiyn\",\"parentSessionID\":\"ses_e5aea9e4effeZcPT5kxrvtDV1o\",\"verifiedChildSessionID\":\"ses_e5ae9e710ffeGx7eZS9vxkqEYF\",\"reason\":\"duplicate, cancelled or late result\"}"
+          }
+        ],
+        "metadata": {
+          "harness": "rejected",
+          "callID": "call_gGqWmbG0lPPCoFWct06AQiyn",
+          "truncated": false
+        },
+        "exit": {
+          "code": 0,
+          "signal": null
+        }
+      },
+      "collectionCliExit": {
+        "code": 0,
+        "signal": null
+      },
+      "nativeStatus": {
+        "version": 2,
+        "profileVersion": "2.0.0",
+        "supportedControlVersions": [1, 2],
+        "generation": "6b3bcbd3-f8d1-4d16-84ef-45ae25a9519f",
+        "residentRuns": {
+          "used": 1,
+          "limit": 128
+        },
+        "replay": {
+          "identityRecords": 5,
+          "identityLimit": 65536,
+          "canonicalBytes": 1055,
+          "byteLimit": 16777216,
+          "reservedRecords": 0,
+          "reservedBytes": 563,
+          "reservedSummaryBytes": 563,
+          "remainingRecords": 65531,
+          "remainingBytes": 16776161
+        },
+        "runs": [
+          {
+            "orchestrationId": "gn-live-v1-continuation-rendezvous-9152613560",
+            "accepted": false,
+            "acceptanceDigest": null,
+            "retirementRefusal": "cancelled task: termination uncertain"
+          }
+        ],
+        "residentCalls": {
+          "used": 2,
+          "limit": 4096
+        }
+      },
+      "acceptanceError": {
+        "type": "unknown",
+        "message": "independent acceptance incomplete or stale"
+      },
+      "ordinaryRead": [
+        {
+          "input": {
+            "path": "a.txt"
+          },
+          "content": [
+            {
+              "type": "text",
+              "text": "Read file a.txt, lines 1-1\n1: Read-only evaluation input"
+            }
+          ]
+        }
+      ],
+      "inventory": {
+        "method": "Post-run inventory compared with deterministic operator setup bytes; not a captured pre-run filesystem inventory",
+        "workspace": [
+          {
+            "path": "workspace/a.txt",
+            "mode": 384,
+            "bytes": 27,
+            "sha256": "2fa7da75f19d29590276a0c5edabbc8554cbeeb88951767d7f7ee5cf61041565"
+          }
+        ],
+        "inputUnchanged": true,
+        "providedArtifact": {
+          "path": "trace/sessions/ses_e5aea9e4effeZcPT5kxrvtDV1o/orchestrations/gn-live-v1-continuation-rendezvous-9152613560/roles/researcher/provided-fixture.md",
+          "expectedSha256": "dd4ff4cb594746a3faf3003ebc41ecb6e20edf56477e2d3232542f18a2cca2d2",
+          "observedSha256": "dd4ff4cb594746a3faf3003ebc41ecb6e20edf56477e2d3232542f18a2cca2d2",
+          "mode": 256
+        }
+      },
+      "rawEvidenceSha256": {
+        "staging.json": "b1a11a9258edaddaa80aa79c28568920e8bc02f1e17f9dd25698d7dd504fda98",
+        "eval-status-extracted.json": "b34013109996f00f4ff44417c0b02d63b64d70ed8a954ba3eae99e023bb23b26",
+        "initial-context.json": "203ccc2edda9407cb2f021be3d0a5ff310834e085cf52b1a44662f58b3d9f6d7",
+        "continue-context.json": "11e92c6d3c44fa87500b77822f249deccf4f01f1b7ac78d97aa36d3365a1220c",
+        "collect-context.json": "de0863c56a38b55100cfb2630e340c01b271c7740a9765fbc87c3f4f30d1c60f",
+        "child-session.json": "79c1f0823f867a692f9eac899a3053096a4cde76a99b5b5ddbd6b0b0db24544b",
+        "child-context.json": "646eb648c27f70f30f5ab2ad830fea510fd99e0ab7d10b97a2510db875d02f85",
+        "terminal-continue.jsonl": "2a00be79b9985075d34790f3ec8f4224e7def9a2c79f75e55d8f9a9d401dddfa",
+        "terminal-collect.jsonl": "6a0b480b0dc88fcb9f9ffd001b5dd28319acacebc685767080fd7c3433fd6844",
+        "post-inventory.json": "77f7a18af34cd85a1a726bb50518e7d64dafd0089b5cb4fb93192e51840350f4"
+      }
+    }
+  ]
+}

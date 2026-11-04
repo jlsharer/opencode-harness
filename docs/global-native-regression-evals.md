@@ -4,7 +4,7 @@ This source-only reference records the November 3, 2026 sequence and supplies re
 
 ## Evidence and executed sequence
 
-**LIVE** means operator-reported T3Code/OpenCode observations pasted into Codex. **ARTIFACT** means checks of installed harness bytes and metadata; distinguish independent Codex verification from operator-reported artifact checks in each record. **FIXTURE** means source/offline tests, including modeled native boundaries. These classes are not interchangeable. Exact client, native executable and WSL distro versions were not recorded. This sequence tested global-native, not legacy direct-session stop/recovery.
+**LIVE** means genuinely executed native observations: either operator-reported T3Code/OpenCode results or explicitly identified isolated source-driver native execution collected by Codex. Keep those two origins separate in each record; controlled native execution does not prove T3Code UI behavior. **ARTIFACT** means checks of installed harness bytes and metadata; distinguish independent Codex verification from operator-reported artifact checks in each record. **FIXTURE** means source/offline tests, including modeled native boundaries. These classes are not interchangeable. The original operator sequence did not record exact client, native executable or WSL distro versions; the later isolated record pins its native executable. This sequence tested global-native, not legacy direct-session stop/recovery.
 
 1. Reviewed source `a6ddfe9` was installed as package `0.1.20`, profile `2.0.0`, release `45bbc7c677178a545d21`. Doctor and independent asset checks passed; rollback was inspected **without `--apply`**, targeting retained release `7b035e27f8024f102a56` (18 replacements, 2 removals).
 2. Full provider quit/restart and catalog refresh/reconnect instructions were provided. The actual reload method was not observed. Subsequent real tool availability and workflow execution supplied separate LIVE evidence.
@@ -14,23 +14,25 @@ This source-only reference records the November 3, 2026 sequence and supplies re
 6. Full release QA passed and corrected release `fc523d34ba84d4fc316d` was installed and independently checked. Documentation/evidence were recorded at source `6147705`. Package/profile versions stayed `0.1.20`/`2.0.0`; release hash distinguishes the deployments.
 7. The [fresh operator evaluation `82fd4a`](evals/2026-11-03-gn-eval-82fd4a.md) reports GN-009 **PASS for control version 1 only**, a new four-role acceptance/retirement, and repeated artifact/offline checks at source `bb7d2e7`. Its existing clean full-QA rerun completed: GN-008 is **PASS WITH CHILD-ENV ADJUSTMENT**, with operator-reported exit 0 and Codex-verified log hash/summaries (881 registered, 838 passed, 43 skipped, 0 failed/cancelled/todo). Earlier environment failures remain FAIL attempts. Completion-snapshot provenance is checked; live/artifact claims remain operator-reported, and the overall result is qualified to exercised coverage.
 
+8. The owner separately authorized provider/network access and a fresh isolated login, then confirmed `OpenCode → openai/gpt-6.1-sol`. The [isolated native continuation record](evals/2026-11-03-gn-live-continuation.md) records genuine source-driver LIVE attempts on native 2.1.4, startup remediation, preserved inconclusive attempts and assertion-specific results. No global installation or production adapter change occurred.
+
 ## Case matrix
 
 Statuses apply to the stated assertion and evidence class, not the entire product.
 
-| Case | Scenario / evidence | Recorded outcome |
-| --- | --- | --- |
-| GN-001 | Release provenance, doctor, rollback dry run / ARTIFACT | PASS, original and corrected installs |
-| GN-002 | Real tool catalog / LIVE | PASS; reload method NOT_EXERCISED as an observation |
-| GN-003 | Four roles, independent tests, acceptance / LIVE | PASS |
-| GN-004 | Accepted retirement, replay, wrong digest, ordinary tools / LIVE | PASS |
-| GN-005 | Pre-correlation cancellation state / LIVE | PASS for conservative state/refusal; termination unconfirmed |
-| GN-006 | Historical cancellation response JSON / LIVE | **FAIL**, retained historical result |
-| GN-007 | Registered-tool cancellation regression / FIXTURE | PASS after fix; RED reproduced defect |
-| GN-008 | Full QA and corrected deployment / FIXTURE + ARTIFACT | Historical PASS; new operator full-QA repeat PASS WITH CHILD-ENV ADJUSTMENT (third attempt only) |
-| GN-009 | Corrected live pre-correlation cancellation response / LIVE | PASS, new attempt with control version 1 only |
-| GN-010 | Verified running-child cancellation / LIVE | NOT_EXERCISED |
-| GN-011 | Live late-result rejection after cancellation / LIVE | NOT_EXERCISED |
+| Case   | Scenario / evidence                                              | Recorded outcome                                                                                                                                                                            |
+| ------ | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| GN-001 | Release provenance, doctor, rollback dry run / ARTIFACT          | PASS, original and corrected installs                                                                                                                                                       |
+| GN-002 | Real tool catalog / LIVE                                         | PASS; reload method NOT_EXERCISED as an observation                                                                                                                                         |
+| GN-003 | Four roles, independent tests, acceptance / LIVE                 | PASS                                                                                                                                                                                        |
+| GN-004 | Accepted retirement, replay, wrong digest, ordinary tools / LIVE | PASS                                                                                                                                                                                        |
+| GN-005 | Pre-correlation cancellation state / LIVE                        | PASS for conservative state/refusal; termination unconfirmed                                                                                                                                |
+| GN-006 | Historical cancellation response JSON / LIVE                     | **FAIL**, retained historical result                                                                                                                                                        |
+| GN-007 | Registered-tool cancellation regression / FIXTURE                | PASS after fix; RED reproduced defect                                                                                                                                                       |
+| GN-008 | Full QA and corrected deployment / FIXTURE + ARTIFACT            | Historical PASS; new operator full-QA repeat PASS WITH CHILD-ENV ADJUSTMENT (third attempt only)                                                                                            |
+| GN-009 | Corrected live pre-correlation cancellation response / LIVE      | PASS, new attempt with control version 1 only                                                                                                                                               |
+| GN-010 | Verified running-child cancellation / LIVE                       | CONTINUATION PASS for researcher/research controls 1 and 2 in independent isolated native review. FRESH remains NOT_EXERCISED.                                                              |
+| GN-011 | Live late-result rejection after cancellation / LIVE             | PASS for isolated researcher/research natural-completion and separate completed-after-hold modes, controls 1 and 2, including original native CLI channels. Manual T3Code remains separate. |
 
 ## GN-001–GN-002: provenance and discovery
 
@@ -81,7 +83,12 @@ The expected test-first missing-module RED and fallback when `rg` was unavailabl
 Precondition: accepted run, exact returned digest, same native parent and adapter generation. Supply these control objects directly to `harness_orchestration`, substituting current values; do not invent a native argument wrapper:
 
 ```json
-{"version":2,"action":"retire","orchestrationId":"CURRENT_RUN","acceptanceDigest":"EXACT_TOOL_RETURNED_DIGEST"}
+{
+  "version": 2,
+  "action": "retire",
+  "orchestrationId": "CURRENT_RUN",
+  "acceptanceDigest": "EXACT_TOOL_RETURNED_DIGEST"
+}
 ```
 
 1. Retire, retain the summary, then repeat the identical request in the same parent/generation. Assert identical summary.
@@ -89,7 +96,7 @@ Precondition: accepted run, exact returned digest, same native parent and adapte
 3. Read `harness-smoke/add.mjs` through an ordinary tool and request status before/after the replay checks:
 
 ```json
-{"version":2,"action":"status"}
+{ "version": 2, "action": "status" }
 ```
 
 Observed generation `ccab442b-09db-4a67-93f6-c9bf073e8dc0`: repeat returned the same summary; changing the original digest's first character `6` to `7` rejected with “unknown retirement or mismatched acceptance digest.” Read/status worked. Before/after resident runs, calls, reserved records/bytes/summary bytes were all 0; replay retained 13 identities and 1762 canonical bytes. No files or children were added.
@@ -152,11 +159,11 @@ Offline QA preflight for future evaluations: use an existing owner-only mode-070
 
 After separately authorized provider restart for the plugin change, verify that the adapter **generation changes** and the corrected release is loaded. The same T3Code chat may be used if it receives the fresh instance, but create new orchestration/specification/task/call/child/prompt identities. Never reuse old cancellation context in a new instance. Profile `2.0.0` alone does not identify the patch: record release hash and generation.
 
-GN-009 repeats pre-correlation cancellation when that phase can be observed. Assert raw JSON validity separately from cancelled state, acceptance refusal, ordinary-tool availability and resource accounting. Unknown-child output must omit the key, yielding `{ "termination": "unconfirmed" }`; a correlated known child may additionally have a valid string `childID`. Retain raw and text responses. The [new operator attempt](evals/2026-11-03-gn-eval-82fd4a.md#observed-cancellation-results) is **PASS for control version 1 only**: native raw and text JSON were `{"termination":"unconfirmed"}`, with no `childID` key or schema error. Version-2 acceptance refused, ordinary read/status worked, accepted remained false and digest null, and retirement refusal remained “cancelled task: termination uncertain.” No live version-2 cancellation is claimed.
+GN-009 repeats pre-correlation cancellation when that phase can be observed. Assert raw JSON validity separately from cancelled state, acceptance refusal, ordinary-tool availability and resource accounting. Unknown-child output must omit the key, yielding `{ "termination": "unconfirmed" }`; a correlated known child may additionally have a valid string `childID`. Retain raw and text responses. The [new operator attempt](evals/2026-11-03-gn-eval-82fd4a.md#observed-cancellation-results) is **PASS for control version 1 only**: native raw and text JSON were `{"termination":"unconfirmed"}`, with no `childID` key or schema error. Version-2 acceptance refused, ordinary read/status worked, accepted remained false and digest null, and retirement refusal remained “cancelled task: termination uncertain.” That operator record claims no live version-2 cancellation; the later isolated source-driver attempts are recorded separately.
 
 Generation `7a9aff60-c5f6-48e2-b034-318fefa51171` differs from the historical generation but stayed unchanged through this Stop/cancel. No restart was performed or observed in this evaluation; reload method remains **NOT_EXERCISED**. The task was admitted with native callback pending; the interrupted-error session ID is an **unverified candidate**, not running-child correlation. No callback arrived. Before launch: resident runs/calls 1/0, replay 14/2241 bytes, reserved records/bytes/summary 0/499/499. After Stop: 1/1, 17/2654, 1/690/499; post-cancel and acceptance refusal were identical. Retained uncertainty is neither leak proof nor a cleanup goal; the cancelled run remains unaccepted and non-retirable. GN-006's historical failure is preserved.
 
-GN-010 requires actual verified running-child correlation before Stop; a pending callback is insufficient. GN-011 requires an actually observed late callback and rejection on relevant output surfaces; silence is insufficient. Both remain **NOT_EXERCISED live**, despite fixture coverage. Missing original context or changed generation makes an attempted original-run assessment **INCONCLUSIVE**.
+GN-010 requires actual verified running-child correlation before Stop; a pending callback is insufficient. GN-011 requires an actually observed late callback and rejection on relevant output surfaces; silence is insufficient. That operator attempt exercised neither assertion; later controlled source-driver observations have the narrower coverage recorded [below](#isolated-native-live-execution). Missing original context or changed generation makes an attempted original-run assessment **INCONCLUSIVE**.
 
 ### Approved source-only closure of GN-010 and GN-011
 
@@ -164,7 +171,7 @@ The [approved live-gap design](superpowers/specs/2026-11-03-global-native-live-g
 
 For deterministic GN-011, hold a genuine core-dispatched completed callback before adapter.after serialization, cancel through the registered control, then release the unmodified callback. Holding inside the adapter queue would block cancellation. Fabricated callback fixtures cannot satisfy GN-011. If completion precedes cancellation, that attempt cannot also prove GN-010. Preserve actual output/content/metadata and native terminal/model/parent-visible rejection, acceptance refusal, and retained resource accounting. Controlled native driver evidence is qualified LIVE evidence; modeled driver tests remain FIXTURE and manual T3Code coverage remains separate.
 
-The owner approved the source-only design and implementation. The operational entry, registered-host FIXTURE tests and offline checks are implemented; the [execution record](superpowers/plans/2026-11-03-global-native-live-gap.md#execution-record) records exact tested trees. Source-driver LIVE attempts and manual GN-010/GN-011 tests remain **NOT_EXERCISED**. The sequence below retains the offline review/check duties in steps 1–3; [remaining LIVE validation](#remaining-live-validation) starts at step 4.
+The owner approved the source-only design and implementation. The operational entry, registered-host FIXTURE tests and offline checks are implemented; the [execution record](superpowers/plans/2026-11-03-global-native-live-gap.md#execution-record) records exact tested trees. Source-driver LIVE attempts now have the assertion-specific results [below](#isolated-native-live-execution); manual T3Code GN-010/GN-011 tests remain **NOT_EXERCISED**. The sequence below retains the offline review/check duties in steps 1–3; [remaining LIVE validation](#remaining-live-validation) starts at step 4.
 
 1. Review the source-only implementation and its registered-path FIXTURE evidence, including cancellation while the rendezvous Promise is pending, outer completed-after hold, exact identities, negative cases and bounded cleanup. No timeout clears protocol uncertainty or gates.
 2. Run focused driver/global adapter/protocol tests and pinned-native public event/schema/order audits. Run source and portable validation, both runtime test scripts, global validation/tests, full npm tests, pinned-source tests and package dry run for the final change. Record exact tree, commands, exits and skips. Offline QA uses an existing owner-only mode-0700 private `TMPDIR` below `/var/tmp`; unset inherited `OPENCODE_CONFIG_CONTENT` only in that child environment, recording presence/adjustment without reading its value.
@@ -181,13 +188,20 @@ Final affected checks at `6ce3d2d` all exited 0: formatting/lint, typecheck, gen
 
 An ARTIFACT staging rehearsal executed the documented Node staging block in a fresh private fixture: all **56** prepared assets matched, the three required resource paths existed, and the compiled local `server.js` entry imported with the expected plugin descriptor. The **73-file** package excludes the evaluator. The prepared release `0.1.20-6f1e61508946ab2c3711` was a fixture, never a global installation or activation. No OpenCode/provider process or plugin setup was started by that rehearsal. Native deferred-registration behavior is modeled by the pinned-source-backed fixture; actual host behavior remains LIVE work.
 
+### Isolated native LIVE execution
+
+The [November 3 isolated record](evals/2026-11-03-gn-live-continuation.md) separates actual native observations from offline fixtures and from manual T3Code coverage. Its [selected nonsecret evidence](evals/evidence/2026-11-03-gn-live-continuation.json) preserves observed results/order/refusals for future review; it defines no executable runner, schema or acceptance authority. Native `2.1.4` and `openai/gpt-6.1-sol` ran with the owner-approved fresh isolated login. Every attempt used a fresh root, database, plugin instance/generation and workflow identities. The source-only catalog-envelope fix (`60d3c94`) and compatibility-audit repair (`0509c6d`) leave installed production assets unchanged.
+
+Independent review passes **GN-010-CONTINUATION, controls 1 and 2**, and **GN-011 natural-completion plus completed-after-hold, controls 1 and 2**, for researcher/research in the pinned isolated native host. All four complete combinations include genuine callback/binding/order checks, unchanged hashes, actual adapter/parent/model and original native CLI rejection, acceptance refusal, ordinary read and retained accounting. The earlier control-1 `TOGS6b` attempt retains its narrower terminal observation; fresh `L0GzfV` supplies the required original-turn rendering. No historical failure or inconclusive attempt was reclassified.
+
+The evaluator still lists parent/model/terminal surfaces as missing because it cannot infer external collection; the independent record checks those actual native surfaces. No run was accepted or retired. The source-only startup repair and live observations do not change the production cancellation contract.
+
 ### Remaining LIVE validation
 
-1. Verify the selected native build/API, isolated plugin loading, fresh generation, four-role discovery and exactly one owning control plus both evaluation tools. Supply a separately approved provider/auth arrangement; record versions and source/compiled/config hashes.
-2. Run **GN-010-CONTINUATION for researcher/research**, separately for control versions **1 and 2**, each in a fresh isolated plugin instance. Verify authentic clarification, exact continuation/progress correlation and a genuine pending rendezvous invocation at cancellation; retain raw/text JSON, identities, deadlines, refusal and accounting evidence.
-3. Run **GN-011** with genuine late native callbacks, including natural completion after rendezvous cancellation and the separate completed-after-hold mode, for each control version in fresh instances. Verify the matching cancellation rejection on output/content/metadata and independently collect native parent/model/terminal surfaces. Missing callbacks or surfaces remain INCONCLUSIVE/unexercised.
-4. Repeat the applicable T3Code client smoke: actual provider reload/catalog, owner Stop, ordinary read/status, and parent-visible rejection. Controlled native fixture or driver observations do not establish these client behaviors.
-5. **GN-010-FRESH and other-role cancellation remain outside this evaluator.** They require their own implementation/validation before coverage can be claimed. Native termination remains unconfirmed under the unchanged cancellation contract.
+1. Repeat the applicable T3Code client smoke: actual provider reload/catalog, owner Stop, visible child, ordinary read/status and parent-visible rejection. Controlled native driver/CLI observations do not establish those UI behaviors.
+2. **GN-010-FRESH and other-role cancellation remain outside this evaluator.** They require their own implementation/validation before coverage can be claimed.
+
+Native termination remains **unconfirmed by design** under the unchanged cancellation contract; these passing protocol-cancellation cases do not promise native interruption or termination proof. Cancelled uncertainty and acceptance/retirement refusal remain retained. No additional source-driver control-version/mode or original CLI surface from the approved four-case matrix remains pending.
 
 ### Isolated operational entry (separate live authorization required)
 
@@ -195,7 +209,7 @@ The default Promise plugin is `.opencode/scripts/global-native-live-eval.mts`, I
 
 First pin the reviewed source tree and native binary bytes/version. Compatibility must be established against the exact selected binary and committed native API `68bc26b7da1990ce10ffecfbc1e09eb13aa5d824`; the optional audit reads Git blobs, not a mutable working tree. Its registration/context/progress/prompt/loader/order checks and mutation negatives prove source compatibility only. Host event delivery and provider execution still need observation.
 
-The Node staging block below was rehearsed offline with explicit private fixture roots. Native launch and provider use remain instructions for a separately authorized operator. Replace `SOURCE` and `NATIVE_BIN` with reviewed absolute paths. Do not open the source checkout as the live workspace, inherit operator config, reuse operator auth/session databases, or install the entry into ordinary discovery. Build first, then create a fresh private root:
+The Node staging block below was rehearsed offline with explicit private fixture roots. Later authorized native execution is recorded separately above; reuse still requires matching provider/auth authorization. Replace `SOURCE` and `NATIVE_BIN` with reviewed absolute paths. Do not open the source checkout as the live workspace, inherit operator config, reuse operator auth/session databases, or install the entry into ordinary discovery. Build first, then create a fresh private root:
 
 ```sh
 SOURCE=/absolute/reviewed/opencode-harness
@@ -250,6 +264,12 @@ env -i PATH="$PATH" HOME="$EVAL/home" \
 
 This exact native API uses `plugins` with `{package,options}` entries and resolves an absolute local plugin directory's `server.js`; `ctx.options` receives the options object. A different native build requires fresh compatibility proof. Quit/restart the client after plugin/config changes. Preflight `plugin.list`, tool inventory and native context must show this evaluation owner, exactly one `harness_orchestration`, both evaluation tools, native `subagent`, four role agents, no other global/project guard and a fresh primary session located inside the isolated root. Setup rejects missing capabilities, duplicate existing control ownership and unsafe root/options. Host/plugin lifecycle inspection is mandatory; absence from a text config alone is insufficient.
 
+The pinned Promise API returns `plugin.list()` and `agent.list()` as `{location,data}` catalogs; `session.get()` is a raw session object. The source evaluator validates the exact catalog location/entry shape and adapts only the agent-list boundary needed by the unchanged source adapter. Do not generically unwrap every response. Native catalog metadata can appear before async setup finishes: use the native `GET /api/model/default?location[directory]=...` activation barrier, then require exactly one evaluator entry with `state.status: "active"` and the four subagent roles. A plugin ID with `state.status: "failed"` is a failed preflight, even when its metadata is visible.
+
+After admission, use its exact session/orchestration-specific `traceRoot`, not just the configured base trace directory. For this read-only fixture, the operator may supply an existing mode-0400 Markdown artifact under the returned `roles/researcher/` trace path before dispatch. Tell the child to read/reference that supplied artifact and cite the actual `a.txt` read separately. The supplied file makes no claim that child work or acceptance already happened; no child artifact write is necessary. This avoids asking a read-only child to create its normal trace. Record setup and post-run input/artifact hashes, distinguishing deterministic setup comparison from a captured before/after inventory.
+
+Use native CLI execution for the continuation turn when original-turn terminal coverage is required; saving a later same-parent semantic status report is narrower. Save the actual CLI tool-result JSONL, parent context/model, native events, exit code and later acceptance/refusal/read observations independently. A provider request failure remains a failed attempt, not a reason to infer missing native results.
+
 Each plugin instance permits exactly one arm in its lifetime. Collect its status, native surfaces, traces and hashes before quitting. Repeat the isolated setup with a fresh root and plugin instance for each control version and each mode, including retries after timeout or failure.
 
 Source evaluation arms support **researcher/research only**, in both modes and through both the creator API and registered control. The arm input schema and shared runtime guard reject every other role/mode before creating an attempt or cancelling a task. The diagnostic completion precheck covers research result shape; it does not establish the command or tree proof required by other roles. Planner, implementer and validator evaluation cases require a separately reviewed extension and remain **NOT_EXERCISED LIVE**. The native global profile still projects all four roles, and its protocol, validation and acceptance authority are unchanged.
@@ -257,7 +277,20 @@ Source evaluation arms support **researcher/research only**, in both modes and t
 For each control version (1 and 2 separately), admit a new finite read-only researcher/research task with an independent validator gate, obtain an authentic clarification through ordinary native `subagent`, and retain the exact admitted context, verified child and returned nonce. Do not manufacture a clarification or reuse a terminal/cancelled task. Request the registered tool as follows, substituting the actual context object and strings:
 
 ```json
-{"action":"arm","mode":"continuation-rendezvous","controlVersion":1,"context":{"orchestrationId":"ACTUAL_RUN","delegationTaskId":"ACTUAL_TASK","scopeKey":"ACTUAL_SCOPE","role":"researcher","taskMode":"research"},"childSessionID":"VERIFIED_CHILD","requestNonce":"RETURNED_NONCE"}
+{
+  "action": "arm",
+  "mode": "continuation-rendezvous",
+  "controlVersion": 1,
+  "context": {
+    "orchestrationId": "ACTUAL_RUN",
+    "delegationTaskId": "ACTUAL_TASK",
+    "scopeKey": "ACTUAL_SCOPE",
+    "role": "researcher",
+    "taskMode": "research"
+  },
+  "childSessionID": "VERIFIED_CHILD",
+  "requestNonce": "RETURNED_NONCE"
+}
 ```
 
 `harness_eval_control` derives generation, parent/cwd/agent and original deadline from observed successful adapter admissions/completions. It returns an unpredictable one-use `token`, `attemptID` and exact `continuationPrompt`. Copy that entire prompt unchanged into an ordinary native `subagent` request `{agent:"researcher",description:"Bounded evaluation continuation",prompt:EXACT_RETURNED_PROMPT,sessionID:VERIFIED_CHILD,background:false}`. Use a fresh native message and call identity. The prompt is the exact version-1 clarification-response envelope, with no `packet`, fresh wrapper or extra keys. The child invokes `harness_eval_rendezvous` with exactly `{"attemptID":"RETURNED_ATTEMPT","token":"RETURNED_TOKEN"}`; its session/agent/message/call/signal come from native context, never tool input.
@@ -268,7 +301,7 @@ For a separate GN-011 attempt, use a new admitted/clarified task and `mode:"comp
 
 Default attempt timeout is 15000 ms, bounded by the original task deadline (explicit creator override must be an integer 1..60000). Missing events, identity movement, abort, malformed/duplicate callback, overflow (256 observations, 64 KiB per retained payload), timeout or disposal make observations INCONCLUSIVE. A timed-out authoritative after wait rejects all visible surfaces using the existing rejection helper and throws; it never returns an unprocessed success to core. The underlying native callback is still tracked and rejection is reapplied if it later settles. Cleanup returns in finite time, retaining hook ownership while native operations remain unresolved and disposing registrations when they settle; this is not native termination proof or protocol release. Uncertain run records and reservations remain retained.
 
-After each attempt, independently collect native parent context, model and terminal surfaces, registered version-2 status, acceptance refusal, null acceptance digest and retirement refusal with retained reservations. The driver cannot infer those surfaces from hook mutation or grant acceptance/retirement. Record raw/text responses and all hashes; keep old cancelled attempts. GN-010-CONTINUATION, GN-010-FRESH, GN-011 and manual T3Code cases remain **NOT_EXERCISED LIVE** after this offline implementation. GN-005/006 failures, GN-009's scoped control-1 result and GN-008's completed PASS WITH CHILD-ENV ADJUSTMENT remain unchanged.
+After each attempt, independently collect native parent context, model and terminal surfaces, registered version-2 status, acceptance refusal, null acceptance digest and retirement refusal with retained reservations. The driver cannot infer those surfaces from hook mutation or grant acceptance/retirement. Record raw/text responses and all hashes; keep old cancelled attempts. At the end of offline implementation these cases were NOT_EXERCISED LIVE; later controlled execution has the scoped results recorded above. GN-010-FRESH and manual T3Code coverage remain unexercised. GN-005/006 failures, GN-009's scoped control-1 result and GN-008's completed PASS WITH CHILD-ENV ADJUSTMENT remain unchanged.
 
 ## Minimal evaluation record
 
@@ -298,10 +331,10 @@ correlation:
   child: unknown # record verified ID only when correlated
 stepsAndResponses: RETAIN_EXACT_PROMPTS_CONTROLS_RAW_OUTPUT_AND_TEXT
 commandsAndExits: RETAIN_EXACT_COMMAND_CWD_EXIT
-proof: {declaredEvidenceHash: unknown, acceptanceDigest: null}
+proof: { declaredEvidenceHash: unknown, acceptanceDigest: null }
 assertions:
-  rawJson: {expected: valid, observed: unknown, status: PENDING}
-  termination: {expected: unconfirmed, observed: unknown, status: PENDING}
+  rawJson: { expected: valid, observed: unknown, status: PENDING }
+  termination: { expected: unconfirmed, observed: unknown, status: PENDING }
 resourceBeforeAfter: RETAIN_BOTH_STATUS_SNAPSHOTS
 evidenceLocationsAndHashes: RECORD_NONSECRET_REFERENCES_AND_SHA256
 overall: PENDING # PASS | FAIL | PENDING | NOT_EXERCISED | INCONCLUSIVE
