@@ -4,7 +4,7 @@ This source-only reference records the November 3, 2026 sequence and supplies re
 
 ## Evidence and executed sequence
 
-**LIVE** means operator-reported T3Code/OpenCode observations pasted into Codex. **ARTIFACT** means Codex checks of installed harness bytes and metadata. **FIXTURE** means source/offline tests, including modeled native boundaries. These classes are not interchangeable. Exact client, native executable and WSL distro versions were not recorded. This sequence tested global-native, not legacy direct-session stop/recovery.
+**LIVE** means operator-reported T3Code/OpenCode observations pasted into Codex. **ARTIFACT** means checks of installed harness bytes and metadata; distinguish independent Codex verification from operator-reported artifact checks in each record. **FIXTURE** means source/offline tests, including modeled native boundaries. These classes are not interchangeable. Exact client, native executable and WSL distro versions were not recorded. This sequence tested global-native, not legacy direct-session stop/recovery.
 
 1. Reviewed source `a6ddfe9` was installed as package `0.1.20`, profile `2.0.0`, release `45bbc7c677178a545d21`. Doctor and independent asset checks passed; rollback was inspected **without `--apply`**, targeting retained release `7b035e27f8024f102a56` (18 replacements, 2 removals).
 2. Full provider quit/restart and catalog refresh/reconnect instructions were provided. The actual reload method was not observed. Subsequent real tool availability and workflow execution supplied separate LIVE evidence.
@@ -12,7 +12,7 @@ This source-only reference records the November 3, 2026 sequence and supplies re
 4. The owner attempted Stop/cancellation on another run. Its observed initial state was **ADMITTED, NATIVE CALLBACK PENDING**, with no verified child ID. Cancellation changed state, but its response failed native JSON validation.
 5. Root-cause investigation found an undefined raw output property. Fix `cd228d2` and registered-tool regression tests passed independent review and offline QA.
 6. Full release QA passed and corrected release `fc523d34ba84d4fc316d` was installed and independently checked. Documentation/evidence were recorded at source `6147705`. Package/profile versions stayed `0.1.20`/`2.0.0`; release hash distinguishes the deployments.
-7. A fresh live test of the corrected cancellation response remains **PENDING**. No later operator rerun was supplied.
+7. The [fresh operator evaluation `82fd4a`](evals/2026-11-03-gn-eval-82fd4a.md) reports GN-009 **PASS for control version 1 only**, a new four-role acceptance/retirement, and repeated artifact/offline checks at source `bb7d2e7`. Its clean full-QA background rerun remains **PENDING**. This is a normalized operator report with checked source-snapshot provenance, not independent Codex verification of its live/artifact claims.
 
 ## Case matrix
 
@@ -27,8 +27,8 @@ Statuses apply to the stated assertion and evidence class, not the entire produc
 | GN-005 | Pre-correlation cancellation state / LIVE | PASS for conservative state/refusal; termination unconfirmed |
 | GN-006 | Historical cancellation response JSON / LIVE | **FAIL**, retained historical result |
 | GN-007 | Registered-tool cancellation regression / FIXTURE | PASS after fix; RED reproduced defect |
-| GN-008 | Full QA and corrected deployment / FIXTURE + ARTIFACT | PASS within those boundaries |
-| GN-009 | Corrected live pre-correlation cancellation response / LIVE | PENDING |
+| GN-008 | Full QA and corrected deployment / FIXTURE + ARTIFACT | Historical PASS; new operator full-QA repeat PARTIAL/PENDING |
+| GN-009 | Corrected live pre-correlation cancellation response / LIVE | PASS, new attempt with control version 1 only |
 | GN-010 | Verified running-child cancellation / LIVE | NOT_EXERCISED |
 | GN-011 | Live late-result rejection after cancellation / LIVE | NOT_EXERCISED |
 
@@ -44,29 +44,35 @@ Observed ARTIFACT checks: 56 release hashes, 37 unprojected source matches, 19 p
 
 ## GN-003: positive four-role workflow
 
-Use a fresh run and a clean allowed scope. The following is a reusable prompt matching the executed task, not a verbatim historical transcript:
+Use a fresh run and an unoccupied smoke directory. Before admission, choose a new directory if an example already exists; expand its actual name consistently in all allowed paths, declared evidence files and gate commands. Preserve existing untracked files. The original executed `harness-smoke/` paths below remain historical. The following future prompt is reusable, not a verbatim historical transcript; replace `NEW_SMOKE_DIR` before admission:
 
 ```text
 Load the installed global delegation-orchestrator skill. Verify that
 harness_orchestration and subagent are available. Admit a fresh workflow
 with researcher, planner, implementer, and an independent validator, each
-in a fresh child. Create only harness-smoke/add.mjs and
-harness-smoke/add.test.mjs. Export add(a, b); use built-in Node tests for
+in a fresh child. Choose a new unoccupied smoke directory and expand its
+actual name in all allowed paths, evidence and gates before admission.
+Create only NEW_SMOKE_DIR/add.mjs and NEW_SMOKE_DIR/add.test.mjs.
+Export add(a, b); use built-in Node tests for
 positive numbers, negative numbers, and zero. Add no dependencies and
 edit no project configuration. Declare both files as evidence. Require
 the independent validator to run:
-node --test harness-smoke/add.test.mjs
+node --test NEW_SMOKE_DIR/add.test.mjs
 Accept only current independent evidence, then report the v2 acceptance
 digest and retire the accepted run using that exact digest.
 ```
 
 Assertions: four verified role children, exact scope, independent command exit 0, current declared-file proof, accepted summary and digest. Retain role/call/child correlations, command/output/exit, evidence hash, acceptance response and retirement summary.
 
+Historical executed scope/prompt used only `harness-smoke/add.mjs` and `harness-smoke/add.test.mjs`, declared both as evidence, and required `node --test harness-smoke/add.test.mjs`.
+
 Observed run `global-native-smoke-20261103-a7f43c29`: four verified fresh children; only the two requested files created; **3 passed, 0 failed, exit 0**; accepted and retired. Acceptance digest:
 
 ```text
 6634ab6eeb15c61beb7f1e720ba2367206d093e82fc25e3db01d3f319b9ec3e9
 ```
+
+The new [operator repeat](evals/2026-11-03-gn-eval-82fd4a.md#four-role-evidence) used `harness-smoke-20261103-eval/` because prior paths existed and were preserved. It reports four verified children, three tests with exit 0, acceptance digest `720dcf74892ec99dd79aa7ac5d152d05e70342ecfdd5bb8c20724d5d27d7e41e`, and evidence hash `3e007a2a6993652d4313126b4b2dc8b5d5a9ecb9da466f3d9167a2670965fbe7`. Replay retained 13 identities / 1653 bytes with zero resident calls/runs and reservations; identical and wrong-digest requests left counters unchanged. These are new-run values; the historical 13 / 1762 in GN-004 remains unchanged.
 
 The expected test-first missing-module RED and fallback when `rg` was unavailable did not block the final result.
 
@@ -136,13 +142,19 @@ The raw cancellation output owned `childID: undefined` before correlation. Nativ
 
 Retain registered-tool raw-output assertions and logs: six cases cover controls 1/2 × admitted/running/clarification. RED: 2 failed unknown-child cases, 4 passed. GREEN: focused 8/8, global 91/91. Running fixtures explicitly use the correlation API; they do not prove a live running child. Checks reject acceptance/late callbacks, retain uncertainty/accounting and permit ordinary tools. Independent review passed with no findings.
 
-Full QA: `npm test` registered 881, with 838 passed, 43 skipped, 0 failed; separate pinned-source suite 57/57; package dry run 73 files. An initial missing local plugin dependency was a clone prerequisite failure, resolved using existing dependencies without network/source changes, not a new product regression. Corrected installation passed the 56-asset/20-discovery checks in GN-001. Retain command exits, QA summary, release and installation hashes; none substitutes for LIVE retesting.
+Historical Codex full QA: `npm test` registered 881, with 838 passed, 43 skipped, 0 failed; separate pinned-source suite 57/57; package dry run 73 files. An initial missing local plugin dependency was a clone prerequisite failure, resolved using existing dependencies without network/source changes, not a new product regression. Corrected installation passed the 56-asset/20-discovery checks in GN-001. Retain command exits, QA summary, release and installation hashes; none substitutes for LIVE retesting.
 
-## GN-009–GN-011: remaining live reruns
+The [operator repeat](evals/2026-11-03-gn-eval-82fd4a.md#reported-qa-commands-and-external-log-references) reports global tests 91/91, pinned-source tests 57/57, global validation 56 assets, package dry run 73 files and inventory/discovery 56/20, all exit 0. Rollback was dry-run only; no new deployment occurred. Its full-QA repeat is **PARTIAL/PENDING**: first `/tmp` fixtures were hidden by Bubblewrap, then a private `/var/tmp` attempt reached runtime rejection of inherited `OPENCODE_CONFIG_CONTENT`. The third clean attempt is the existing owner background job `sh_1a4025ed0001hfzTl8tTui9Z33`, log `gn-eval-82fd4a-npm-test-clean.log`; no exit is recorded.
+
+Offline QA preflight for future evaluations: use an existing owner-only mode-0700 private `TMPDIR` below `/var/tmp`, outside Bubblewrap's masked `/tmp`. Remove inherited `OPENCODE_CONFIG_CONTENT` only from the offline QA child environment, recording presence and adjustment rather than its value; leave other inputs untouched. Await the existing owner job rather than duplicate full QA. This setup is never a bypass for native approvals or protocol checks; environment failures alone do not establish product regressions.
+
+## GN-009–GN-011: live rerun evidence and remaining checks
 
 After separately authorized provider restart for the plugin change, verify that the adapter **generation changes** and the corrected release is loaded. The same T3Code chat may be used if it receives the fresh instance, but create new orchestration/specification/task/call/child/prompt identities. Never reuse old cancellation context in a new instance. Profile `2.0.0` alone does not identify the patch: record release hash and generation.
 
-GN-009 repeats pre-correlation cancellation when that phase can be observed. Assert raw JSON validity separately from cancelled state, acceptance refusal, ordinary-tool availability and resource accounting. Unknown-child output must omit the key, yielding `{ "termination": "unconfirmed" }`; a correlated known child may additionally have a valid string `childID`. Retain raw and text responses. **PENDING** until an operator reports the patched run.
+GN-009 repeats pre-correlation cancellation when that phase can be observed. Assert raw JSON validity separately from cancelled state, acceptance refusal, ordinary-tool availability and resource accounting. Unknown-child output must omit the key, yielding `{ "termination": "unconfirmed" }`; a correlated known child may additionally have a valid string `childID`. Retain raw and text responses. The [new operator attempt](evals/2026-11-03-gn-eval-82fd4a.md#observed-cancellation-results) is **PASS for control version 1 only**: native raw and text JSON were `{"termination":"unconfirmed"}`, with no `childID` key or schema error. Version-2 acceptance refused, ordinary read/status worked, accepted remained false and digest null, and retirement refusal remained “cancelled task: termination uncertain.” No live version-2 cancellation is claimed.
+
+Generation `7a9aff60-c5f6-48e2-b034-318fefa51171` differs from the historical generation but stayed unchanged through this Stop/cancel. No restart was performed or observed in this evaluation; reload method remains **NOT_EXERCISED**. The task was admitted with native callback pending; the interrupted-error session ID is an **unverified candidate**, not running-child correlation. No callback arrived. Before launch: resident runs/calls 1/0, replay 14/2241 bytes, reserved records/bytes/summary 0/499/499. After Stop: 1/1, 17/2654, 1/690/499; post-cancel and acceptance refusal were identical. Retained uncertainty is neither leak proof nor a cleanup goal; the cancelled run remains unaccepted and non-retirable. GN-006's historical failure is preserved.
 
 GN-010 requires actual verified running-child correlation before Stop; a pending callback is insufficient. GN-011 requires an actually observed late callback and rejection on relevant output surfaces; silence is insufficient. Both remain **NOT_EXERCISED live**, despite fixture coverage. Missing original context or changed generation makes an attempted original-run assessment **INCONCLUSIVE**.
 
@@ -153,6 +165,7 @@ Use this illustrative Markdown/YAML record, not a new executable schema. Keep as
 ```yaml
 case: GN-009
 caseVersion: 1
+controlVersion: 1 # record the version actually exercised
 scenario: corrected pre-correlation cancellation response
 profile: global-native 2.0.0
 package: 0.1.20
@@ -161,7 +174,9 @@ sourceCommit: RECORD_COMMIT
 clientVersion: unknown
 nativeVersion: unknown
 wslDistroVersion: unknown
-evidenceKind: LIVE # operator-reported | ARTIFACT | FIXTURE
+evidenceKind: LIVE # LIVE | ARTIFACT | FIXTURE
+evidenceReporter: operator # distinguish independent Codex artifact verification
+sourceReportSha256: RECORD_FROZEN_REPORT_HASH
 correlation:
   generation: RECORD
   parentSession: RECORD
