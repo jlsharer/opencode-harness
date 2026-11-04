@@ -1,6 +1,8 @@
 # Global-native verified cancellation and late-result design
 
-Status: **APPROVED — source-only implementation and FIXTURE checks complete; independent review and final QA pending**. The owner approved the design and implementation plan. The operational source-only driver and registered-host fixture tests are implemented. No native/provider LIVE tests were run. GN-010 and GN-011 remain **NOT_EXERCISED LIVE**.
+Status: **APPROVED — source-only implementation and offline validation complete**. The owner approved the design and ordered implementation. Code `6ce3d2d`, its checks, review corrections and remaining live work are recorded in the [execution record](../plans/2026-11-03-global-native-live-gap.md#execution-record). No native/provider LIVE tests were run. GN-010 and GN-011 remain **NOT_EXERCISED LIVE**.
+
+The implemented evaluator accepts **researcher/research only**. Other role/mode arms reject without changing protocol state. A structural result check cannot establish a validator's command/tree gate proof; broader role coverage needs a separate extension. Native four-role orchestration is unchanged.
 
 ## Intent and evidence boundary
 
