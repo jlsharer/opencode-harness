@@ -14,7 +14,10 @@ import type {
   EvalNativeToolContext,
   EvalSnapshot,
 } from "./global-native-live-eval.mts";
-import type { NativeEvent } from "../src/plugin-modules/global-native-plugin.ts";
+import type {
+  GlobalNativeContext,
+  NativeEvent,
+} from "../src/plugin-modules/global-native-plugin.ts";
 import {
   formatTaskThreadEnvelope,
   TASK_THREAD_ROLE_PACKET_FIELDS,
@@ -161,7 +164,7 @@ async function host(
 ) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "gn-fixture-"));
   fs.writeFileSync(path.join(cwd, "a.txt"), "evidence");
-  const sessions = new Map([
+  const sessions = new Map<string, Awaited<ReturnType<GlobalNativeContext["session"]["get"]>>>([
     ["parent", { id: "parent", agent: "build", location: { directory: cwd } }],
     [
       "child",
@@ -170,6 +173,15 @@ async function host(
   ]);
   const tools = new Map<string, EvalTool>();
   const hooks = new Map<string, (event: NativeEvent) => Promise<void>>();
+
+  type Command = Parameters<Parameters<EvalNativeContext["command"]["transform"]>[0]>[0] extends {
+    add(definition: infer D): void;
+  }
+    ? D
+    : never;
+
+  const commands = new Map<string, Command>();
+  const executions: Record<string, unknown>[] = [];
   let subscribed = false;
   let closed = false;
   let wake: ((v: IteratorResult<{ type: string; data: unknown }>) => void) | undefined;
@@ -201,7 +213,13 @@ async function host(
   const ctx: EvalNativeContext = {
     location: { directory: cwd },
     options: { evaluationRoot: cwd, traceRoot: path.join(cwd, "trace") },
-    plugin: { list: async () => [] },
+    plugin: { list: async () => ({ location: { directory: cwd }, data: [] }) },
+    agent: {
+      list: async () => ({
+        location: { directory: cwd },
+        data: [{ id: "build", mode: "primary", hidden: false }],
+      }),
+    },
     session: {
       get: async ({ sessionID }) => {
         await lookup?.();
@@ -231,7 +249,13 @@ async function host(
       list: async () => {
         if (dirty) rebuild();
         return [
-          { id: "subagent", execute: async () => ({}) },
+          {
+            id: "subagent",
+            execute: async (_input: unknown, context: Record<string, unknown>) => {
+              executions.push(context);
+              return result();
+            },
+          },
           ...Array.from(tools.values(), (v) => ({
             id: v.name,
             execute: async (input: unknown, context: Record<string, unknown>) =>
@@ -240,7 +264,12 @@ async function host(
         ];
       },
     },
-    command: { transform: async () => registration() },
+    command: {
+      transform: async (fn) => {
+        fn({ add: (definition) => commands.set(definition.name, definition) });
+        return registration(() => commands.clear());
+      },
+    },
     event: {
       subscribe: ({ signal }) => {
         subscribed = true;
@@ -372,6 +401,8 @@ async function host(
     ctx,
     driver,
     tools,
+    commands,
+    executions,
     sessions,
     event,
     before,
@@ -950,7 +981,7 @@ test("FIXTURE cleanup disposes actual host registrations and subscription", asyn
   assert.equal(f.closed(), true);
   assert.equal(f.tools.has("harness_orchestration"), false);
 });
-test("FIXTURE default native entry loads one adapter and both eval tools with cleanup", async (t) => {
+test("FIXTURE native located plugin catalog loads one adapter and both eval tools with raw sessions", async (t) => {
   const f = await host(t);
   await f.driver.dispose();
   const cleanup = await plugin.setup(f.ctx);
@@ -1281,6 +1312,117 @@ for (const missing of ["harness_orchestration", "harness_eval_control", "harness
     await assert.rejects(plugin.setup(f.ctx), /registration|catalog|ownership/);
     assert.equal(f.liveRegistrations(), 0);
   });
+
+const catalogFailures: [string, (directory: string) => unknown][] = [
+  ["raw array", () => []],
+  ["null", () => null],
+  ["missing data", (directory) => ({ location: { directory } })],
+  ["nonarray data", (directory) => ({ location: { directory }, data: {} })],
+  ["null data", (directory) => ({ location: { directory }, data: null })],
+  ["missing location", () => ({ data: [] })],
+  ["null location", () => ({ location: null, data: [] })],
+  ["missing directory", () => ({ location: {}, data: [] })],
+  ["nonstring directory", () => ({ location: { directory: 42 }, data: [] })],
+  ["wrong directory", (directory) => ({ location: { directory: directory + "/other" }, data: [] })],
+  [
+    "noncanonical directory",
+    (directory) => ({ location: { directory: directory + "/." }, data: [] }),
+  ],
+  [
+    "unexpected envelope field",
+    (directory) => ({ location: { directory }, data: [], extra: true }),
+  ],
+  [
+    "unexpected location field",
+    (directory) => ({ location: { directory, workspaceID: "private" }, data: [] }),
+  ],
+  ["null entry", (directory) => ({ location: { directory }, data: [null] })],
+];
+
+for (const [name, catalog] of catalogFailures) {
+  test(`FIXTURE plugin catalog rejects ${name} before registration`, async (t) => {
+    const f = await host(t);
+    await f.driver.dispose();
+    f.ctx.plugin.list = async () => catalog(f.ctx.location.directory) as never;
+    await assert.rejects(plugin.setup(f.ctx), /native plugin catalog/);
+    assert.equal(f.liveRegistrations(), 0);
+  });
+  test(`FIXTURE default-agent command rejects agent catalog ${name}`, async (t) => {
+    const f = await host(t);
+    delete f.sessions.get("parent")!.agent;
+    f.ctx.agent!.list = async () => catalog(f.ctx.location.directory) as never;
+    await assert.rejects(
+      f.commands.get("delegate-research")!.execute({
+        sessionID: "parent",
+        prompt: { text: (f.event.input as { prompt: string }).prompt },
+      }),
+      /native agent catalog/,
+    );
+    assert.equal(f.executions.length, 0);
+  });
+}
+for (const [name, entry] of [
+  ["missing id", { mode: "primary", hidden: false }],
+  ["empty id", { id: " ", mode: "primary", hidden: false }],
+  ["invalid mode", { id: "build", mode: "unknown", hidden: false }],
+  ["missing hidden", { id: "build", mode: "primary" }],
+  ["invalid hidden", { id: "build", mode: "primary", hidden: "false" }],
+] as const)
+  test(`FIXTURE default-agent command rejects ${name}`, async (t) => {
+    const f = await host(t);
+    delete f.sessions.get("parent")!.agent;
+    f.ctx.agent!.list = async () => ({ location: { ...f.ctx.location }, data: [entry] });
+    await assert.rejects(
+      f.commands.get("delegate-research")!.execute({
+        sessionID: "parent",
+        prompt: { text: (f.event.input as { prompt: string }).prompt },
+      }),
+      /native agent catalog/,
+    );
+    assert.equal(f.executions.length, 0);
+  });
+for (const id of [null, 42, " "])
+  test(`FIXTURE plugin catalog rejects invalid optional id ${id}`, async (t) => {
+    const f = await host(t);
+    await f.driver.dispose();
+    f.ctx.plugin.list = async () => ({ location: { ...f.ctx.location }, data: [{ id }] });
+    await assert.rejects(plugin.setup(f.ctx), /native plugin catalog/);
+    assert.equal(f.liveRegistrations(), 0);
+  });
+test("FIXTURE default-agent catalog remains bound to setup directory", async (t) => {
+  const f = await host(t);
+  delete f.sessions.get("parent")!.agent;
+  f.ctx.location.directory += "/other";
+  f.ctx.agent!.list = async () => ({ location: { ...f.ctx.location }, data: [] });
+  await assert.rejects(
+    f.commands.get("delegate-research")!.execute({
+      sessionID: "parent",
+      prompt: { text: (f.event.input as { prompt: string }).prompt },
+    }),
+    /native agent catalog/,
+  );
+  assert.equal(f.executions.length, 0);
+});
+test("FIXTURE native agent envelope resolves default caller through registered role command", async (t) => {
+  const f = await host(t);
+  delete f.sessions.get("parent")!.agent;
+  await f.commands.get("delegate-research")!.execute({
+    sessionID: "parent",
+    prompt: { text: (f.event.input as { prompt: string }).prompt },
+  });
+  assert.equal(f.executions.length, 1);
+  assert.equal(f.executions[0]!.agent, "build");
+});
+test("FIXTURE native plugin envelope rejects duplicate production adapter before registration", async (t) => {
+  const f = await host(t);
+  await f.driver.dispose();
+  f.ctx.plugin.list = async () => ({
+    location: { ...f.ctx.location },
+    data: [{ id: "opencode-harness.global.v1" }],
+  });
+  await assert.rejects(plugin.setup(f.ctx), /duplicate adapter plugin ownership/);
+  assert.equal(f.liveRegistrations(), 0);
+});
 const nativeSourceFiles = [
   "packages/plugin/src/promise/plugin.ts",
   "packages/plugin/src/promise/tool.ts",
@@ -1288,6 +1430,13 @@ const nativeSourceFiles = [
   "packages/plugin/src/promise/registration.ts",
   "packages/plugin/src/promise/adapter.ts",
   "packages/schema/src/tool.ts",
+  "packages/schema/src/location.ts",
+  "packages/schema/src/plugin.ts",
+  "packages/schema/src/agent.ts",
+  "packages/protocol/src/groups/plugin.ts",
+  "packages/protocol/src/groups/agent.ts",
+  "packages/protocol/src/groups/session.ts",
+  "packages/core/src/plugin/host.ts",
   "packages/schema/src/event.ts",
   "packages/schema/src/session-event.ts",
   "packages/core/src/plugin.ts",
@@ -1314,6 +1463,85 @@ test(
     );
     auditGlobalLiveEvalNativeContract(source);
     for (const [file, old, replacement] of [
+      ["packages/schema/src/plugin.ts", "id: ID.pipe(optional)", "id: ID"],
+      ["packages/schema/src/agent.ts", "id: ID,", "name: ID,"],
+      [
+        "packages/schema/src/agent.ts",
+        'mode: Schema.Literals(["subagent", "primary", "all"])',
+        'mode: Schema.Literal("primary")',
+      ],
+      ["packages/schema/src/agent.ts", "hidden: Schema.Boolean", "hidden: Schema.String"],
+      [
+        "packages/protocol/src/groups/plugin.ts",
+        "Location.response(Schema.Array(Plugin.Info))",
+        "Schema.Array(Plugin.Info)",
+      ],
+      [
+        "packages/protocol/src/groups/agent.ts",
+        "Location.response(Schema.Array(Agent.Info))",
+        "Schema.Array(Agent.Info)",
+      ],
+      [
+        "packages/protocol/src/groups/session.ts",
+        "success: Schema.Struct({ data: PublicSessionInfo })",
+        "success: Location.response(PublicSessionInfo)",
+      ],
+      ["packages/schema/src/location.ts", "directory: AbsolutePath", "directory: Schema.String"],
+      ["packages/schema/src/location.ts", 'Struct.omit(Ref.fields, ["workspaceID"])', "Ref"],
+      [
+        "packages/schema/src/location.ts",
+        "Schema.Struct({ location: PublicRef, data })",
+        "Schema.Struct({ data })",
+      ],
+      ["packages/core/src/plugin/host.ts", "({ location: locationInfo(), data })", "({ data })"],
+      ["packages/core/src/plugin/host.ts", "response(plugin.list())", "plugin.list()"],
+      ["packages/core/src/plugin/host.ts", "response(agents.list())", "agents.list()"],
+      [
+        "packages/core/src/plugin/host.ts",
+        "get: (input) => sessions.get(input.sessionID)",
+        "get: (input) => response(sessions.get(input.sessionID))",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        'adaptApiMethod(PluginEndpoints["plugin.list"], host.plugin.list)',
+        "host.plugin.list",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        'adaptApiMethod(AgentEndpoints["agent.list"], host.agent.list)',
+        "host.agent.list",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        'adaptApiMethod(SessionEndpoints["session.get"], host.session.get)',
+        "host.session.get",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        "type.propertySignatures.length === 1",
+        "type.propertySignatures.length >= 1",
+      ],
+      ["packages/plugin/src/promise/adapter.ts", "type.indexSignatures.length === 0", "true"],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        'type.propertySignatures[0]?.name === "data"',
+        'type.propertySignatures[0]?.name === "output"',
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        "? (Schema.make<Schema.Top>(data.type) as RuntimeSchema)",
+        "? success",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        "Schema.encodeUnknownEffect(output)",
+        "Schema.encodeUnknownEffect(success)",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
+        "run(host.tool.list()).then((tools)",
+        "run(host.tool.catalog()).then((tools)",
+      ],
       ["packages/core/src/plugin.ts", "yield* State.batch(", "yield* State.unbatched("],
       ["packages/core/src/state.ts", "batch.notifications.add(notify)", "notify()"],
       ["packages/core/src/state.ts", "transform.run(editor)", "transform.skip(editor)"],
@@ -1335,7 +1563,8 @@ test(
         "readonly dispose: () => Promise<void>",
         "readonly dispose: () => void",
       ],
-    ])
+    ]) {
+      assert.ok(source[file!]!.includes(old!), `mutation anchor absent: ${file}: ${old}`);
       assert.throws(
         () =>
           auditGlobalLiveEvalNativeContract({
@@ -1344,6 +1573,7 @@ test(
           }),
         /incompatible/,
       );
+    }
   },
 );
 test("ARTIFACT source evaluation never enters installed manifest or package/startup closure", () => {

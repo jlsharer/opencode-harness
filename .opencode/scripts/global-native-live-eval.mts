@@ -32,10 +32,16 @@ export interface EvalTool extends Omit<GlobalControlTool, "execute"> {
 interface Registration {
   dispose(): Promise<void>;
 }
-export interface EvalNativeContext extends GlobalNativeContext {
+interface NativeCatalog {
+  location: { directory: string };
+  data: unknown[];
+}
+// Public Promise catalogs retain location; session.get and tool.list are already raw.
+export interface EvalNativeContext extends Omit<GlobalNativeContext, "agent"> {
   location: { directory: string };
   options: Record<string, unknown>;
-  plugin: { list(): Promise<unknown[]> };
+  plugin: { list(): Promise<NativeCatalog> };
+  agent?: { list(): Promise<NativeCatalog> };
   event: {
     subscribe(options: { signal: AbortSignal }): AsyncIterable<{ type: string; data: unknown }>;
   };
@@ -106,6 +112,46 @@ const exact = (input: Record<string, unknown>, keys: string[]) => {
     throw Error("unexpected evaluation fields");
 };
 
+function nativeCatalog(value: unknown, directory: string, name: "plugin" | "agent") {
+  try {
+    const envelope = object(value);
+    exact(envelope, ["location", "data"]);
+    const location = object(envelope.location);
+    exact(location, ["directory"]);
+    if (
+      typeof location.directory !== "string" ||
+      !path.isAbsolute(location.directory) ||
+      location.directory.includes("\0") ||
+      path.resolve(location.directory) !== location.directory ||
+      location.directory !== directory ||
+      !Array.isArray(envelope.data)
+    )
+      throw Error("expected matching canonical location and data array");
+    return envelope.data.map((entry) => object(entry));
+  } catch {
+    throw Error(
+      `invalid native ${name} catalog: expected {location:{directory},data:records[]} for ${directory}`,
+    );
+  }
+}
+
+function nativeAgents(
+  value: unknown,
+  directory: string,
+): Awaited<ReturnType<NonNullable<GlobalNativeContext["agent"]>["list"]>> {
+  return nativeCatalog(value, directory, "agent").map((entry) => {
+    const { id, mode, hidden } = entry;
+    if (
+      typeof id !== "string" ||
+      !id.trim() ||
+      (mode !== "primary" && mode !== "subagent" && mode !== "all") ||
+      typeof hidden !== "boolean"
+    )
+      throw Error("invalid native agent catalog: expected id, mode and hidden fields");
+    return { id, mode, hidden };
+  });
+}
+
 const evaluationTools = [
   "harness_orchestration",
   "harness_eval_control",
@@ -157,10 +203,18 @@ export async function createGlobalNativeLiveEval(
     !ctx.command?.transform
   )
     throw Error("missing native evaluation capability");
+  const directory = ctx.location.directory;
   const inventory = await ctx.tool.list();
   if (inventory.some((t) => evaluationTools.includes(t.id)))
     throw Error("duplicate adapter/control ownership");
-  const plugins = await ctx.plugin.list();
+  const plugins = nativeCatalog(await ctx.plugin.list(), directory, "plugin");
+  if (
+    plugins.some(
+      (plugin) =>
+        Object.hasOwn(plugin, "id") && (typeof plugin.id !== "string" || !plugin.id.trim()),
+    )
+  )
+    throw Error("invalid native plugin catalog: expected optional string id");
   if (
     plugins.some((p) => {
       const s = canonical(p);
@@ -396,8 +450,14 @@ export async function createGlobalNativeLiveEval(
       throw Error("native identity/cwd/generation moved");
   }
 
+  const { agent: nativeAgent, ...rawContext } = ctx;
   const proxy: GlobalNativeContext = {
-    ...ctx,
+    ...rawContext,
+    ...(nativeAgent
+      ? {
+          agent: { list: async () => nativeAgents(await nativeAgent.list(), directory) },
+        }
+      : {}),
     session: {
       ...ctx.session,
       get: (input) => trackNative(ctx.session.get(input)),
@@ -1043,6 +1103,34 @@ export function auditGlobalLiveEvalNativeContract(source: Record<string, string>
     if (!pattern.test(source[file] ?? ""))
       throw Error("incompatible pinned native contract: " + file + " " + pattern);
   };
+  // HTTP schemas alone are insufficient: Promise compileEndpoint strips only {data}.
+  require("packages/schema/src/plugin.ts", /export const Info = Schema\.Struct\(\{\s*id: ID\.pipe\(optional\),\s*source: Source,\s*features: Features,\s*state: State,/);
+  require("packages/schema/src/agent.ts", /export const Info = Schema\.Struct\(\{\s*id: ID,/);
+  require("packages/schema/src/agent.ts", /mode: Schema\.Literals\(\["subagent", "primary", "all"\]\),\s*hidden: Schema\.Boolean,/);
+  require("packages/schema/src/location.ts", /export const Ref = Schema\.Struct\(\{\s*directory: AbsolutePath,/);
+  require("packages/schema/src/location.ts", /export const PublicRef = Schema\.Struct\(Struct\.omit\(Ref\.fields, \["workspaceID"\]\)\)/);
+  require("packages/schema/src/location.ts", /function response<S extends Schema\.Top>\(data: S\) \{\s*return Schema\.Struct\(\{ location: PublicRef, data \}\)/);
+  for (const [domain, info] of [
+    ["plugin", "Plugin"],
+    ["agent", "Agent"],
+  ]) {
+    require(`packages/protocol/src/groups/${domain}.ts`, new RegExp(
+      `HttpApiEndpoint\\.get\\("${domain}\\.list",[^}]*success: Location\\.response\\(Schema\\.Array\\(${info}\\.Info\\)\\)`,
+    ));
+    require("packages/plugin/src/promise/adapter.ts", new RegExp(
+      `list: adaptApiMethod\\(${info}Endpoints\\["${domain}\\.list"\\], host\\.${domain}\\.list\\)`,
+    ));
+  }
+  require("packages/protocol/src/groups/session.ts", /HttpApiEndpoint\.get\("session\.get",[\s\S]*?success: Schema\.Struct\(\{ data: PublicSessionInfo \}\)/);
+  require("packages/core/src/plugin/host.ts", /const locationInfo = \(\) =>\s*new Location\.Info\(\{\s*directory: location\.directory,/);
+  require("packages/core/src/plugin/host.ts", /const response = <A, E, R>\(effect: Effect\.Effect<A, E, R>\) =>\s*effect\.pipe\(Effect\.map\(\(data\) => \(\{ location: locationInfo\(\), data \}\)\)\)/);
+  require("packages/core/src/plugin/host.ts", /plugin: \{\s*list: \(\) => response\(plugin\.list\(\)\)/);
+  require("packages/core/src/plugin/host.ts", /list: \(input\) => \{\s*const ref = locationRef\(input\)\s*if \(ref && !isCurrentLocation\(ref\)\) return listAgents\(ref\)\s*return response\(agents\.list\(\)\)/);
+  require("packages/core/src/plugin/host.ts", /get: \(input\) => sessions\.get\(input\.sessionID\)/);
+  require("packages/plugin/src/promise/adapter.ts", /get: adaptApiMethod\(SessionEndpoints\["session\.get"\], host\.session\.get\)/);
+  require("packages/plugin/src/promise/adapter.ts", /const output =\s*!noContent &&\s*SchemaAST\.isObjects\(type\) &&\s*type\.indexSignatures\.length === 0 &&\s*type\.propertySignatures\.length === 1 &&\s*type\.propertySignatures\[0\]\?\.name === "data" &&\s*data !== undefined\s*\? \(Schema\.make<Schema\.Top>\(data\.type\) as RuntimeSchema\)\s*: success/);
+  require("packages/plugin/src/promise/adapter.ts", /encode: Schema\.encodeUnknownEffect\(output\)/);
+  require("packages/plugin/src/promise/adapter.ts", /list: \(\) =>\s*run\(host\.tool\.list\(\)\)\.then\(\(tools\) =>\s*tools\.map\(\(tool\) => \(\{ \.\.\.tool, execute: promiseExecutor\(tool\.execute\) \}\)\)/);
   require("packages/plugin/src/promise/plugin.ts", /readonly options: PluginOptions/);
   require("packages/plugin/src/promise/plugin.ts", /readonly plugin: Pick<PluginApi, "list">/);
   require("packages/plugin/src/promise/plugin.ts", /Promise<Cleanup \| void>/);
