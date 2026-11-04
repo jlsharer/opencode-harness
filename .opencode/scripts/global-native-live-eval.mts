@@ -667,6 +667,14 @@ export async function createGlobalNativeLiveEval(
         "childSessionID",
         "requestNonce",
       ]);
+      const context = object(request.context);
+      exact(context, ["orchestrationId", "delegationTaskId", "scopeKey", "role", "taskMode"]);
+      if (Object.values(context).some((value) => typeof value !== "string" || !value.trim()))
+        throw Error("invalid evaluation context");
+      // This source evaluator's completion precheck covers only research results.
+      // Other roles retain their full production validation and proof requirements.
+      if (context.role !== "researcher" || context.taskMode !== "research")
+        throw Error("source evaluation supports researcher/research only");
       if (disposed || streamClosed || attempt)
         throw Error("active or unavailable evaluation attempt");
       if (
@@ -775,12 +783,13 @@ export async function createGlobalNativeLiveEval(
   });
   const contextSchema = {
     type: "object",
-    properties: Object.fromEntries(
-      ["orchestrationId", "delegationTaskId", "scopeKey", "role", "taskMode"].map((k) => [
-        k,
-        { type: "string" },
-      ]),
-    ),
+    properties: {
+      orchestrationId: { type: "string" },
+      delegationTaskId: { type: "string" },
+      scopeKey: { type: "string" },
+      role: { const: "researcher" },
+      taskMode: { const: "research" },
+    },
     required: ["orchestrationId", "delegationTaskId", "scopeKey", "role", "taskMode"],
     additionalProperties: false,
   };

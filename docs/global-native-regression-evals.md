@@ -236,7 +236,9 @@ This exact native API uses `plugins` with `{package,options}` entries and resolv
 
 Each plugin instance permits exactly one arm in its lifetime. Collect its status, native surfaces, traces and hashes before quitting. Repeat the isolated setup with a fresh root and plugin instance for each control version and each mode, including retries after timeout or failure.
 
-For each control version (1 and 2 separately), admit a new finite read-only task with an independent validator gate, obtain an authentic clarification through ordinary native `subagent`, and retain the exact admitted context, verified child and returned nonce. Do not manufacture a clarification or reuse a terminal/cancelled task. Request the registered tool as follows, substituting the actual context object and strings:
+Source evaluation arms support **researcher/research only**, in both modes and through both the creator API and registered control. The arm input schema and shared runtime guard reject every other role/mode before creating an attempt or cancelling a task. The diagnostic completion precheck covers research result shape; it does not establish the command or tree proof required by other roles. Planner, implementer and validator evaluation cases require a separately reviewed extension and remain **NOT_EXERCISED LIVE**. The native global profile still projects all four roles, and its protocol, validation and acceptance authority are unchanged.
+
+For each control version (1 and 2 separately), admit a new finite read-only researcher/research task with an independent validator gate, obtain an authentic clarification through ordinary native `subagent`, and retain the exact admitted context, verified child and returned nonce. Do not manufacture a clarification or reuse a terminal/cancelled task. Request the registered tool as follows, substituting the actual context object and strings:
 
 ```json
 {"action":"arm","mode":"continuation-rendezvous","controlVersion":1,"context":{"orchestrationId":"ACTUAL_RUN","delegationTaskId":"ACTUAL_TASK","scopeKey":"ACTUAL_SCOPE","role":"researcher","taskMode":"research"},"childSessionID":"VERIFIED_CHILD","requestNonce":"RETURNED_NONCE"}

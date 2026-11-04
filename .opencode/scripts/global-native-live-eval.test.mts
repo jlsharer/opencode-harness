@@ -716,6 +716,45 @@ function json(value: unknown): void {
   Object.values(value).forEach(json);
 }
 
+// The shared arm boundary must reject unsupported scope before looking up a
+// clarification, even when the native host does not enforce the input schema.
+for (const [role, taskMode] of [
+  ["validator", "validation"],
+  ["planner", "plan"],
+  ["implementer", "implementation"],
+  ["researcher", "review"],
+] as const)
+  for (const entry of ["creator", "registered"] as const)
+    for (const mode of ["continuation-rendezvous", "completed-after-hold"] as const)
+      test(`FIXTURE ${entry} ${mode} arm rejects unsupported ${role}/${taskMode} without mutation`, async (t) => {
+        const f = await host(t);
+        await f.clarify();
+        const before = f.driver.snapshot();
+        const protocolBefore = await f.control({ version: 2, action: "status" });
+        const request = {
+          mode,
+          controlVersion: 1 as const,
+          context: { ...context, role, taskMode },
+          childSessionID: "child",
+          requestNonce: "nonce",
+        };
+        await assert.rejects(
+          entry === "creator"
+            ? f.driver.arm(request, "parent")
+            : f.tools
+                .get("harness_eval_control")!
+                .execute({ action: "arm", ...request }, nativeContext()),
+          /researcher\/research only/,
+        );
+        assert.deepEqual(f.driver.snapshot(), before);
+        assert.equal(f.driver.snapshot().attemptID, null);
+        assert.equal(f.driver.snapshot().cancellation, null);
+        assert.notEqual(f.driver.snapshot().diagnostic, "OBSERVED");
+        assert.deepEqual(await f.control({ version: 2, action: "status" }), protocolBefore);
+        // Rejection must not consume this instance's sole supported arm.
+        assert.equal((await f.arm(mode)).phase, "armed");
+      });
+
 test("FIXTURE refuses arm before authentic registered clarification", async (t) => {
   const f = await host(t);
   await assert.rejects(f.arm(), /clarification/);
