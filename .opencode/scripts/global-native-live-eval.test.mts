@@ -429,6 +429,74 @@ test("FIXTURE armed before wait expires and retains ownership until real admissi
   assert.equal(f.driver.snapshot().cancellation, null);
 });
 
+for (const state of ["expired", "failed", "observed"] as const) {
+  test(`FIXTURE registered status preserves evidence after attempt ${state}`, async (t) => {
+    const f = await host(t, state === "failed" ? 1000 : 100);
+    const { e } = await f.continuation("completed-after-hold");
+    if (state === "failed") {
+      f.progress(e);
+      f.progress(e);
+      await tick();
+    } else if (state === "observed") {
+      e.status = "completed";
+      e.result = result("success");
+      await f.after(e);
+    }
+    if (state !== "failed") {
+      const deadline = f.driver.snapshot().identities!.deadline as number;
+      await new Promise((resolve) => setTimeout(resolve, Math.max(1, deadline - Date.now() + 15)));
+    }
+    const before = f.driver.snapshot();
+    assert.equal(before.diagnostic, state === "observed" ? "OBSERVED" : "INCONCLUSIVE");
+    if (state === "failed") assert.ok((before.identities!.deadline as number) > Date.now());
+    const protocolBefore = await f.control({ version: 2, action: "status" });
+    const status = await f.tools
+      .get("harness_eval_control")!
+      .execute({ action: "status" }, nativeContext());
+    assert.deepEqual(status.output, before);
+    assert.deepEqual(JSON.parse(status.content), before);
+    assert.deepEqual(f.driver.snapshot(), before, "read cannot renew or change the attempt");
+    assert.deepEqual(await f.control({ version: 2, action: "status" }), protocolBefore);
+    await assert.rejects(f.arm());
+    await assert.rejects(f.before({ ...e, id: "late-continuation", messageID: "late-message" }));
+  });
+}
+
+test("FIXTURE registered status after expiry bounds and tracks a hanging native lookup", async (t) => {
+  const f = await host(t, 35);
+  await f.clarify();
+  await f.arm();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const before = f.driver.snapshot();
+  assert.equal(before.diagnostic, "INCONCLUSIVE");
+  let release!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let entered = false;
+  f.lookup(() => {
+    entered = true;
+    return blocked;
+  });
+  const operation = f.tools
+    .get("harness_eval_control")!
+    .execute({ action: "status" }, nativeContext());
+  try {
+    assert.equal(entered, true, "status still verifies native parent after expiry");
+    assert.match(await observedSettlement(operation), /deadline|timeout/);
+    assert.deepEqual(f.driver.snapshot(), before);
+    await f.driver.dispose();
+    assert.ok(f.liveRegistrations() > 0, "unsettled status lookup retains ownership");
+  } finally {
+    f.lookup(null);
+    release();
+    assert.notEqual(await observedSettlement(operation), "resolved");
+    await tick();
+    await tick();
+  }
+  assert.equal(f.liveRegistrations(), 0);
+});
+
 for (const action of ["status", "arm"] as const) {
   for (const active of [false, true]) {
     if (active && action === "arm") continue;

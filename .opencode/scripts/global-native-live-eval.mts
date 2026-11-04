@@ -244,7 +244,7 @@ export async function createGlobalNativeLiveEval(
     return operation;
   }
 
-  type ObservationScope = { deadline: number; signal?: AbortSignal };
+  type ObservationScope = { deadline: number; signal?: AbortSignal; stopWithAttempt?: boolean };
 
   function checkScope(scope: ObservationScope) {
     if (disposed) throw Error("evaluation disposed");
@@ -264,7 +264,11 @@ export async function createGlobalNativeLiveEval(
           abort.signal.addEventListener("abort", onAbort, { once: true });
         });
         const value = await finite(
-          Promise.race([operation, interrupted, ...(attempt ? [attempt.stop] : [])]),
+          Promise.race([
+            operation,
+            interrupted,
+            ...(scope.stopWithAttempt !== false && attempt ? [attempt.stop] : []),
+          ]),
           scope.deadline - now(),
           "native observation deadline expired",
         );
@@ -766,12 +770,17 @@ export async function createGlobalNativeLiveEval(
           ? observed.get(JSON.stringify([context.sessionID, canonical(r.context)]))
           : undefined;
       const scope = {
-        deadline: Math.min(
-          now() + timeoutMs,
-          attempt?.deadline ?? Infinity,
-          original?.deadline ?? Infinity,
-        ),
+        deadline:
+          r.action === "status"
+            ? now() + timeoutMs
+            : Math.min(
+                now() + timeoutMs,
+                attempt?.deadline ?? Infinity,
+                original?.deadline ?? Infinity,
+              ),
         signal: context.signal,
+        // Diagnostic reads remain available after the selected attempt stops.
+        stopWithAttempt: r.action !== "status",
       };
       checkScope(scope);
       const p = await wait(ctx.session.get({ sessionID: context.sessionID }), scope);
