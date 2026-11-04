@@ -1539,6 +1539,11 @@ test(
       ],
       [
         "packages/plugin/src/promise/adapter.ts",
+        "return yield* compiled.encode(result)",
+        "return result",
+      ],
+      [
+        "packages/plugin/src/promise/adapter.ts",
         "run(host.tool.list()).then((tools)",
         "run(host.tool.catalog()).then((tools)",
       ],

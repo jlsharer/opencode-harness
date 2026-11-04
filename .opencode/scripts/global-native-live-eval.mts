@@ -1128,8 +1128,22 @@ export function auditGlobalLiveEvalNativeContract(source: Record<string, string>
   require("packages/core/src/plugin/host.ts", /list: \(input\) => \{\s*const ref = locationRef\(input\)\s*if \(ref && !isCurrentLocation\(ref\)\) return listAgents\(ref\)\s*return response\(agents\.list\(\)\)/);
   require("packages/core/src/plugin/host.ts", /get: \(input\) => sessions\.get\(input\.sessionID\)/);
   require("packages/plugin/src/promise/adapter.ts", /get: adaptApiMethod\(SessionEndpoints\["session\.get"\], host\.session\.get\)/);
-  require("packages/plugin/src/promise/adapter.ts", /const output =\s*!noContent &&\s*SchemaAST\.isObjects\(type\) &&\s*type\.indexSignatures\.length === 0 &&\s*type\.propertySignatures\.length === 1 &&\s*type\.propertySignatures\[0\]\?\.name === "data" &&\s*data !== undefined\s*\? \(Schema\.make<Schema\.Top>\(data\.type\) as RuntimeSchema\)\s*: success/);
+  require("packages/plugin/src/promise/adapter.ts", new RegExp(
+    /const output =\s*!noContent &&\s*SchemaAST\.isObjects\(type\) &&\s*/.source +
+      /type\.indexSignatures\.length === 0 &&\s*type\.propertySignatures\.length === 1 &&\s*/
+        .source +
+      /type\.propertySignatures\[0\]\?\.name === "data" &&\s*data !== undefined\s*/.source +
+      /\? \(Schema\.make<Schema\.Top>\(data\.type\) as RuntimeSchema\)\s*: success/.source,
+  ));
   require("packages/plugin/src/promise/adapter.ts", /encode: Schema\.encodeUnknownEffect\(output\)/);
+  require("packages/plugin/src/promise/adapter.ts", new RegExp(
+    /const adaptApiMethod = <PromiseMethod>\([\s\S]*?const compiled = compileEndpoint\(endpoint\)/
+      .source +
+      /[\s\S]*?const result = yield\* method\(Object\.assign\(\{\}, \.\.\.decoded\) as never\)\s*/
+        .source +
+      /if \(compiled\.noContent\) return undefined\s*return yield\* compiled\.encode\(result\)/
+        .source,
+  ));
   require("packages/plugin/src/promise/adapter.ts", /list: \(\) =>\s*run\(host\.tool\.list\(\)\)\.then\(\(tools\) =>\s*tools\.map\(\(tool\) => \(\{ \.\.\.tool, execute: promiseExecutor\(tool\.execute\) \}\)\)/);
   require("packages/plugin/src/promise/plugin.ts", /readonly options: PluginOptions/);
   require("packages/plugin/src/promise/plugin.ts", /readonly plugin: Pick<PluginApi, "list">/);
